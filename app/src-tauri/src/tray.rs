@@ -10,6 +10,7 @@ use tauri::image::Image;
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager, PhysicalPosition, Rect};
 
+use crate::panel;
 use crate::platform;
 
 const TRAY_ID: &str = "relais";
@@ -39,7 +40,7 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
 
 /// Shows the panel centered under the menu bar item, or hides it.
 fn toggle_panel(app: &AppHandle, rect: Rect) {
-    let Some(window) = app.get_webview_window("main") else {
+    let Some(window) = app.get_webview_window(panel::LABEL) else {
         return;
     };
     if window.is_visible().unwrap_or(false) {
@@ -56,8 +57,7 @@ fn toggle_panel(app: &AppHandle, rect: Rect) {
     let x = position.x + size.width / 2.0 - width / 2.0;
     let y = position.y + size.height + 4.0 * scale;
     let _ = window.set_position(PhysicalPosition::new(x, y));
-    let _ = window.show();
-    let _ = window.set_focus();
+    panel::show(app, true);
 }
 
 /// `20 %` for the active account's 5-hour window, or how long until it comes

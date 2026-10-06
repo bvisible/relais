@@ -1,6 +1,7 @@
 //! Relais: the menu bar app.
 
 mod commands;
+mod panel;
 mod platform;
 mod tray;
 
@@ -16,7 +17,9 @@ fn main() {
     // A menu bar app starting at login or after an update must not take the
     // front from the app in use (macOS 13 still honors the launch activation).
     #[cfg(target_os = "macos")]
-    let builder = builder.activate_ignoring_other_apps(false);
+    let builder = builder
+        .activate_ignoring_other_apps(false)
+        .plugin(tauri_nspanel::init());
     builder
         .invoke_handler(tauri::generate_handler![
             commands::overview,
@@ -36,12 +39,14 @@ fn main() {
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
             tray::create(app.handle())?;
             tray::keep_title_fresh(app.handle().clone());
-            if let Some(window) = app.get_webview_window("main") {
-                #[cfg(target_os = "macos")]
-                platform::open_on_every_space(&window);
+            if let Some(window) = app.get_webview_window(panel::LABEL) {
+                // Fail open: as a plain window the panel still works on the desktop.
+                if let Err(error) = panel::prepare(&window) {
+                    eprintln!("Relais: the panel stays a plain window ({error})");
+                }
                 if pinned {
                     let _ = window.center();
-                    let _ = window.show();
+                    panel::show(app.handle(), false);
                 }
             }
             Ok(())
