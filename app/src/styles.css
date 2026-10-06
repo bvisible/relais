@@ -740,6 +740,13 @@ input:focus-visible {
   text-overflow: ellipsis;
 }
 
+.chip-week {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+
 .chip-state {
   font-size: 10px;
   font-weight: 700;
@@ -878,6 +885,13 @@ input:focus-visible {
 .summary-head {
   display: flex;
   align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.summary-refresh {
+  display: flex;
+  align-items: center;
   justify-content: space-between;
   gap: 8px;
 }

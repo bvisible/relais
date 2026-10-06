@@ -39,6 +39,8 @@ pub enum Error {
     DesktopStillRunning,
     #[error("the Claude desktop app could not be opened")]
     DesktopNotOpened,
+    #[error("this version of Claude Code answers /usage as a conversation")]
+    UsageCommandUnavailable,
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

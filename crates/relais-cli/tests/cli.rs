@@ -12,6 +12,9 @@ const FAKE_CLAUDE: &str = r#"#!/bin/sh
 dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 if [ -n "$CLAUDE_CONFIG_DIR" ]; then global="$CLAUDE_CONFIG_DIR/.claude.json"; else global="$HOME/.claude.json"; fi
 case "$1 $2" in
+  "-p /usage")
+    printf '{"type":"result","num_turns":0,"total_cost_usd":0,"result":"Current session: 3%% used\\nCurrent week (all models): 41%% used · resets Oct 8 at 10pm (Europe/Zurich)\\n"}'
+    exit 0;;
   "auth status")
     if [ -f "$dir/fake-account" ]; then
       email=$(cat "$dir/fake-account")
@@ -394,6 +397,27 @@ fn list_shows_accounts_with_their_usage() {
     );
     assert!(listing.contains("resets in 1h 30m"), "{listing}");
     assert!(listing.contains("resets in 1d 6h"), "{listing}");
+}
+
+#[test]
+fn list_with_refresh_asks_claude_code_for_the_week_of_each_account() {
+    let env = Env::new();
+    env.sign_in_default("main@example.com");
+    assert_ok(&env.run(&["init"]));
+    assert_ok(&env.add_account("work", "work@example.com"));
+
+    let output = env.run(&["list", "--refresh"]);
+
+    assert_ok(&output);
+    let listing = String::from_utf8_lossy(&output.stdout);
+    let row = listing
+        .lines()
+        .find(|l| l.contains("work@example.com"))
+        .unwrap_or_default();
+    assert!(
+        row.contains("41%") && row.contains("resets in"),
+        "{listing}"
+    );
 }
 
 #[test]

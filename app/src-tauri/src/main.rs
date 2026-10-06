@@ -31,6 +31,7 @@ fn main() {
             commands::sign_in_again,
             commands::remove_account,
             commands::switch_desktop,
+            commands::refresh_usage,
             commands::conversations,
             commands::resume,
             commands::add_account,

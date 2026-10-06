@@ -94,6 +94,7 @@ export const api = {
   signInAgain: (alias: string) => call<void>("sign_in_again", { alias }),
   removeAccount: (alias: string) => call<Overview>("remove_account", { alias }),
   switchDesktop: (alias: string) => call<DesktopSwitch>("switch_desktop", { alias }),
+  refreshUsage: (force: boolean) => call<Overview>("refresh_usage", { force }),
   conversations: (limit: number) => call<Conversation[]>("conversations", { limit }),
   resume: (sessionId: string, target: ResumeTarget) => call<void>("resume", { sessionId, target }),
   addAccount: (email: string) => call<void>("add_account", { email }),
@@ -210,6 +211,7 @@ async function preview<T>(command: string, args?: Record<string, unknown>): Prom
     return previewState.accounts.map((a) => ({ alias: a.alias, signedIn: true, email: a.email, plan: "max" })) as T;
   }
   if (command === "open_chrome" || command === "sign_in_again") return undefined as T;
+  if (command === "refresh_usage") await new Promise((resolve) => setTimeout(resolve, args?.force ? 2500 : 300));
   if (command === "switch_desktop") {
     await new Promise((resolve) => setTimeout(resolve, 1200));
     const alias = String(args?.alias);

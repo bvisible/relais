@@ -98,5 +98,6 @@
   "desktop.sign_in": "L'app Claude Desktop s'ouvre sans compte : connecte-toi avec {email}. La prochaine fois, {alias} sera là tout de suite.",
   "desktop.switched": "L'app Claude Desktop est sur {alias}.",
   "desktop.signed_in": "L'app Claude Desktop est sur {alias}, connectée.",
-  "desktop.other_account": "L'app Claude Desktop s'est ouverte sur un autre compte que {alias} : vérifie-la avant de t'en servir."
+  "desktop.other_account": "L'app Claude Desktop s'est ouverte sur un autre compte que {alias} : vérifie-la avant de t'en servir.",
+  "usage.command_unavailable": "Cette version de Claude Code répond à /usage par une conversation : Relais ne le lui redemandera pas."
 }

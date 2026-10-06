@@ -316,6 +316,30 @@ pub async fn account_stats() -> Result<Vec<AccountStats>, String> {
         .collect())
 }
 
+/// Asks Claude Code for accounts' limits (`claude -p /usage`: nothing billed,
+/// nothing saved), one account after the other since each run reads every local
+/// transcript. In the background (`force` false), only accounts whose weekly
+/// reset is unknown or past, at most every six hours; on request, every account
+/// but the one the terminals run on.
+#[tauri::command]
+pub async fn refresh_usage(force: bool) -> Result<Overview, String> {
+    let relais = load()?;
+    if let Some(binary) = platform::claude_binary() {
+        let now = now();
+        for account in &relais.registry.accounts {
+            let wanted = if force {
+                !relais.measured_lately(&account.alias, now)
+            } else {
+                relais.needs_usage_refresh(&account.alias, now)
+            };
+            if wanted {
+                let _ = relais.refresh_usage(&account.alias, &binary, chrono::Local::now());
+            }
+        }
+    }
+    Ok(build_overview(&load()?))
+}
+
 /// Whether each account is still signed in, as Claude Code reports it. Each
 /// check starts Claude Code, so they run side by side.
 #[tauri::command]

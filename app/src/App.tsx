@@ -113,6 +113,21 @@ export function App() {
     }
   }, []);
 
+  // Claude Code tells each account's limits and reset times; accounts the
+  // status line measured lately are skipped on the Rust side.
+  const [refreshing, setRefreshing] = useState(false);
+  const refreshUsage = useCallback(async (force = false) => {
+    if (force) setRefreshing(true);
+    try {
+      setOverview(await api.refreshUsage(force));
+      if (force) setStats(await api.accountStats());
+    } catch {
+      // The figures already shown stay; the next round tries again.
+    } finally {
+      if (force) setRefreshing(false);
+    }
+  }, []);
+
   const loadStats = useCallback(async () => {
     try {
       setStats(await api.accountStats());
@@ -124,8 +139,12 @@ export function App() {
   useEffect(() => {
     void refresh();
     void checkSignIns();
+    void refreshUsage();
     const timer = window.setInterval(() => void refresh(), 15_000);
-    const signInTimer = window.setInterval(() => void checkSignIns(), SIGN_IN_CHECK_EVERY_MS);
+    const signInTimer = window.setInterval(() => {
+      void checkSignIns();
+      void refreshUsage();
+    }, SIGN_IN_CHECK_EVERY_MS);
     const clock = window.setInterval(() => setNow(nowSecs()), 10_000);
     const onFocus = () => void refresh();
     const onKey = (event: KeyboardEvent) => {
@@ -140,7 +159,7 @@ export function App() {
       window.removeEventListener("focus", onFocus);
       window.removeEventListener("keydown", onKey);
     };
-  }, [refresh, checkSignIns]);
+  }, [refresh, checkSignIns, refreshUsage]);
 
   const run = async (action: () => Promise<Overview | void>) => {
     try {
@@ -169,6 +188,7 @@ export function App() {
     setFocus(alias);
     setView("accounts");
     void loadStats();
+    void refreshUsage();
     const stale = !signIns?.checkedAt || nowSecs() - signIns.checkedAt > 120;
     if (stale && !signIns?.checking) void checkSignIns();
   };
@@ -205,6 +225,8 @@ export function App() {
           onSignInAgain={(alias) => run(() => api.signInAgain(alias))}
           onRemove={(alias) => run(() => api.removeAccount(alias)).then(() => loadStats())}
           onSwitchDesktop={switchDesktop}
+          refreshing={refreshing}
+          onRefresh={() => void refreshUsage(true)}
           onAdd={() => setView("add")}
         />
       )}
@@ -285,7 +307,7 @@ function Home(props: {
           </div>
         )}
 
-        {accounts.length > 0 && <AccountsStrip accounts={accounts} signIns={props.signIns} desktopOwner={overview?.desktopOwner ?? null} onOpen={props.onAccounts} />}
+        {accounts.length > 0 && <AccountsStrip accounts={accounts} signIns={props.signIns} desktopOwner={overview?.desktopOwner ?? null} now={now} onOpen={props.onAccounts} />}
 
         {accounts.length > 1 && <WhereBar accounts={accounts} desktopOwner={overview?.desktopOwner ?? null} onSwitch={props.onSwitch} onSwitchDesktop={props.onSwitchDesktop} />}
 
@@ -311,7 +333,7 @@ function Home(props: {
 }
 
 /** The accounts side by side: who runs, who is ready, who rests. */
-function AccountsStrip({ accounts, signIns, desktopOwner, onOpen }: { accounts: Account[]; signIns: SignIns | null; desktopOwner: string | null; onOpen: (alias: string | null) => void }) {
+function AccountsStrip({ accounts, signIns, desktopOwner, now, onOpen }: { accounts: Account[]; signIns: SignIns | null; desktopOwner: string | null; now: number; onOpen: (alias: string | null) => void }) {
   const ready = accounts.filter((a) => !a.limited && !a.active).length;
   const resting = accounts.filter((a) => a.limited).length;
   const connected = signIns?.checkedAt ? signIns.list.filter((s) => s.signedIn).length : null;
@@ -359,6 +381,7 @@ function AccountsStrip({ accounts, signIns, desktopOwner, onOpen }: { accounts: 
                 {account.alias}
               </span>
               <span className={`chip-state ${account.limited ? "muted" : "tinted-text"}`}>{state}</span>
+              <span className="chip-week">{weekReset(account, now) ?? t("weekResetUnknown")}</span>
             </button>
           );
         })}
@@ -470,7 +493,10 @@ function RelayLine({ accounts, best, now, onSwitch }: { accounts: Account[]; bes
       <Avatar color={best.color} label={initial(best.alias)} size={24} />
       <div className="relay-text">
         <div className="relay-title">{t("nextRelay", { alias: best.alias })}</div>
-        <div className="tinted-text tiny">{left == null ? t("readyUnmeasured") : t("nextRelayMargin", { n: left })}</div>
+        <div className="tinted-text tiny">
+          {left == null ? t("readyUnmeasured") : t("nextRelayMargin", { n: left })}
+          {weekReset(best, now) ? ` · ${weekReset(best, now)}` : ""}
+        </div>
       </div>
       <button className="relay-button" onClick={() => onSwitch(best.alias)}>
         {t("passRelay")}
@@ -736,6 +762,8 @@ function AccountsPage(props: {
   onSignInAgain: (alias: string) => void;
   onRemove: (alias: string) => void;
   onSwitchDesktop: (alias: string) => Promise<DesktopSwitch | null>;
+  refreshing: boolean;
+  onRefresh: () => void;
   onAdd: () => void;
 }) {
   const { overview, signIns, now } = props;
@@ -772,7 +800,12 @@ function AccountsPage(props: {
             {signIns?.checking ? t("checking") : signIns?.checkedAt ? [plans.length === 1 ? t("plan", { plan: planName(plans[0]) }) : null, t("checkedAgo", { age: age(signIns.checkedAt, now) })].filter(Boolean).join(" · ") : ""}
           </span>
         </div>
-        <div className="muted tiny">{t("reserveTitle")}</div>
+        <div className="summary-refresh">
+          <span className="muted tiny">{t("reserveTitle")}</span>
+          <button className="button where-button" disabled={props.refreshing} onClick={props.onRefresh} title={t("refreshDetail")}>
+            {props.refreshing ? t("refreshing") : t("refresh")}
+          </button>
+        </div>
         <div className="reserve" aria-hidden="true">
           {accounts.map((a) => (
             <span key={a.alias} className="tinted" style={{ ...tint(a.color), flexGrow: Math.max(margin(a) ?? 0, 2) }} />
@@ -782,6 +815,7 @@ function AccountsPage(props: {
           {accounts.map((a) => (
             <span key={a.alias} className="tinted" style={tint(a.color)}>
               <strong className="tinted-text">{a.alias}</strong> {a.limited ? (a.limitedUntil != null ? t("backIn", { in: inTime(a.limitedUntil, now) }) : t("moodResting")) : `${margin(a) ?? "—"} %`}
+              {!a.limited && weekReset(a, now) ? ` · ${weekReset(a, now)}` : ""}
             </span>
           ))}
         </div>
@@ -944,8 +978,8 @@ function AccountCard(props: {
                 ? t("backIn", { in: inTime(account.limitedUntil, now) })
                 : t("restingUnknownTime")
               : week?.resetsAt != null && week.resetsAt > now
-                ? t("resetsIn", { in: inTime(week.resetsAt, now) })
-                : " "}
+                ? t("resetsInAt", { in: inTime(week.resetsAt, now), time: time(week.resetsAt, now) })
+                : t("weekResetUnknownLong")}
           </div>
         </div>
       </div>
@@ -1044,6 +1078,12 @@ function AccountCard(props: {
       )}
     </article>
   );
+}
+
+/** `↻ 1 j 23 h`: how long until the account's week starts over, when known. */
+function weekReset(account: Account, now: number): string | null {
+  const at = account.limited && account.limitedUntil != null ? account.limitedUntil : account.sevenDay?.resetsAt;
+  return at != null && at > now ? t("weekResetIn", { in: remaining(at, now) }) : null;
 }
 
 function planName(plan: string): string {

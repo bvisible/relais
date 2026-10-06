@@ -28,7 +28,11 @@ enum Commands {
         #[command(subcommand)]
         action: AccountAction,
     },
-    List,
+    List {
+        /// Ask Claude Code for the limits of accounts without a recent reading.
+        #[arg(long)]
+        refresh: bool,
+    },
     Switch {
         target: String,
     },
@@ -127,7 +131,7 @@ fn main() -> ExitCode {
         Commands::Account {
             action: AccountAction::Remove { alias },
         } => commands::account_remove(&alias),
-        Commands::List => commands::list(),
+        Commands::List { refresh } => commands::list(refresh),
         Commands::Switch { target } => commands::switch(&target),
         Commands::Exec { account, args } => commands::exec(account.as_deref(), args),
         Commands::Run { alias, args } => commands::exec(Some(&alias), args),

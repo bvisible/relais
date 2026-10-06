@@ -98,5 +98,6 @@
   "desktop.sign_in": "The Claude desktop app opens without an account: sign in with {email}. Next time, {alias} will be there straight away.",
   "desktop.switched": "The Claude desktop app is on {alias}.",
   "desktop.signed_in": "The Claude desktop app is on {alias}, signed in.",
-  "desktop.other_account": "The Claude desktop app opened on another account than {alias}: check it before using it."
+  "desktop.other_account": "The Claude desktop app opened on another account than {alias}: check it before using it.",
+  "usage.command_unavailable": "This version of Claude Code answers /usage as a conversation: Relais will not ask it again."
 }

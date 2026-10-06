@@ -167,7 +167,7 @@ pub fn init(alias: Option<String>) -> Outcome {
     let mut relais = load()?;
     if !relais.registry.accounts.is_empty() {
         println!("{}", t("init.already", &[]));
-        return list();
+        return list_accounts();
     }
     let status = claude::auth_status(&binary, None)?;
     if !status.logged_in {
@@ -470,7 +470,40 @@ pub fn account_remove(alias: &str) -> Outcome {
     Ok(0)
 }
 
-pub fn list() -> Outcome {
+/// Lists the accounts. With `refresh`, first asks Claude Code (`/usage`,
+/// nothing billed) for the limits of every account the status line has not
+/// measured lately, so each shows when its week starts over.
+pub fn list(refresh: bool) -> Outcome {
+    if refresh {
+        refresh_usage(&load()?);
+    }
+    list_accounts()
+}
+
+fn refresh_usage(relais: &Relais) {
+    let Ok(binary) = claude_binary() else {
+        return;
+    };
+    let now = now();
+    std::thread::scope(|scope| {
+        for account in &relais.registry.accounts {
+            // The account the terminals run on is measured by the status line.
+            if relais.measured_lately(&account.alias, now) {
+                continue;
+            }
+            let binary = &binary;
+            scope.spawn(move || {
+                if let Err(Error::UsageCommandUnavailable) =
+                    relais.refresh_usage(&account.alias, binary, chrono::Local::now())
+                {
+                    warn(t("usage.command_unavailable", &[]));
+                }
+            });
+        }
+    });
+}
+
+fn list_accounts() -> Outcome {
     let relais = load()?;
     require_accounts(&relais)?;
     let now = now();

@@ -5,6 +5,8 @@
 //! the desktop app keeps. Relais never asks Anthropic for them.
 
 use std::cmp::Ordering;
+
+use chrono::{DateTime, Datelike, NaiveDate, TimeZone};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -33,6 +35,8 @@ pub struct Window {
 pub enum UsageSource {
     Statusline,
     DesktopHistory,
+    /// Claude Code's `/usage` command, run for the account by Relais.
+    UsageCommand,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -87,6 +91,95 @@ fn window_from_statusline(value: &Value) -> Option<Window> {
     })
 }
 
+/// Builds a reading from what Claude Code's `/usage` command prints: the share
+/// of the session (5-hour) window and of the week, each with the time it resets
+/// (`resets Oct 8 at 10pm (Europe/Zurich)`). Claude Code writes those times in
+/// the machine's time zone, which is `now`'s.
+pub fn parse_usage_report<Tz: TimeZone>(text: &str, now: DateTime<Tz>) -> Option<UsageReading> {
+    let window = |label: &str| -> Option<Window> {
+        let line = text.lines().find(|l| l.trim_start().starts_with(label))?;
+        let rest = line.trim_start().strip_prefix(label)?;
+        let used = rest.trim().split('%').next()?.trim().parse::<f64>().ok()?;
+        let resets_at = rest
+            .split("resets ")
+            .nth(1)
+            .and_then(|reset| parse_reset(reset, &now));
+        Some(Window {
+            used_percentage: used,
+            resets_at,
+        })
+    };
+    let five_hour = window("Current session:");
+    let seven_day = window("Current week (all models):");
+    if five_hour.is_none() && seven_day.is_none() {
+        return None;
+    }
+    Some(UsageReading {
+        five_hour,
+        seven_day,
+        observed_at: now.timestamp(),
+        session_id: None,
+        source: UsageSource::UsageCommand,
+    })
+}
+
+const MONTHS: [&str; 12] = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+
+/// `Oct 8 at 10pm (Europe/Zurich)`, `Oct 7 at 2:20am`, or a bare time, as the
+/// next such moment in `now`'s time zone.
+fn parse_reset<Tz: TimeZone>(text: &str, now: &DateTime<Tz>) -> Option<i64> {
+    let text = text.split(" (").next()?.trim();
+    let (date, clock) = match text.split_once(" at ") {
+        Some((date, clock)) => (Some(date.trim()), clock.trim()),
+        None => (None, text),
+    };
+    let clock = clock.to_ascii_lowercase().replace(' ', "");
+    let (digits, meridiem) = if let Some(digits) = clock.strip_suffix("pm") {
+        (digits, Some(true))
+    } else if let Some(digits) = clock.strip_suffix("am") {
+        (digits, Some(false))
+    } else {
+        (clock.as_str(), None)
+    };
+    let (hour, minute) = match digits.split_once(':') {
+        Some((hour, minute)) => (hour.parse::<u32>().ok()?, minute.parse::<u32>().ok()?),
+        None => (digits.parse::<u32>().ok()?, 0),
+    };
+    let hour = match meridiem {
+        Some(pm) if (1..=12).contains(&hour) => (hour % 12) + if pm { 12 } else { 0 },
+        Some(_) => return None,
+        None if hour < 24 => hour,
+        None => return None,
+    };
+    let today = now.date_naive();
+    let day = match date {
+        Some(date) => {
+            let (month_name, day) = date.split_once(' ')?;
+            let month = MONTHS.iter().position(|m| month_name.starts_with(m))? as u32 + 1;
+            let day: u32 = day.trim().parse().ok()?;
+            let this_year = NaiveDate::from_ymd_opt(today.year(), month, day)?;
+            if this_year + chrono::Days::new(1) < today {
+                NaiveDate::from_ymd_opt(today.year() + 1, month, day)?
+            } else {
+                this_year
+            }
+        }
+        None => today,
+    };
+    let at = now
+        .timezone()
+        .from_local_datetime(&day.and_hms_opt(hour, minute, 0)?)
+        .earliest()?;
+    let at = if date.is_none() && at.timestamp() < now.timestamp() {
+        at + chrono::Duration::days(1)
+    } else {
+        at
+    };
+    Some(at.timestamp())
+}
+
 /// Builds a reading for `org_id` from the desktop app's `plan-usage-history.json`.
 pub fn reading_from_desktop_history(history: &Value, org_id: &str) -> Option<UsageReading> {
     let (timestamp, usage) = history
@@ -121,6 +214,23 @@ fn to_unix_secs(timestamp: i64) -> i64 {
 }
 
 impl UsageReading {
+    /// Fills the reset times this reading lacks from an older one, when they
+    /// were still ahead at this reading: the window it describes is the same
+    /// one. The desktop app's history never carries reset times.
+    pub fn with_resets_from(mut self, older: &UsageReading) -> UsageReading {
+        let observed_at = self.observed_at;
+        let carry = |window: &mut Option<Window>, older: &Option<Window>| {
+            if let (Some(window), Some(older)) = (window.as_mut(), older) {
+                if window.resets_at.is_none() {
+                    window.resets_at = older.resets_at.filter(|at| *at > observed_at);
+                }
+            }
+        };
+        carry(&mut self.five_hour, &older.five_hour);
+        carry(&mut self.seven_day, &older.seven_day);
+        self
+    }
+
     pub fn five_hour_now(&self, now: i64) -> Option<f64> {
         self.window_now(self.five_hour.as_ref(), FIVE_HOURS_SECS, now)
     }
@@ -458,5 +568,85 @@ mod tests {
                 exact: false
             }
         );
+    }
+
+    mod usage_report {
+        use super::super::*;
+        use chrono::{FixedOffset, TimeZone};
+
+        const REPORT: &str =
+            "You are currently using your subscription to power your Claude Code usage
+
+Current session: 12% used · resets Oct 7 at 2:20am (Europe/Zurich)
+Current week (all models): 90% used · resets Oct 8 at 10pm (Europe/Zurich)
+Current week (Fable): 0% used · resets Oct 8 at 10pm (Europe/Zurich)
+
+What's contributing to your limits usage?";
+
+        fn zurich_now() -> chrono::DateTime<FixedOffset> {
+            FixedOffset::east_opt(2 * 3600)
+                .unwrap()
+                .with_ymd_and_hms(2026, 10, 6, 22, 40, 0)
+                .unwrap()
+        }
+
+        fn local(month: u32, day: u32, hour: u32, minute: u32) -> i64 {
+            FixedOffset::east_opt(2 * 3600)
+                .unwrap()
+                .with_ymd_and_hms(2026, month, day, hour, minute, 0)
+                .unwrap()
+                .timestamp()
+        }
+
+        #[test]
+        fn both_windows_and_their_resets_are_read() {
+            let reading = parse_usage_report(REPORT, zurich_now()).unwrap();
+
+            let five = reading.five_hour.unwrap();
+            assert_eq!(five.used_percentage, 12.0);
+            assert_eq!(five.resets_at, Some(local(10, 7, 2, 20)));
+            let week = reading.seven_day.unwrap();
+            assert_eq!(week.used_percentage, 90.0);
+            assert_eq!(week.resets_at, Some(local(10, 8, 22, 0)));
+            assert_eq!(reading.source, UsageSource::UsageCommand);
+            assert_eq!(reading.observed_at, zurich_now().timestamp());
+        }
+
+        #[test]
+        fn a_window_without_a_reset_keeps_its_share() {
+            let text = "Current session: 0% used\nCurrent week (all models): 100% used · resets Oct 11 at 7pm (Europe/Zurich)\n";
+
+            let reading = parse_usage_report(text, zurich_now()).unwrap();
+
+            assert_eq!(reading.five_hour.unwrap().resets_at, None);
+            assert_eq!(
+                reading.seven_day.unwrap().resets_at,
+                Some(local(10, 11, 19, 0))
+            );
+        }
+
+        #[test]
+        fn a_reset_early_in_the_next_year_is_placed_in_it() {
+            let december = FixedOffset::east_opt(3600)
+                .unwrap()
+                .with_ymd_and_hms(2026, 12, 30, 10, 0, 0)
+                .unwrap();
+            let text =
+                "Current week (all models): 40% used · resets Jan 2 at 9am (Europe/Zurich)\n";
+
+            let reading = parse_usage_report(text, december).unwrap();
+
+            let expected = FixedOffset::east_opt(3600)
+                .unwrap()
+                .with_ymd_and_hms(2027, 1, 2, 9, 0, 0)
+                .unwrap()
+                .timestamp();
+            assert_eq!(reading.seven_day.unwrap().resets_at, Some(expected));
+        }
+
+        #[test]
+        fn text_without_limits_gives_nothing() {
+            assert!(parse_usage_report("You are using an API key.", zurich_now()).is_none());
+        }
     }
 }

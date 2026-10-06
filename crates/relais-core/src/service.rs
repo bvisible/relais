@@ -4,8 +4,9 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use serde_json::Value;
+use serde_json::{json, Value};
 
+use crate::claude::cli as claude;
 use crate::claude::desktop;
 use crate::claude::profile::{self, LinkReport};
 use crate::claude::sync::{self, ConfigFile, SyncOutcome};
@@ -42,6 +43,13 @@ pub struct ConversationCounts {
     /// Unix seconds of the latest sighting.
     pub last_seen: Option<i64>,
 }
+
+/// The status line measured an account this recently: the terminals run on it.
+pub const MEASURED_LATELY: i64 = 10 * 60;
+/// An account whose weekly reset stays unknown is asked again after this long.
+/// Claude Code's `/usage` reads every local transcript to tell what weighs on
+/// the limits: about half a minute of processor time each run.
+pub const USAGE_RETRY_AFTER: i64 = 6 * 3600;
 
 /// How long a sync waits for Claude Code to release a config file.
 pub const SYNC_LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
@@ -272,6 +280,91 @@ impl Relais {
             .collect()
     }
 
+    /// Whether the status line measured `alias` in the last ten minutes, that
+    /// is, terminals are running on it: Claude Code is not asked about it then.
+    pub fn measured_lately(&self, alias: &str, now: i64) -> bool {
+        UsageStore::new(&self.layout.usage_dir())
+            .load(alias)
+            .ok()
+            .flatten()
+            .is_some_and(|reading| {
+                reading.source == usage::UsageSource::Statusline
+                    && now - reading.observed_at < MEASURED_LATELY
+            })
+    }
+
+    /// Whether Claude Code should be asked for `alias`'s limits in the
+    /// background: its weekly reset is unknown or past, and it was not asked in
+    /// the last six hours. A known reset stays right until it passes.
+    pub fn needs_usage_refresh(&self, alias: &str, now: i64) -> bool {
+        let known = self
+            .usage_of(alias)
+            .and_then(|reading| reading.seven_day)
+            .and_then(|week| week.resets_at)
+            .is_some_and(|at| at > now);
+        if known || self.measured_lately(alias, now) {
+            return false;
+        }
+        self.usage_attempts()
+            .get(alias)
+            .is_none_or(|at| now - at >= USAGE_RETRY_AFTER)
+    }
+
+    fn usage_attempts_file(&self) -> PathBuf {
+        self.layout.relais_dir.join("probe").join("attempts.json")
+    }
+
+    fn usage_attempts(&self) -> HashMap<String, i64> {
+        fsutil::read_json(&self.usage_attempts_file())
+            .ok()
+            .flatten()
+            .and_then(|value| serde_json::from_value(value).ok())
+            .unwrap_or_default()
+    }
+
+    /// Asks Claude Code for `alias`'s limits (`claude -p /usage`, nothing billed,
+    /// nothing saved) and stores the reading, reset times included. A Claude
+    /// Code that answered `/usage` as a conversation is not asked again until
+    /// its binary changes.
+    pub fn refresh_usage<Tz: chrono::TimeZone>(
+        &self,
+        alias: &str,
+        binary: &Path,
+        now: chrono::DateTime<Tz>,
+    ) -> Result<Option<UsageReading>> {
+        let account = self
+            .registry
+            .get(alias)
+            .ok_or_else(|| Error::UnknownAccount(alias.to_string()))?;
+        let probe_dir = self.layout.relais_dir.join("probe");
+        let refused = probe_dir.join("refused.json");
+        let binary_stamp = json!({
+            "binary": binary.display().to_string(),
+            "modified": fsutil::modified_secs(binary),
+        });
+        if fsutil::read_json(&refused).ok().flatten().as_ref() == Some(&binary_stamp) {
+            return Ok(None);
+        }
+        fs::create_dir_all(&probe_dir).map_err(|e| Error::io(&probe_dir, e))?;
+        let mut attempts = self.usage_attempts();
+        attempts.insert(alias.to_string(), now.timestamp());
+        let _ = fsutil::write_json_atomic(&self.usage_attempts_file(), &json!(attempts));
+        let text = match claude::usage_report(binary, account.config_dir.as_deref(), &probe_dir) {
+            Err(Error::UsageCommandUnavailable) => {
+                let _ = fsutil::write_json_atomic(&refused, &binary_stamp);
+                return Err(Error::UsageCommandUnavailable);
+            }
+            other => other?,
+        };
+        let Some(reading) = usage::parse_usage_report(&text, now) else {
+            return Ok(None);
+        };
+        UsageStore::new(&self.layout.usage_dir()).save(alias, &reading)?;
+        let _ = HistoryStore::new(&self.layout.usage_dir())
+            .record(alias, Sample::from_reading(&reading));
+        Ok(Some(reading))
+    }
+
     /// The newest reading for an account, from the status line or the desktop app.
     pub fn usage_of(&self, alias: &str) -> Option<UsageReading> {
         let account = self.registry.get(alias)?;
@@ -287,9 +380,9 @@ impl Relais {
         });
         match (stored, desktop) {
             (Some(stored), Some(desktop)) => Some(if desktop.observed_at > stored.observed_at {
-                desktop
+                desktop.with_resets_from(&stored)
             } else {
-                stored
+                stored.with_resets_from(&desktop)
             }),
             (stored, desktop) => stored.or(desktop),
         }
@@ -746,5 +839,151 @@ mod tests {
             relais.account_of_session("cli-parked").as_deref(),
             Some("main")
         );
+    }
+
+    #[test]
+    fn a_newer_reading_without_reset_times_keeps_the_known_ones() {
+        let (_root, relais) = fixture();
+        relais
+            .record_statusline(None, &statusline_input(20.0), NOW - 600)
+            .unwrap();
+        fs::create_dir_all(&relais.layout.desktop_dir).unwrap();
+        let history =
+            json!({"samples": [{"t": NOW * 1000, "org": "org-main", "u": {"fh": 55, "sd": 12}}]});
+        fs::write(relais.layout.desktop_usage_history(), history.to_string()).unwrap();
+
+        let reading = relais.usage_of("main").unwrap();
+
+        assert_eq!(reading.five_hour_now(NOW), Some(55.0));
+        assert_eq!(
+            reading.seven_day.as_ref().unwrap().resets_at,
+            Some(NOW + 86_400)
+        );
+        assert_eq!(
+            reading.five_hour.as_ref().unwrap().resets_at,
+            Some(NOW + 3600)
+        );
+    }
+
+    #[test]
+    fn a_reset_time_already_past_is_not_carried_over() {
+        let (_root, relais) = fixture();
+        relais
+            .record_statusline(None, &statusline_input(20.0), NOW - 600)
+            .unwrap();
+        fs::create_dir_all(&relais.layout.desktop_dir).unwrap();
+        let later = NOW + 2 * 3600;
+        let history =
+            json!({"samples": [{"t": later * 1000, "org": "org-main", "u": {"fh": 5, "sd": 12}}]});
+        fs::write(relais.layout.desktop_usage_history(), history.to_string()).unwrap();
+
+        let reading = relais.usage_of("main").unwrap();
+
+        assert_eq!(reading.five_hour.as_ref().unwrap().resets_at, None);
+        assert_eq!(
+            reading.seven_day.as_ref().unwrap().resets_at,
+            Some(NOW + 86_400)
+        );
+    }
+
+    fn fake_usage_command(dir: &Path, turns: u32) -> PathBuf {
+        let path = dir.join("claude");
+        let script = format!(
+            r#"#!/bin/sh
+printf 'run\n' >> "{runs}"
+printf '{{"type":"result","num_turns":{turns},"total_cost_usd":0,"result":"Current session: 4%% used\\nCurrent week (all models): 37%% used · resets Oct 8 at 10pm (Europe/Zurich)\\n"}}'
+"#,
+            runs = dir.join("runs").display()
+        );
+        fs::write(&path, script).unwrap();
+        fs::set_permissions(&path, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+        path
+    }
+
+    fn zurich(at: i64) -> chrono::DateTime<chrono::FixedOffset> {
+        chrono::DateTime::from_timestamp(at, 0)
+            .unwrap()
+            .with_timezone(&chrono::FixedOffset::east_opt(2 * 3600).unwrap())
+    }
+
+    #[test]
+    fn the_usage_command_gives_an_account_its_reset_times() {
+        let (root, relais) = fixture();
+        let binary = fake_usage_command(root.path(), 0);
+
+        let reading = relais
+            .refresh_usage("work", &binary, zurich(NOW))
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(reading.seven_day.as_ref().unwrap().used_percentage, 37.0);
+        let stored = relais.usage_of("work").unwrap();
+        assert!(stored.seven_day.unwrap().resets_at.is_some());
+        assert!(relais.layout.relais_dir.join("probe").is_dir());
+    }
+
+    #[test]
+    fn an_account_whose_weekly_reset_is_known_is_not_asked_until_it_passes() {
+        let (_root, relais) = fixture();
+        relais
+            .record_statusline(None, &statusline_input(5.0), NOW)
+            .unwrap();
+
+        assert!(!relais.needs_usage_refresh("main", NOW + 60));
+        assert!(!relais.needs_usage_refresh("main", NOW + 80_000));
+        assert!(relais.needs_usage_refresh("main", NOW + 86_401));
+    }
+
+    #[test]
+    fn an_account_without_a_known_reset_is_asked_at_most_every_six_hours() {
+        let (root, relais) = fixture();
+        let binary = fake_usage_command_without_reset(root.path());
+        assert!(relais.needs_usage_refresh("work", NOW));
+
+        relais.refresh_usage("work", &binary, zurich(NOW)).unwrap();
+
+        assert!(!relais.needs_usage_refresh("work", NOW + 3600));
+        assert!(relais.needs_usage_refresh("work", NOW + 6 * 3600 + 1));
+    }
+
+    #[test]
+    fn the_account_the_terminals_run_on_counts_as_measured_lately() {
+        let (_root, relais) = fixture();
+        relais
+            .record_statusline(None, &statusline_input(5.0), NOW)
+            .unwrap();
+
+        assert!(relais.measured_lately("main", NOW + 60));
+        assert!(!relais.measured_lately("main", NOW + 11 * 60));
+        assert!(!relais.measured_lately("work", NOW));
+    }
+
+    fn fake_usage_command_without_reset(dir: &Path) -> PathBuf {
+        let path = dir.join("claude-no-reset");
+        fs::write(
+            &path,
+            "#!/bin/sh\nprintf '{\"type\":\"result\",\"num_turns\":0,\"result\":\"Current week (all models): 0%% used\\\\n\"}'\n",
+        )
+        .unwrap();
+        fs::set_permissions(&path, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+        path
+    }
+
+    #[test]
+    fn a_usage_command_answered_as_a_conversation_is_not_tried_again() {
+        let (root, relais) = fixture();
+        let binary = fake_usage_command(root.path(), 1);
+
+        assert!(matches!(
+            relais.refresh_usage("work", &binary, zurich(NOW)),
+            Err(Error::UsageCommandUnavailable)
+        ));
+        assert!(relais
+            .refresh_usage("work", &binary, zurich(NOW + 900))
+            .unwrap()
+            .is_none());
+
+        let runs = fs::read_to_string(root.path().join("runs")).unwrap();
+        assert_eq!(runs.lines().count(), 1);
     }
 }
