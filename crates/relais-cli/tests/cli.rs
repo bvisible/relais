@@ -464,6 +464,70 @@ fn account_add_by_email_derives_the_name_and_signs_in_through_its_own_chrome_pro
 }
 
 #[test]
+fn account_login_signs_an_account_in_again_through_its_own_chrome_profile() {
+    let env = Env::new();
+    env.sign_in_default("main@example.com");
+    assert_ok(&env.run(&["init"]));
+    assert_ok(&env.add_account("hello@example.com", "hello@example.com"));
+    fs::remove_file(env.home().join("browser-env")).unwrap();
+
+    let output = env
+        .relais()
+        .args(["account", "login", "hello"])
+        .env("FAKE_LOGIN_EMAIL", "hello@example.com")
+        .output()
+        .unwrap();
+
+    assert_ok(&output);
+    assert!(
+        text(&output).contains("hello@example.com"),
+        "{}",
+        text(&output)
+    );
+    let browser = fs::read_to_string(env.home().join("browser-env")).unwrap();
+    let opener = fs::read_to_string(&browser).unwrap_or_default();
+    assert!(
+        opener.contains("--profile-directory=Relais-hello"),
+        "BROWSER={browser}: {opener}"
+    );
+}
+
+#[test]
+fn account_login_with_another_email_is_signed_out_again() {
+    let env = Env::new();
+    env.sign_in_default("main@example.com");
+    assert_ok(&env.run(&["init"]));
+    assert_ok(&env.add_account("hello@example.com", "hello@example.com"));
+
+    let output = env
+        .relais()
+        .args(["account", "login", "hello"])
+        .env("FAKE_LOGIN_EMAIL", "someone-else@example.com")
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let message = text(&output);
+    assert!(
+        message.contains("someone-else@example.com") && message.contains("hello@example.com"),
+        "{message}"
+    );
+    assert!(env.log().contains("ARGS=auth logout"), "{}", env.log());
+}
+
+#[test]
+fn account_login_names_an_unknown_account() {
+    let env = Env::new();
+    env.sign_in_default("main@example.com");
+    assert_ok(&env.run(&["init"]));
+
+    let output = env.run(&["account", "login", "nobody"]);
+
+    assert!(!output.status.success());
+    assert!(text(&output).contains("nobody"), "{}", text(&output));
+}
+
+#[test]
 fn account_add_refuses_a_sign_in_with_another_email() {
     let env = Env::new();
     env.sign_in_default("main@example.com");

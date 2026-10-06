@@ -483,47 +483,6 @@ input:focus-visible {
   gap: 8px;
 }
 
-.tiles {
-  padding: 0 12px;
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.tile {
-  padding: 12px;
-  border-radius: 18px;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  transition: border-color 0.3s;
-}
-
-.tile.is-best {
-  border-color: var(--c-edge);
-}
-
-.tile-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-}
-
-.tile-names {
-  min-width: 0;
-}
-
-.tile-alias {
-  font-size: 13px;
-  font-weight: 800;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
 .relay-button {
   min-height: 34px;
   padding: 0 14px;
@@ -555,20 +514,6 @@ input:focus-visible {
   min-height: 44px;
   border-radius: 14px;
   font-size: 14px;
-}
-
-.resting-box {
-  min-height: 34px;
-  padding: 0 8px;
-  border-radius: 12px;
-  border: 1px dashed var(--line-soft);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--muted);
-  text-align: center;
 }
 
 /* ---- Conversations ------------------------------------------------------ */
@@ -705,7 +650,406 @@ input:focus-visible {
   border-color: var(--c-edge);
 }
 
-/* ---- Pages: colors, settings, adding an account ------------------------- */
+/* ---- The accounts strip and the next relay ------------------------------ */
+
+.strip {
+  margin: 0 12px;
+}
+
+.strip-head {
+  padding: 0 8px 6px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.strip-title {
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--ink-2);
+}
+
+.strip-chips {
+  display: grid;
+  gap: 6px;
+}
+
+.chip {
+  min-width: 0;
+  min-height: 94px;
+  padding: 10px 6px 8px;
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--body);
+  cursor: pointer;
+  transition:
+    border-color 0.3s,
+    background-color 0.3s;
+}
+
+.chip:hover {
+  border-color: var(--c-edge);
+}
+
+.chip.is-active {
+  border-color: var(--c-edge);
+  background: var(--c-wash);
+}
+
+.chip-rings {
+  position: relative;
+  width: 44px;
+  height: 44px;
+}
+
+.chip-initial {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--c-ink);
+}
+
+.chip-alert {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--coral);
+  box-shadow: 0 0 0 2px var(--surface);
+}
+
+.chip-alias {
+  max-width: 100%;
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chip-state {
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.relay-line {
+  margin: 8px 12px 0;
+  padding: 10px 12px;
+  border-radius: 16px;
+  background: var(--surface);
+  border: 1px solid var(--c-edge);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.relay-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.relay-title {
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.strip + .hero,
+.strip + .resting-card {
+  margin-top: 10px;
+}
+
+/* ---- The accounts page -------------------------------------------------- */
+
+.summary {
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.summary-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.reserve {
+  height: 12px;
+  display: flex;
+  gap: 4px;
+}
+
+.reserve span {
+  flex-basis: 0;
+  border-radius: 6px;
+  background: var(--c);
+}
+
+.reserve-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  font-size: 11px;
+  color: var(--ink-2);
+}
+
+.account-card {
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  scroll-margin-top: 12px;
+}
+
+.account-card.is-active {
+  border-color: var(--c-edge);
+}
+
+.account-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.account-names {
+  flex: 1;
+  min-width: 0;
+}
+
+.account-alias {
+  font-size: 15px;
+  font-weight: 800;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border-radius: 99px;
+  background: var(--track);
+  color: var(--ink-2);
+  font-size: 11px;
+  font-weight: 700;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.badge-dot {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.badge-ok {
+  background: color-mix(in srgb, #4cc38a var(--chip-amount), transparent);
+  color: color-mix(in srgb, #4cc38a 58%, var(--tint-mix));
+}
+
+.badge-off {
+  background: var(--coral-wash);
+  color: var(--coral);
+}
+
+.windows {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.window-box {
+  padding: 10px;
+  border-radius: 12px;
+  background: var(--ground);
+}
+
+.window-value {
+  font-family: var(--display);
+  font-size: 20px;
+  font-weight: 800;
+}
+
+.window-note {
+  color: var(--ink-2);
+}
+
+.chart {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.chart-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+.bar-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+}
+
+.bar-value {
+  min-height: 12px;
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--c-ink);
+}
+
+.bar {
+  width: 100%;
+  border-radius: 4px;
+  background: var(--c);
+  transition: height 0.6s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.bar.is-empty {
+  background: var(--track);
+}
+
+.bar.is-limited {
+  background: var(--coral);
+}
+
+.bar.is-unknown {
+  background: transparent;
+  border-top: 2px dotted var(--line-soft);
+  border-radius: 0;
+}
+
+.bar-label {
+  font-size: 9px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.stats-row {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.weeks {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.week-bars {
+  height: 22px;
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+}
+
+.week-bar {
+  width: 14px;
+  border-radius: 3px;
+  background: var(--c-ink);
+}
+
+.week-bar.is-full {
+  background: var(--coral);
+}
+
+.counts {
+  text-align: right;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--ink);
+}
+
+.small-swatches {
+  gap: 6px;
+}
+
+.small-swatches .swatch {
+  width: 22px;
+  height: 22px;
+}
+
+.actions {
+  display: flex;
+  gap: 6px;
+}
+
+.actions .button {
+  flex: 1 1 auto;
+  min-height: 34px;
+  padding: 0 8px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.confirm {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--coral-wash);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.button-accent {
+  border-color: var(--c-edge);
+  background: var(--c-wash);
+  font-weight: 800;
+}
+
+.button-danger {
+  border-color: var(--coral-edge);
+  color: var(--coral);
+}
+
+.add-button {
+  min-height: 44px;
+  border-style: dashed;
+  font-weight: 800;
+}
+
+/* ---- Pages: accounts, settings, adding an account ----------------------- */
 
 .page {
   flex: 1;
@@ -715,6 +1059,11 @@ input:focus-visible {
   flex-direction: column;
   gap: 12px;
   overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.page::-webkit-scrollbar {
+  display: none;
 }
 
 .page p {
@@ -817,29 +1166,6 @@ input:focus-visible {
   justify-content: center;
 }
 
-.color-cards {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.color-card {
-  padding: 12px 14px;
-  border-radius: 18px;
-  background: var(--surface);
-  border: 1px solid var(--c-edge);
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.color-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-}
-
 .swatches {
   display: flex;
   flex-wrap: wrap;
@@ -864,16 +1190,6 @@ input:focus-visible {
 
 .swatch.is-selected {
   border-color: var(--ink);
-}
-
-.toggle-row {
-  margin-top: auto;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  font-size: 13px;
-  line-height: 1.45;
-  cursor: pointer;
 }
 
 .error {

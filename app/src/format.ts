@@ -44,6 +44,18 @@ export function inTime(ts: number, now: number): string {
   return t("inDuration", { d: remaining(ts, now) });
 }
 
+/** The weekdays of the last `count` days, oldest first, the last one being today. */
+export function dayLabels(now: number, count: number): string[] {
+  const names = t("weekdays").split(",");
+  const today = new Date(now * 1000);
+  return Array.from({ length: count }, (_, index) => {
+    const back = count - 1 - index;
+    if (back === 0) return t("today");
+    const day = new Date(today.getFullYear(), today.getMonth(), today.getDate() - back);
+    return names[day.getDay()];
+  });
+}
+
 export function age(ts: number, now: number): string {
   const seconds = Math.max(0, now - ts);
   if (seconds < 10) return t("ageNow");

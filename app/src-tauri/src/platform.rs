@@ -144,6 +144,34 @@ pub fn resume_in_desktop(layout: &Layout, session_id: &str, cwd: &str) -> Result
 }
 
 /// French when macOS or the environment prefers it, for the menu bar title.
+/// Opens Chrome in `profile`, the account's own Chrome profile, or in the
+/// usual profile when the account has none (the account Claude Code started with).
+pub fn open_chrome(profile: Option<&str>) -> Result<(), String> {
+    let app = "/Applications/Google Chrome.app";
+    if !Path::new(app).exists() {
+        return Err("Google Chrome is not installed".into());
+    }
+    let mut open = Command::new("/usr/bin/open");
+    match profile {
+        Some(profile) => {
+            open.args(["-na", app, "--args"])
+                .arg(format!("--profile-directory={profile}"));
+        }
+        None => {
+            open.args(["-a", app]);
+        }
+    }
+    let status = open
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map_err(|e| e.to_string())?;
+    status
+        .success()
+        .then_some(())
+        .ok_or_else(|| "Chrome did not open".to_string())
+}
+
 pub fn prefers_french() -> bool {
     static FRENCH: OnceLock<bool> = OnceLock::new();
     *FRENCH.get_or_init(|| {

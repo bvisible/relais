@@ -8,6 +8,8 @@ export type UsageWindow = { used: number; resetsAt: number | null };
 export type Account = {
   alias: string;
   email: string | null;
+  /** The account's own Chrome profile; `null` for the account Claude Code started with. */
+  chromeProfile: string | null;
   /** `#RRGGBB`. */
   color: string;
   active: boolean;
@@ -43,6 +45,26 @@ export type Conversation = {
   activity: number[];
 };
 
+export type AccountStats = {
+  alias: string;
+  /** The last seven days, oldest first: the share of the weekly quota used
+   * (`null` without a reading that day), and whether a window was full. */
+  days: { used: number | null; limited: boolean }[];
+  /** Highest weekly share in each of the last four weeks, oldest first. */
+  weeks: (number | null)[];
+  conversationsToday: number;
+  conversationsWeek: number;
+  lastSeen: number | null;
+};
+
+export type AccountSignIn = {
+  alias: string;
+  /** `null` when Claude Code could not be asked. */
+  signedIn: boolean | null;
+  email: string | null;
+  plan: string | null;
+};
+
 export type ResumeTarget = "terminal" | "desktop";
 
 const inTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -55,6 +77,11 @@ export const api = {
   overview: () => call<Overview>("overview"),
   switchAccount: (alias: string) => call<Overview>("switch_account", { alias }),
   setColor: (alias: string, color: string) => call<Overview>("set_color", { alias, color }),
+  accountStats: () => call<AccountStats[]>("account_stats"),
+  accountSignIns: () => call<AccountSignIn[]>("account_sign_ins"),
+  openChrome: (alias: string) => call<void>("open_chrome", { alias }),
+  signInAgain: (alias: string) => call<void>("sign_in_again", { alias }),
+  removeAccount: (alias: string) => call<Overview>("remove_account", { alias }),
   conversations: (limit: number) => call<Conversation[]>("conversations", { limit }),
   resume: (sessionId: string, target: ResumeTarget) => call<void>("resume", { sessionId, target }),
   addAccount: (email: string) => call<void>("add_account", { email }),
@@ -88,6 +115,7 @@ let previewState: Overview = {
     {
       alias: "main",
       email: "main@example.com",
+      chromeProfile: null,
       color: "#4CC38A",
       active: true,
       fiveHour:
@@ -102,6 +130,7 @@ let previewState: Overview = {
     {
       alias: "studio",
       email: "studio@example.com",
+      chromeProfile: "Relais-studio",
       color: "#A78BFA",
       active: false,
       fiveHour: { used: 0, resetsAt: null },
@@ -113,6 +142,7 @@ let previewState: Overview = {
     {
       alias: "spare",
       email: "spare@example.com",
+      chromeProfile: "Relais-spare",
       color: "#4C8DFF",
       active: false,
       fiveHour: { used: 0, resetsAt: null },
@@ -130,6 +160,8 @@ let previewState: Overview = {
   now: nowSecs(),
 };
 
+const days = (used: (number | null)[], limited: number[]) => used.map((value, index) => ({ used: value, limited: limited.includes(index) }));
+
 async function preview<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   if (command === "switch_account") {
     const alias = String(args?.alias);
@@ -145,6 +177,23 @@ async function preview<T>(command: string, args?: Record<string, unknown>): Prom
       accounts: previewState.accounts.map((a) => (a.alias === alias ? { ...a, color: String(args?.color) } : a)),
     };
   }
+  if (command === "remove_account") {
+    const alias = String(args?.alias);
+    previewState = { ...previewState, accounts: previewState.accounts.filter((a) => a.alias !== alias) };
+  }
+  if (command === "account_stats") {
+    const stats: Record<string, Omit<AccountStats, "alias">> = {
+      main: { days: days([14, 22, 6, null, 3, 18, 12], [1]), weeks: [100, 87, 100, 55], conversationsToday: 6, conversationsWeek: 31, lastSeen: nowSecs() - 60 },
+      studio: { days: days([30, 28, 25, 17, 0, null, null], [2, 3, 4]), weeks: [40, 72, 100, 100], conversationsToday: 0, conversationsWeek: 9, lastSeen: nowSecs() - 7 * 3600 },
+      spare: { days: days([null, null, null, null, null, null, 4], []), weeks: [null, 100, 62, 4], conversationsToday: 0, conversationsWeek: 2, lastSeen: nowSecs() - 4 * 86400 },
+    };
+    return previewState.accounts.map((a) => ({ alias: a.alias, ...(stats[a.alias] ?? { days: [], weeks: [], conversationsToday: 0, conversationsWeek: 0, lastSeen: null }) })) as T;
+  }
+  if (command === "account_sign_ins") {
+    await new Promise((resolve) => setTimeout(resolve, 900));
+    return previewState.accounts.map((a) => ({ alias: a.alias, signedIn: true, email: a.email, plan: "max" })) as T;
+  }
+  if (command === "open_chrome" || command === "sign_in_again") return undefined as T;
   if (command === "set_statusline") previewState = { ...previewState, statusline: Boolean(args?.enabled) };
   if (command === "set_shell") previewState = { ...previewState, shell: Boolean(args?.enabled) };
   if (command === "suggest_alias") {

@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { inTime, isLive, margin, mood, remaining } from "../src/format.ts";
+import { dayLabels, inTime, isLive, margin, mood, remaining } from "../src/format.ts";
 
 const NOW = 1_791_270_000;
 
@@ -44,4 +44,10 @@ test("a conversation is live for two minutes after its last message", () => {
   assert.equal(isLive(NOW - 30, NOW), true);
   assert.equal(isLive(NOW - 119, NOW), true);
   assert.equal(isLive(NOW - 121, NOW), false);
+});
+
+test("the last seven days are named by their weekday, ending with today", () => {
+  // Tuesday 6 October 2026, 15:00 in Zurich.
+  const tuesday = Date.UTC(2026, 9, 6, 13, 0, 0) / 1000;
+  assert.deepEqual(dayLabels(tuesday, 7), ["mer.", "jeu.", "ven.", "sam.", "dim.", "lun.", "auj."]);
 });

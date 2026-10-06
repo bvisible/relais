@@ -395,6 +395,59 @@ fn write_browser_opener(account_dir: &Path, chrome_profile: &str) -> Option<Path
     Some(path)
 }
 
+/// Signs an account in again, in its own profile; the sign-in page opens in
+/// the account's own Chrome profile. A sign-in with another email is signed
+/// out again, so the profile never carries the wrong account.
+pub fn account_login(alias: &str) -> Outcome {
+    let binary = claude_binary()?;
+    let relais = load()?;
+    let account = relais
+        .registry
+        .get(alias)
+        .cloned()
+        .ok_or_else(|| Error::UnknownAccount(alias.to_string()))?;
+    prepare(&relais, &account);
+    println!("{}", t("login.signin", &[("alias", alias)]));
+    let config_dir = account.config_dir.as_deref();
+    let mut login = claude::command_for_profile(&binary, config_dir);
+    login.args(["auth", "login", "--claudeai"]);
+    if let (Some(dir), Some(chrome_profile)) = (config_dir, &account.chrome_profile) {
+        let account_dir = dir.parent().unwrap_or(dir);
+        if let Some(opener) = write_browser_opener(account_dir, chrome_profile) {
+            login.env("BROWSER", opener);
+        }
+    }
+    let login = login
+        .status()
+        .map_err(|e| Failure::Message(t("error.generic", &[("details", &e.to_string())])))?;
+    let status = claude::auth_status(&binary, config_dir)
+        .ok()
+        .filter(|s| s.logged_in && login.success())
+        .ok_or_else(|| Failure::Message(t("error.relogin_failed", &[("alias", alias)])))?;
+    if let (Some(expected), Some(actual)) = (&account.email, &status.email) {
+        if !expected.eq_ignore_ascii_case(actual) {
+            let _ = claude::command_for_profile(&binary, config_dir)
+                .args(["auth", "logout"])
+                .status();
+            return Err(Failure::Message(t(
+                "error.relogin_wrong_account",
+                &[("expected", expected), ("actual", actual)],
+            )));
+        }
+    }
+    println!(
+        "{}",
+        t(
+            "login.done",
+            &[
+                ("alias", alias),
+                ("email", status.email.as_deref().unwrap_or("?"))
+            ]
+        )
+    );
+    Ok(0)
+}
+
 pub fn account_remove(alias: &str) -> Outcome {
     let mut relais = load()?;
     let removed = relais.registry.remove(alias)?;

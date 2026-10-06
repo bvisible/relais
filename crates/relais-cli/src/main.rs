@@ -70,6 +70,7 @@ enum Commands {
 #[derive(Subcommand)]
 enum AccountAction {
     Add { alias: String },
+    Login { alias: String },
     Remove { alias: String },
 }
 
@@ -100,6 +101,7 @@ fn localized_command() -> clap::Command {
     command.mut_subcommand("account", |account| {
         account
             .mut_subcommand("add", |sub| sub.about(t("help.account.add", &[])))
+            .mut_subcommand("login", |sub| sub.about(t("help.account.login", &[])))
             .mut_subcommand("remove", |sub| sub.about(t("help.account.remove", &[])))
     })
 }
@@ -115,6 +117,9 @@ fn main() -> ExitCode {
         Commands::Account {
             action: AccountAction::Add { alias },
         } => commands::account_add(&alias),
+        Commands::Account {
+            action: AccountAction::Login { alias },
+        } => commands::account_login(&alias),
         Commands::Account {
             action: AccountAction::Remove { alias },
         } => commands::account_remove(&alias),

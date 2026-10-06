@@ -82,5 +82,10 @@
   "in.minutes": "{m} min",
   "in.hours": "{h} h {mm}",
   "in.days": "{d} j {h} h",
-  "in.days_only": "{d} j"
+  "in.days_only": "{d} j",
+  "help.account.login": "Reconnecter un compte, dans son propre profil et son profil Chrome",
+  "login.signin": "Reconnecte-toi avec le compte de {alias} dans la fenêtre Chrome qui s'ouvre…",
+  "login.done": "{alias} est reconnecté ({email}).",
+  "error.relogin_failed": "La connexion de {alias} n'a pas abouti.",
+  "error.relogin_wrong_account": "Tu t'es connecté avec {actual}, pas {expected} : cette connexion est annulée. Recommence et choisis {expected} sur la page de connexion."
 }

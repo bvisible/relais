@@ -12,6 +12,7 @@ use crate::claude::sync::{self, ConfigFile, SyncOutcome};
 use crate::claude::transcripts::{self, Conversation, ACTIVITY_BUCKETS};
 use crate::error::{Error, Result};
 use crate::fsutil;
+use crate::history::{self, HistoryStore, Sample};
 use crate::layout::Layout;
 use crate::registry::{Account, Registry};
 use crate::sessions::SessionAccounts;
@@ -29,6 +30,17 @@ pub struct RecentConversation {
     pub last_activity: i64,
     /// Messages per five minutes over the last hour, oldest first.
     pub activity: Vec<u32>,
+}
+
+/// The conversations an account carried, as Relais saw them run.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ConversationCounts {
+    /// Seen since the start of the local day.
+    pub today: usize,
+    /// Seen in the last seven days.
+    pub week: usize,
+    /// Unix seconds of the latest sighting.
+    pub last_seen: Option<i64>,
 }
 
 /// How long a sync waits for Claude Code to release a config file.
@@ -116,13 +128,17 @@ impl Relais {
             return Ok(None);
         };
         UsageStore::new(&self.layout.usage_dir()).save(&account.alias, &reading)?;
+        // Best effort: a missed sample leaves a gap in the figures, nothing more.
+        let _ = HistoryStore::new(&self.layout.usage_dir())
+            .record(&account.alias, Sample::from_reading(&reading));
         Ok(Some(account.alias.clone()))
     }
 
     /// Every session Relais can place, by transcript id, with the alias of the
-    /// account that last ran it. The status line sees the terminal sessions and
-    /// the desktop app's sidebar lists its own; the later sighting wins.
-    pub fn session_accounts(&self) -> HashMap<String, String> {
+    /// account that last ran it and when it was seen. The status line sees the
+    /// terminal sessions and the desktop app's sidebar lists its own; the later
+    /// sighting wins.
+    pub fn session_sightings(&self) -> HashMap<String, (String, i64)> {
         let mut seen: HashMap<String, (String, i64)> =
             SessionAccounts::new(&self.layout.sessions_file())
                 .load()
@@ -144,9 +160,53 @@ impl Relais {
                 seen.insert(id, (account.alias.clone(), session.seen_at));
             }
         }
-        seen.into_iter()
+        seen
+    }
+
+    /// Every session Relais can place, with the alias of the account that last ran it.
+    pub fn session_accounts(&self) -> HashMap<String, String> {
+        self.session_sightings()
+            .into_iter()
             .map(|(id, (alias, _))| (id, alias))
             .collect()
+    }
+
+    /// Per account, the conversations seen since `day_start` (the local
+    /// midnight) and in the last seven days.
+    pub fn conversation_counts(
+        &self,
+        now: i64,
+        day_start: i64,
+    ) -> HashMap<String, ConversationCounts> {
+        let mut counts: HashMap<String, ConversationCounts> = HashMap::new();
+        for (alias, seen_at) in self.session_sightings().into_values() {
+            let entry = counts.entry(alias).or_default();
+            if seen_at >= day_start {
+                entry.today += 1;
+            }
+            if seen_at >= now - 7 * 86_400 {
+                entry.week += 1;
+            }
+            entry.last_seen = Some(entry.last_seen.map_or(seen_at, |last| last.max(seen_at)));
+        }
+        counts
+    }
+
+    /// What `alias` used over time, oldest first: Relais's own readings and
+    /// the desktop app's history for the account's organization.
+    pub fn usage_history(&self, alias: &str) -> Vec<Sample> {
+        let Some(account) = self.registry.get(alias) else {
+            return Vec::new();
+        };
+        let mut samples = HistoryStore::new(&self.layout.usage_dir()).load(alias);
+        if let Some(org) = account.org_id.as_deref() {
+            if let Ok(Some(desktop)) = fsutil::read_json(&self.layout.desktop_usage_history()) {
+                samples.extend(history::from_desktop_history(&desktop, org));
+            }
+        }
+        samples.sort_by_key(|s| s.t);
+        samples.dedup_by_key(|s| s.t);
+        samples
     }
 
     /// The latest conversations started by a person, most recent message first,
@@ -571,5 +631,63 @@ mod tests {
         assert_eq!(recent[1].activity.iter().sum::<u32>(), 1);
         assert_eq!(recent[0].account, None);
         assert_eq!(recent[0].last_activity, NOW - 120);
+    }
+
+    #[test]
+    fn status_line_readings_build_the_usage_history() {
+        let (_root, relais) = fixture();
+
+        relais
+            .record_statusline(None, &statusline_input(20.0), NOW)
+            .unwrap();
+        relais
+            .record_statusline(None, &statusline_input(35.0), NOW + 60)
+            .unwrap();
+
+        let history = relais.usage_history("main");
+        let five: Vec<Option<f64>> = history.iter().map(|s| s.fh).collect();
+        assert_eq!(five, vec![Some(20.0), Some(35.0)]);
+    }
+
+    #[test]
+    fn the_desktop_history_joins_the_usage_history_of_its_account() {
+        let (_root, relais) = fixture();
+        fs::create_dir_all(&relais.layout.desktop_dir).unwrap();
+        let history = json!({"samples": [{"t": (NOW - 3600) * 1000, "org": "org-main", "u": {"fh": 5, "sd": 9}}]});
+        fs::write(relais.layout.desktop_usage_history(), history.to_string()).unwrap();
+        relais
+            .record_statusline(None, &statusline_input(20.0), NOW)
+            .unwrap();
+
+        let times: Vec<i64> = relais.usage_history("main").iter().map(|s| s.t).collect();
+
+        assert_eq!(times, vec![NOW - 3600, NOW]);
+    }
+
+    #[test]
+    fn conversations_are_counted_per_account_for_today_and_the_week() {
+        let (_root, relais) = fixture();
+        let seen = |session: &str, dir: Option<PathBuf>, when: i64| {
+            relais
+                .record_statusline(
+                    dir.as_deref(),
+                    &serde_json::to_vec(&json!({"session_id": session})).unwrap(),
+                    when,
+                )
+                .unwrap();
+        };
+        let work = Some(relais.layout.profile_dir("work"));
+        seen("s-1", None, NOW);
+        seen("s-2", work.clone(), NOW - 2 * 86_400);
+        seen("s-3", work, NOW - 10 * 86_400);
+        desktop_record(&relais, "acc-work", "cli-9", NOW - 3600);
+
+        let counts = relais.conversation_counts(NOW, NOW - 2 * 3600);
+
+        assert_eq!(counts["main"].today, 1);
+        assert_eq!(counts["main"].week, 1);
+        assert_eq!(counts["work"].today, 1);
+        assert_eq!(counts["work"].week, 2);
+        assert_eq!(counts["work"].last_seen, Some(NOW - 3600));
     }
 }

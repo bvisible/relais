@@ -2,7 +2,8 @@
 
 use std::path::Path;
 
-use relais_core::claude::transcripts;
+use relais_core::claude::{cli as claude, transcripts};
+use relais_core::history;
 use relais_core::integration;
 use relais_core::registry;
 use relais_core::service::Relais;
@@ -26,6 +27,9 @@ pub struct UsageWindowView {
 pub struct AccountView {
     alias: String,
     email: Option<String>,
+    /// The account's own Chrome profile; `None` for the account Claude Code
+    /// started with, which uses the usual profile.
+    chrome_profile: Option<String>,
     /// `#RRGGBB`: the color chosen for the account, or the one it was given.
     color: String,
     active: bool,
@@ -111,6 +115,7 @@ pub fn build_overview(relais: &Relais) -> Overview {
             AccountView {
                 alias: account.alias.clone(),
                 email: account.email.clone(),
+                chrome_profile: account.chrome_profile.clone(),
                 color: relais
                     .registry
                     .color_of(&account.alias)
@@ -218,6 +223,144 @@ pub fn resume(window: WebviewWindow, session_id: String, target: String) -> Resu
     }
     let _ = window.hide();
     Ok(())
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DayView {
+    /// Share of the weekly quota used that day; `None` without a reading that day.
+    used: Option<f64>,
+    /// A window was full that day.
+    limited: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountStats {
+    alias: String,
+    /// The last seven days, oldest first.
+    days: Vec<DayView>,
+    /// Highest weekly share in each of the last four weeks, oldest first.
+    weeks: Vec<Option<f64>>,
+    conversations_today: usize,
+    conversations_week: usize,
+    last_seen: Option<i64>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountSignIn {
+    alias: String,
+    /// `None` when Claude Code could not be asked.
+    signed_in: Option<bool>,
+    email: Option<String>,
+    plan: Option<String>,
+}
+
+/// Local midnight and the local offset, for the per-day figures.
+fn local_day() -> (i64, chrono::FixedOffset) {
+    let now = chrono::Local::now();
+    let midnight = now
+        .date_naive()
+        .and_hms_opt(0, 0, 0)
+        .and_then(|t| t.and_local_timezone(chrono::Local).earliest())
+        .map(|t| t.timestamp())
+        .unwrap_or_else(|| now.timestamp());
+    (midnight, *now.offset())
+}
+
+/// What each account used, day by day and week by week, and the
+/// conversations it carried. Read from local files only.
+#[tauri::command]
+pub async fn account_stats() -> Result<Vec<AccountStats>, String> {
+    let relais = load()?;
+    let now = now();
+    let (midnight, offset) = local_day();
+    let counts = relais.conversation_counts(now, midnight);
+    Ok(relais
+        .registry
+        .accounts
+        .iter()
+        .map(|account| {
+            let samples = relais.usage_history(&account.alias);
+            let count = counts.get(&account.alias).cloned().unwrap_or_default();
+            AccountStats {
+                alias: account.alias.clone(),
+                days: history::daily_usage(&samples, now, 7, offset)
+                    .into_iter()
+                    .map(|day| DayView {
+                        used: day.used,
+                        limited: day.limited,
+                    })
+                    .collect(),
+                weeks: history::weekly_peaks(&samples, now, 4),
+                conversations_today: count.today,
+                conversations_week: count.week,
+                last_seen: count.last_seen,
+            }
+        })
+        .collect())
+}
+
+/// Whether each account is still signed in, as Claude Code reports it. Each
+/// check starts Claude Code, so they run side by side.
+#[tauri::command]
+pub async fn account_sign_ins() -> Result<Vec<AccountSignIn>, String> {
+    let relais = load()?;
+    let binary = platform::claude_binary();
+    let checks: Vec<_> = relais
+        .registry
+        .accounts
+        .iter()
+        .map(|account| {
+            let alias = account.alias.clone();
+            let config_dir = account.config_dir.clone();
+            let binary = binary.clone();
+            std::thread::spawn(move || {
+                let status = binary
+                    .as_deref()
+                    .and_then(|b| claude::auth_status(b, config_dir.as_deref()).ok());
+                AccountSignIn {
+                    alias,
+                    signed_in: status.as_ref().map(|s| s.logged_in),
+                    email: status.as_ref().and_then(|s| s.email.clone()),
+                    plan: status.and_then(|s| s.subscription_type),
+                }
+            })
+        })
+        .collect();
+    Ok(checks
+        .into_iter()
+        .filter_map(|check| check.join().ok())
+        .collect())
+}
+
+#[tauri::command]
+pub fn open_chrome(alias: String) -> Result<(), String> {
+    let relais = load()?;
+    let account = relais.registry.get(&alias).ok_or("unknown account")?;
+    platform::open_chrome(account.chrome_profile.as_deref())
+}
+
+/// Opens Terminal on `relais account login <alias>`: the sign-in page opens in
+/// the account's own Chrome profile.
+#[tauri::command]
+pub fn sign_in_again(window: WebviewWindow, alias: String) -> Result<(), String> {
+    let layout = layout()?;
+    let home = layout.home.display().to_string();
+    platform::open_terminal_with(&layout, &home, &["account", "login", &alias])?;
+    let _ = window.hide();
+    Ok(())
+}
+
+/// Removes an account from Relais. Its sign-in and its profile stay on disk.
+#[tauri::command]
+pub fn remove_account(app: AppHandle, alias: String) -> Result<Overview, String> {
+    let mut relais = load()?;
+    relais.registry.remove(&alias).map_err(text)?;
+    relais.save().map_err(text)?;
+    tray::refresh_title(&app);
+    Ok(build_overview(&relais))
 }
 
 /// The name Relais will give the account of `email`.

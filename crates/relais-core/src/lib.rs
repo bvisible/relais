@@ -8,6 +8,7 @@
 pub mod claude;
 pub mod error;
 pub mod fsutil;
+pub mod history;
 pub mod integration;
 pub mod layout;
 pub mod registry;

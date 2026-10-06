@@ -82,5 +82,10 @@
   "in.minutes": "{m} min",
   "in.hours": "{h}h {mm}m",
   "in.days": "{d}d {h}h",
-  "in.days_only": "{d}d"
+  "in.days_only": "{d}d",
+  "help.account.login": "Sign an account in again, in its own profile and Chrome profile",
+  "login.signin": "Sign in again with the account for {alias} in the Chrome window that opens…",
+  "login.done": "{alias} is signed in again ({email}).",
+  "error.relogin_failed": "Sign-in did not complete for {alias}.",
+  "error.relogin_wrong_account": "You signed in as {actual}, not {expected}: that sign-in was undone. Try again and choose {expected} on the sign-in page."
 }

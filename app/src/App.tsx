@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useState, type CSSProperties, type ReactNode } from "react";
 
-import { api, type Account, type Conversation, type Overview, type PaletteColor, type ResumeTarget } from "./api";
-import { age, inTime, isLive, margin, mood, remaining, time, type Mood } from "./format";
+import { api, type Account, type AccountSignIn, type AccountStats, type Conversation, type Overview, type PaletteColor, type ResumeTarget } from "./api";
+import { age, dayLabels, inTime, isLive, margin, mood, remaining, time, type Mood } from "./format";
 import { t, type MessageKey } from "./i18n";
 
-type View = "home" | "settings" | "add" | "colors";
+type View = "home" | "settings" | "add" | "accounts";
+
+/** What Claude Code last said about each account's sign-in. */
+type SignIns = { checkedAt: number | null; list: AccountSignIn[]; checking: boolean };
 
 /** The tint of Relais when it does not follow the active account. */
 const DEFAULT_ACCENT = "#4CC38A";
@@ -13,6 +16,7 @@ const NEUTRAL = "#93A29B";
 const FOLLOW_THEME_KEY = "relais.followTheme";
 const SHOWN_CONVERSATIONS = 3;
 const FETCHED_CONVERSATIONS = 12;
+const SIGN_IN_CHECK_EVERY_MS = 10 * 60_000;
 const PALETTE_KEYS = ["sage", "ocean", "violet", "coral", "amber", "rose", "lime", "sky"];
 const PROJECT_COLORS = ["#4C8DFF", "#F2B33D", "#A78BFA", "#38BDF8", "#F472B6", "#C3D94E", "#FF7A6B", "#4CC38A"];
 const MOOD_KEYS: Record<Mood, MessageKey> = {
@@ -70,8 +74,11 @@ function paletteName(color: PaletteColor): string {
 
 export function App() {
   const [view, setView] = useState<View>("home");
+  const [focus, setFocus] = useState<string | null>(null);
   const [overview, setOverview] = useState<Overview | null>(null);
   const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [stats, setStats] = useState<AccountStats[]>([]);
+  const [signIns, setSignIns] = useState<SignIns | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(nowSecs);
   const [followTheme, setFollowTheme] = useState(readFollowTheme);
@@ -88,9 +95,31 @@ export function App() {
     }
   }, []);
 
+  // Each check starts Claude Code once per account: done at launch, then
+  // every ten minutes, and when the accounts page opens on stale results.
+  const checkSignIns = useCallback(async () => {
+    setSignIns((previous) => (previous ? { ...previous, checking: true } : { checkedAt: null, list: [], checking: true }));
+    try {
+      const list = await api.accountSignIns();
+      setSignIns({ checkedAt: nowSecs(), list, checking: false });
+    } catch {
+      setSignIns((previous) => (previous ? { ...previous, checking: false } : null));
+    }
+  }, []);
+
+  const loadStats = useCallback(async () => {
+    try {
+      setStats(await api.accountStats());
+    } catch (e) {
+      setError(String(e));
+    }
+  }, []);
+
   useEffect(() => {
     void refresh();
+    void checkSignIns();
     const timer = window.setInterval(() => void refresh(), 15_000);
+    const signInTimer = window.setInterval(() => void checkSignIns(), SIGN_IN_CHECK_EVERY_MS);
     const clock = window.setInterval(() => setNow(nowSecs()), 10_000);
     const onFocus = () => void refresh();
     const onKey = (event: KeyboardEvent) => {
@@ -100,11 +129,12 @@ export function App() {
     window.addEventListener("keydown", onKey);
     return () => {
       window.clearInterval(timer);
+      window.clearInterval(signInTimer);
       window.clearInterval(clock);
       window.removeEventListener("focus", onFocus);
       window.removeEventListener("keydown", onKey);
     };
-  }, [refresh]);
+  }, [refresh, checkSignIns]);
 
   const run = async (action: () => Promise<Overview | void>) => {
     try {
@@ -117,6 +147,14 @@ export function App() {
     }
   };
 
+  const openAccounts = (alias: string | null) => {
+    setFocus(alias);
+    setView("accounts");
+    void loadStats();
+    const stale = !signIns?.checkedAt || nowSecs() - signIns.checkedAt > 120;
+    if (stale && !signIns?.checking) void checkSignIns();
+  };
+
   const active = overview?.accounts.find((a) => a.active) ?? null;
   const accent = followTheme && active ? active.color : DEFAULT_ACCENT;
 
@@ -126,29 +164,38 @@ export function App() {
         <Home
           overview={overview}
           conversations={conversations}
+          signIns={signIns}
           now={now}
           onSwitch={(alias) => run(() => api.switchAccount(alias))}
           onResume={(id, target) => run(() => api.resume(id, target))}
-          onAdd={() => setView("add")}
-          onColors={() => setView("colors")}
+          onAccounts={openAccounts}
           onSettings={() => setView("settings")}
         />
       )}
-      {view === "colors" && overview && (
-        <Colors
+      {view === "accounts" && overview && (
+        <AccountsPage
+          overview={overview}
+          stats={stats}
+          signIns={signIns}
+          focus={focus}
+          now={now}
+          onBack={() => setView("home")}
+          onSwitch={(alias) => run(() => api.switchAccount(alias))}
+          onColor={(alias, hex) => run(() => api.setColor(alias, hex))}
+          onOpenChrome={(alias) => run(() => api.openChrome(alias))}
+          onSignInAgain={(alias) => run(() => api.signInAgain(alias))}
+          onRemove={(alias) => run(() => api.removeAccount(alias)).then(() => loadStats())}
+          onAdd={() => setView("add")}
+        />
+      )}
+      {view === "settings" && overview && (
+        <Settings
           overview={overview}
           followTheme={followTheme}
           onFollowTheme={(on) => {
             setFollowTheme(on);
             writeFollowTheme(on);
           }}
-          onColor={(alias, hex) => run(() => api.setColor(alias, hex))}
-          onClose={() => setView("home")}
-        />
-      )}
-      {view === "settings" && overview && (
-        <Settings
-          overview={overview}
           onBack={() => setView("home")}
           onStatusline={(enabled) => run(() => api.setStatusline(enabled))}
           onShell={(enabled) => run(() => api.setShell(enabled))}
@@ -157,7 +204,7 @@ export function App() {
       {view === "add" && (
         <AddAccount
           onBack={() => {
-            setView("home");
+            setView("accounts");
             void refresh();
           }}
           onRefresh={refresh}
@@ -178,11 +225,11 @@ export function App() {
 function Home(props: {
   overview: Overview | null;
   conversations: Conversation[];
+  signIns: SignIns | null;
   now: number;
   onSwitch: (alias: string) => void;
   onResume: (id: string, target: ResumeTarget) => void;
-  onAdd: () => void;
-  onColors: () => void;
+  onAccounts: (alias: string | null) => void;
   onSettings: () => void;
 }) {
   const { overview, conversations, now } = props;
@@ -190,7 +237,6 @@ function Home(props: {
   const active = accounts.find((a) => a.active) ?? null;
   const best = accounts.find((a) => a.alias === overview?.best && !a.active) ?? null;
   const handingOff = active?.limited && best && !best.limited ? best : null;
-  const others = accounts.filter((a) => !a.active && a.alias !== handingOff?.alias);
   const byAlias = new Map(accounts.map((a) => [a.alias, a]));
 
   return (
@@ -218,35 +264,20 @@ function Home(props: {
           </div>
         )}
 
+        {accounts.length > 0 && <AccountsStrip accounts={accounts} signIns={props.signIns} onOpen={props.onAccounts} />}
+
         {active && (active.limited ? <RestingHero account={active} handoff={handingOff} now={now} onSwitch={props.onSwitch} /> : <Hero account={active} now={now} />)}
 
         {active && mood(active) === "tiring" && best && <Nudge account={active} best={best} onSwitch={props.onSwitch} />}
 
-        {others.length > 0 && (
-          <section aria-labelledby="relay-title">
-            <div className="section-head">
-              <h2 id="relay-title" className="section-title">
-                {t("relayTitle")}
-              </h2>
-              {best && !handingOff && <span className="muted tiny">{t("nextBest", { alias: best.alias })}</span>}
-            </div>
-            <div className="tiles">
-              {others.map((account) => (
-                <Tile key={account.alias} account={account} isBest={account.alias === best?.alias} now={now} onSwitch={props.onSwitch} />
-              ))}
-            </div>
-          </section>
-        )}
+        {active && !handingOff && mood(active) !== "tiring" && accounts.length > 1 && <RelayLine accounts={accounts} best={best} now={now} onSwitch={props.onSwitch} />}
 
         <Sessions conversations={conversations} accounts={byAlias} now={now} onResume={props.onResume} />
       </div>
 
       <footer className="footer">
-        <button className="button" onClick={props.onAdd}>
-          {t("addShort")}
-        </button>
-        <button className="button" onClick={props.onColors}>
-          {t("colors")}
+        <button className="button button-accent" onClick={() => props.onAccounts(null)}>
+          {t("accountsButton", { n: accounts.length })}
         </button>
         <button className="button" onClick={props.onSettings}>
           {t("settings")}
@@ -255,6 +286,80 @@ function Home(props: {
     </>
   );
 }
+
+/** The accounts side by side: who runs, who is ready, who rests. */
+function AccountsStrip({ accounts, signIns, onOpen }: { accounts: Account[]; signIns: SignIns | null; onOpen: (alias: string | null) => void }) {
+  const ready = accounts.filter((a) => !a.limited && !a.active).length;
+  const resting = accounts.filter((a) => a.limited).length;
+  const connected = signIns?.checkedAt ? signIns.list.filter((s) => s.signedIn).length : null;
+  const heading =
+    connected == null
+      ? accounts.length === 1
+        ? t("accountsCountOne")
+        : t("accountsCount", { n: accounts.length })
+      : connected === accounts.length
+        ? accounts.length === 1
+          ? t("accountsConnectedOne")
+          : t("accountsConnected", { n: accounts.length })
+        : t("accountsConnectedPartial", { n: connected, total: accounts.length });
+  const parts = [ready === 1 ? t("readyCountOne") : ready > 1 ? t("readyCount", { n: ready }) : null, resting > 0 ? t("restingCount", { n: resting }) : null].filter(Boolean);
+  return (
+    <section className="strip" aria-label={heading}>
+      <div className="strip-head">
+        <span className="strip-title">{heading}</span>
+        {parts.length > 0 && <span className="muted tiny">{parts.join(" · ")}</span>}
+      </div>
+      <div className="strip-chips" style={{ gridTemplateColumns: `repeat(${Math.min(accounts.length, 3)}, minmax(0, 1fr))` }}>
+        {accounts.map((account) => {
+          const left = margin(account);
+          const signIn = signIns?.list.find((s) => s.alias === account.alias);
+          const state = account.limited
+            ? t("chipResting")
+            : left == null
+              ? t("chipUnknown")
+              : account.active
+                ? t("chipActive", { n: left })
+                : t("chipReady", { n: left });
+          return (
+            <button key={account.alias} className={`chip tinted ${account.active ? "is-active" : ""}`} style={tint(account.color)} onClick={() => onOpen(account.alias)}>
+              <span className="chip-rings">
+                <Rings size="chip" five={account.fiveHour?.used ?? 0} week={account.sevenDay?.used ?? 0} />
+                <span className="chip-initial">{initial(account.alias)}</span>
+                {signIn?.signedIn === false && <span className="chip-alert" title={t("signedOut")} />}
+              </span>
+              <span className="chip-alias">{account.alias}</span>
+              <span className={`chip-state ${account.limited ? "muted" : "tinted-text"}`}>{state}</span>
+            </button>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+/** The account to hand over to next, in one line, or when the next one is back. */
+function RelayLine({ accounts, best, now, onSwitch }: { accounts: Account[]; best: Account | null; now: number; onSwitch: (alias: string) => void }) {
+  if (!best) {
+    const back = accounts
+      .filter((a) => !a.active && a.limitedUntil != null)
+      .sort((a, b) => (a.limitedUntil ?? 0) - (b.limitedUntil ?? 0))[0];
+    return <p className="muted small pad">{back?.limitedUntil != null ? t("noRelayBack", { alias: back.alias, in: inTime(back.limitedUntil, now) }) : t("noRelay")}</p>;
+  }
+  const left = margin(best);
+  return (
+    <div className="relay-line tinted" style={tint(best.color)}>
+      <Avatar color={best.color} label={initial(best.alias)} size={24} />
+      <div className="relay-text">
+        <div className="relay-title">{t("nextRelay", { alias: best.alias })}</div>
+        <div className="tinted-text tiny">{left == null ? t("readyUnmeasured") : t("nextRelayMargin", { n: left })}</div>
+      </div>
+      <button className="relay-button" onClick={() => onSwitch(best.alias)}>
+        {t("passRelay")}
+      </button>
+    </div>
+  );
+}
+
 
 function Hero({ account, now }: { account: Account; now: number }) {
   const state = mood(account);
@@ -351,32 +456,6 @@ function Nudge({ account, best, onSwitch }: { account: Account; best: Account; o
   );
 }
 
-function Tile({ account, isBest, now, onSwitch }: { account: Account; isBest: boolean; now: number; onSwitch: (alias: string) => void }) {
-  const resting = account.limited;
-  const left = margin(account);
-  return (
-    <article className={`tile tinted ${isBest ? "is-best" : ""}`} style={tint(account.color)}>
-      <div className="tile-head">
-        <Rings size="tile" five={account.fiveHour?.used ?? 0} week={account.sevenDay?.used ?? 0} />
-        <div className="tile-names">
-          <div className="tile-alias">{account.alias}</div>
-          <div className={`tiny ${resting ? "muted" : "tinted-text"}`}>{resting ? t("moodResting") : left == null ? t("readyUnmeasured") : t("ready", { n: left })}</div>
-        </div>
-      </div>
-      {resting ? (
-        <div className="resting-box">
-          <MoonIcon />
-          {account.limitedUntil != null ? t("backIn", { in: inTime(account.limitedUntil, now) }) : t("restingUnknown")}
-        </div>
-      ) : (
-        <button className="relay-button" onClick={() => onSwitch(account.alias)}>
-          {t("passRelay")}
-        </button>
-      )}
-    </article>
-  );
-}
-
 function Sessions({ conversations, accounts, now, onResume }: { conversations: Conversation[]; accounts: Map<string, Account>; now: number; onResume: (id: string, target: ResumeTarget) => void }) {
   const shown = conversations.slice(0, SHOWN_CONVERSATIONS);
   const today = new Date(now * 1000).toDateString();
@@ -448,6 +527,7 @@ function Pulse({ values }: { values: number[] }) {
 const RING_SIZES = {
   hero: { box: 128, outer: { r: 56, width: 12 }, inner: { r: 40, width: 9 } },
   tile: { box: 40, outer: { r: 16, width: 5 }, inner: { r: 9, width: 4 } },
+  chip: { box: 44, outer: { r: 19, width: 4 }, inner: { r: 12.5, width: 3 } },
 };
 
 /** The 5-hour window outside, the week inside. */
@@ -514,64 +594,280 @@ function PromptIcon({ size = 15 }: { size?: number }) {
   );
 }
 
-// ---- Colors ----------------------------------------------------------------
+// ---- Accounts --------------------------------------------------------------
 
-function Colors(props: { overview: Overview; followTheme: boolean; onFollowTheme: (on: boolean) => void; onColor: (alias: string, hex: string) => void; onClose: () => void }) {
-  const { overview } = props;
-  const same = (a: string, b: string) => a.toUpperCase() === b.toUpperCase();
+function AccountsPage(props: {
+  overview: Overview;
+  stats: AccountStats[];
+  signIns: SignIns | null;
+  focus: string | null;
+  now: number;
+  onBack: () => void;
+  onSwitch: (alias: string) => void;
+  onColor: (alias: string, hex: string) => void;
+  onOpenChrome: (alias: string) => void;
+  onSignInAgain: (alias: string) => void;
+  onRemove: (alias: string) => void;
+  onAdd: () => void;
+}) {
+  const { overview, signIns, now } = props;
+  const accounts = [...overview.accounts].sort((a, b) => Number(b.active) - Number(a.active));
+  const connected = signIns?.checkedAt ? signIns.list.filter((s) => s.signedIn).length : null;
+  const plans = [...new Set((signIns?.list ?? []).map((s) => s.plan).filter((p): p is string => !!p))];
+  const heading =
+    connected == null
+      ? t("accountsCount", { n: accounts.length })
+      : connected === accounts.length
+        ? accounts.length === 1
+          ? t("accountsConnectedOne")
+          : t("accountsConnected", { n: accounts.length })
+        : t("accountsConnectedPartial", { n: connected, total: accounts.length });
+
+  useEffect(() => {
+    if (!props.focus) return;
+    document.getElementById(`account-${props.focus}`)?.scrollIntoView({ block: "start" });
+  }, [props.focus]);
+
   return (
     <div className="page">
       <div className="page-head">
-        <h1 className="page-title">{t("colors")}</h1>
-        <button className="button" onClick={props.onClose}>
-          {t("close")}
+        <h1 className="page-title">{t("accountsTitle")}</h1>
+        <button className="button" onClick={props.onBack}>
+          {t("back")}
         </button>
       </div>
-      <p className="muted small">{t("colorsIntro")}</p>
-      <div className="color-cards">
-        {overview.accounts.map((account) => {
-          const current = overview.palette.find((p) => same(p.hex, account.color));
-          return (
-            <div key={account.alias} className="color-card tinted" style={tint(account.color)}>
-              <div className="color-head">
-                <Avatar color={account.color} label={initial(account.alias)} size={28} />
-                <strong className="ellipsis">{account.alias}</strong>
-                {current && <span className="tinted-text tiny strong push">{paletteName(current)}</span>}
-              </div>
-              <div className="swatches" role="group" aria-label={account.alias}>
-                {overview.palette.map((color) => {
-                  const selected = same(color.hex, account.color);
-                  return (
-                    <button
-                      key={color.hex}
-                      className={`swatch ${selected ? "is-selected" : ""}`}
-                      style={{ backgroundColor: color.hex }}
-                      aria-label={t("colorFor", { color: paletteName(color), alias: account.alias })}
-                      aria-pressed={selected}
-                      onClick={() => props.onColor(account.alias, color.hex)}
-                    />
-                  );
-                })}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-      <label className="toggle-row">
-        <input type="checkbox" className="check" checked={props.followTheme} onChange={(e) => props.onFollowTheme(e.target.checked)} />
-        <span>
-          <span className="strong">{t("followTheme")}</span>
-          <br />
-          <span className="muted small">{t("followThemeDetail")}</span>
-        </span>
-      </label>
+
+      <section className="card summary">
+        <div className="summary-head">
+          <span className="strong">{heading}</span>
+          <span className="muted tiny">
+            {signIns?.checking ? t("checking") : signIns?.checkedAt ? [plans.length === 1 ? t("plan", { plan: planName(plans[0]) }) : null, t("checkedAgo", { age: age(signIns.checkedAt, now) })].filter(Boolean).join(" · ") : ""}
+          </span>
+        </div>
+        <div className="muted tiny">{t("reserveTitle")}</div>
+        <div className="reserve" aria-hidden="true">
+          {accounts.map((a) => (
+            <span key={a.alias} className="tinted" style={{ ...tint(a.color), flexGrow: Math.max(margin(a) ?? 0, 2) }} />
+          ))}
+        </div>
+        <div className="reserve-legend">
+          {accounts.map((a) => (
+            <span key={a.alias} className="tinted" style={tint(a.color)}>
+              <strong className="tinted-text">{a.alias}</strong> {a.limited ? (a.limitedUntil != null ? t("backIn", { in: inTime(a.limitedUntil, now) }) : t("moodResting")) : `${margin(a) ?? "—"} %`}
+            </span>
+          ))}
+        </div>
+      </section>
+
+      {accounts.map((account) => (
+        <AccountCard
+          key={account.alias}
+          account={account}
+          stats={props.stats.find((s) => s.alias === account.alias) ?? null}
+          signIn={signIns?.list.find((s) => s.alias === account.alias) ?? null}
+          checking={!!signIns?.checking}
+          palette={overview.palette}
+          now={now}
+          onSwitch={props.onSwitch}
+          onColor={props.onColor}
+          onOpenChrome={props.onOpenChrome}
+          onSignInAgain={props.onSignInAgain}
+          onRemove={props.onRemove}
+        />
+      ))}
+
+      <button className="button add-button" onClick={props.onAdd}>
+        {t("addAccountButton")}
+      </button>
     </div>
   );
 }
 
+function AccountCard(props: {
+  account: Account;
+  stats: AccountStats | null;
+  signIn: AccountSignIn | null;
+  checking: boolean;
+  palette: PaletteColor[];
+  now: number;
+  onSwitch: (alias: string) => void;
+  onColor: (alias: string, hex: string) => void;
+  onOpenChrome: (alias: string) => void;
+  onSignInAgain: (alias: string) => void;
+  onRemove: (alias: string) => void;
+}) {
+  const { account, stats, signIn, now } = props;
+  const [confirming, setConfirming] = useState(false);
+  const five = account.fiveHour;
+  const week = account.sevenDay;
+  const signedOut = signIn?.signedIn === false;
+  const hasDays = !!stats && stats.days.some((d) => d.used != null);
+  const maxDay = Math.max(...(stats?.days ?? []).map((d) => d.used ?? 0), 1);
+  const needsLegend = !!stats && stats.days.some((d) => d.used == null || d.limited);
+  const labels = dayLabels(now, stats?.days.length || 7);
+  const same = (a: string, b: string) => a.toUpperCase() === b.toUpperCase();
+  const today = stats?.conversationsToday ?? 0;
+
+  return (
+    <article id={`account-${account.alias}`} className={`card account-card tinted ${account.active ? "is-active" : ""}`} style={tint(account.color)}>
+      <div className="account-head">
+        <Avatar color={account.color} label={initial(account.alias)} size={30} />
+        <div className="account-names">
+          <div className="account-alias">{account.alias}</div>
+          <div className="muted tiny ellipsis">{account.email ?? signIn?.email ?? ""}</div>
+        </div>
+        {account.active ? (
+          <span className="mood">{t("active")}</span>
+        ) : !account.limited ? (
+          <button className="relay-button" onClick={() => props.onSwitch(account.alias)}>
+            {t("passRelay")}
+          </button>
+        ) : null}
+      </div>
+
+      <div className="badges">
+        {signIn == null ? (
+          <span className="badge">{props.checking ? t("checking") : t("signInUnknown")}</span>
+        ) : signIn.signedIn ? (
+          <span className="badge badge-ok">
+            <span className="badge-dot" />
+            {t("signedIn")}
+          </span>
+        ) : (
+          <span className="badge badge-off">
+            <span className="badge-dot" />
+            {t("signedOut")}
+          </span>
+        )}
+        {signIn?.plan && <span className="badge">{planName(signIn.plan)}</span>}
+        <span className="badge">{account.chromeProfile ? t("chromeProfile", { profile: account.chromeProfile }) : t("chromeUsual")}</span>
+      </div>
+
+      <div className="windows">
+        <div className="window-box">
+          <div className="muted tiny">{t("fiveHourLabel")}</div>
+          <div className="window-value">{five ? `${Math.round(five.used)} %` : "—"}</div>
+          <div className="tiny window-note">{five?.resetsAt != null && five.resetsAt > now ? t("resetsIn", { in: inTime(five.resetsAt, now) }) : t("nothingUsed")}</div>
+        </div>
+        <div className="window-box">
+          <div className="muted tiny">{t("weekLabel")}</div>
+          <div className="window-value">{week ? `${Math.round(week.used)} %` : "—"}</div>
+          <div className="tiny window-note">
+            {account.limited
+              ? account.limitedUntil != null
+                ? t("backIn", { in: inTime(account.limitedUntil, now) })
+                : t("restingUnknownTime")
+              : week?.resetsAt != null && week.resetsAt > now
+                ? t("resetsIn", { in: inTime(week.resetsAt, now) })
+                : " "}
+          </div>
+        </div>
+      </div>
+
+      {stats && (hasDays || stats.weeks.some((w) => w != null)) ? (
+        <>
+          <div className="chart">
+            <div className="chart-head">
+              <span className="muted tiny">{t("weekByDay")}</span>
+              <span className="muted tiny">{t("weekByDayUnit")}</span>
+            </div>
+            <div className="bars" role="img" aria-label={t("weekByDay")}>
+              {stats.days.map((day, index) => {
+                const used = day.used ?? 0;
+                const title = day.used == null ? t("dayNoReading") : `${Math.round(used)} %${day.limited ? ` · ${t("dayLimited")}` : ""}`;
+                const kind = day.used == null ? "is-unknown" : day.limited ? "is-limited" : used > 0 ? "" : "is-empty";
+                return (
+                  <div key={index} className="bar-col" title={title}>
+                    <span className="bar-value">{used >= 1 ? Math.round(used) : ""}</span>
+                    <span className={`bar ${kind}`} style={{ height: `${used > 0 ? Math.max(4, Math.round((used / maxDay) * 34)) : day.limited ? 6 : 3}px` }} />
+                    <span className="bar-label">{labels[index]}</span>
+                  </div>
+                );
+              })}
+            </div>
+            {needsLegend && <div className="muted tiny">{t("chartLegend")}</div>}
+          </div>
+          <div className="stats-row">
+            <div className="weeks">
+              <span className="muted tiny">{t("lastWeeks")}</span>
+              <div className="week-bars" role="img" aria-label={t("lastWeeks")}>
+                {stats.weeks.map((value, index) => (
+                  <span key={index} className={`week-bar ${value != null && value >= 100 ? "is-full" : ""}`} title={value == null ? "—" : `${Math.round(value)} %`} style={{ height: `${value == null ? 3 : Math.max(3, Math.round((value / 100) * 22))}px` }} />
+                ))}
+              </div>
+            </div>
+            <div className="counts">
+              <div>{today <= 1 ? t("conversationsTodayOne", { n: today }) : t("conversationsToday", { n: today })}</div>
+              <div className="muted">
+                {t("conversationsWeek", { n: stats.conversationsWeek })}
+                {stats.lastSeen != null ? ` · ${t("lastActivity", { age: age(stats.lastSeen, now) })}` : ""}
+              </div>
+            </div>
+          </div>
+        </>
+      ) : (
+        <p className="muted tiny">{t("noStatsYet")}</p>
+      )}
+
+      <div className="swatches small-swatches" role="group" aria-label={t("colorsOf", { alias: account.alias })}>
+        {props.palette.map((color) => {
+          const selected = same(color.hex, account.color);
+          return (
+            <button
+              key={color.hex}
+              className={`swatch ${selected ? "is-selected" : ""}`}
+              style={{ backgroundColor: color.hex }}
+              aria-label={t("colorFor", { color: paletteName(color), alias: account.alias })}
+              aria-pressed={selected}
+              onClick={() => props.onColor(account.alias, color.hex)}
+            />
+          );
+        })}
+      </div>
+
+      {confirming ? (
+        <div className="confirm">
+          <span className="small">{t("removeConfirm", { alias: account.alias })}</span>
+          <div className="actions">
+            <button className="button" onClick={() => setConfirming(false)}>
+              {t("cancel")}
+            </button>
+            <button
+              className="button button-danger"
+              onClick={() => {
+                setConfirming(false);
+                props.onRemove(account.alias);
+              }}
+            >
+              {t("removeYes")}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="actions">
+          <button className="button" onClick={() => props.onOpenChrome(account.alias)}>
+            {t("openChrome")}
+          </button>
+          <button className={`button ${signedOut ? "button-accent" : ""}`} onClick={() => props.onSignInAgain(account.alias)}>
+            {t("signInAgain")}
+          </button>
+          <button className="button button-danger" onClick={() => setConfirming(true)}>
+            {t("remove")}
+          </button>
+        </div>
+      )}
+    </article>
+  );
+}
+
+function planName(plan: string): string {
+  return plan.charAt(0).toUpperCase() + plan.slice(1);
+}
+
+
 // ---- Settings and adding an account ----------------------------------------
 
-function Settings(props: { overview: Overview; onBack: () => void; onStatusline: (enabled: boolean) => void; onShell: (enabled: boolean) => void }) {
+function Settings(props: { overview: Overview; followTheme: boolean; onFollowTheme: (on: boolean) => void; onBack: () => void; onStatusline: (enabled: boolean) => void; onShell: (enabled: boolean) => void }) {
   const { overview } = props;
   const rows = [
     { id: "statusline", title: t("statuslineTitle"), detail: t("statuslineDetail"), on: overview.statusline, set: props.onStatusline },
@@ -599,6 +895,17 @@ function Settings(props: { overview: Overview; onBack: () => void; onStatusline:
         ))}
       </div>
       {!overview.cliFound && <p className="muted small">{t("cliMissing")}</p>}
+      <div className="card list">
+        <div className="list-row">
+          <div className="list-text">
+            <label htmlFor="follow-theme" className="strong">
+              {t("followTheme")}
+            </label>
+            <div className="muted small">{t("followThemeDetail")}</div>
+          </div>
+          <input id="follow-theme" type="checkbox" className="check" checked={props.followTheme} onChange={(e) => props.onFollowTheme(e.target.checked)} />
+        </div>
+      </div>
       <p className="muted small">{t("neverAlone")}</p>
       <div className="grow" />
       <button className="button" onClick={() => void api.quit()}>
