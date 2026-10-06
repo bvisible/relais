@@ -44,7 +44,8 @@ export const api = {
   switchAccount: (alias: string) => call<Overview>("switch_account", { alias }),
   conversations: (limit: number) => call<Conversation[]>("conversations", { limit }),
   resume: (sessionId: string, target: ResumeTarget) => call<void>("resume", { sessionId, target }),
-  addAccount: (alias: string) => call<void>("add_account", { alias }),
+  addAccount: (email: string) => call<void>("add_account", { email }),
+  suggestAlias: (email: string) => call<string>("suggest_alias", { email }),
   setStatusline: (enabled: boolean) => call<Overview>("set_statusline", { enabled }),
   setShell: (enabled: boolean) => call<Overview>("set_shell", { enabled }),
   hide: () => call<void>("hide"),
@@ -102,6 +103,10 @@ async function preview<T>(command: string, args?: Record<string, unknown>): Prom
   }
   if (command === "set_statusline") previewState = { ...previewState, statusline: Boolean(args?.enabled) };
   if (command === "set_shell") previewState = { ...previewState, shell: Boolean(args?.enabled) };
+  if (command === "suggest_alias") {
+    const local = String(args?.email ?? "").split("@")[0].toLowerCase().replace(/[^a-z0-9_]+/g, "-").replace(/^-+|-+$/g, "");
+    return (local || "account") as T;
+  }
   if (command === "conversations") {
     return [
       { id: "s1", title: "Multi-account switching and shared conversations", cwd: "~/GitHub", lastActivity: nowSecs() - 20 },

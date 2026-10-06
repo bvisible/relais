@@ -172,6 +172,7 @@ mod tests {
                 account_uuid: Some("acc-main".into()),
                 org_id: Some("org-main".into()),
                 config_dir: None,
+                chrome_profile: None,
             })
             .unwrap();
         registry
@@ -181,6 +182,7 @@ mod tests {
                 account_uuid: Some("acc-work".into()),
                 org_id: Some("org-work".into()),
                 config_dir: Some(layout.profile_dir("work")),
+                chrome_profile: None,
             })
             .unwrap();
         (root, Relais { layout, registry })
@@ -315,6 +317,7 @@ mod tests {
                 account_uuid: None,
                 org_id: None,
                 config_dir: Some(relais.layout.profile_dir("spare")),
+                chrome_profile: None,
             })
             .unwrap();
         relais

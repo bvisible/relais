@@ -22,6 +22,10 @@ pub struct Account {
     /// own Claude Code config directory, passed as `CLAUDE_CONFIG_DIR`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub config_dir: Option<PathBuf>,
+    /// The Chrome profile directory that belongs to this account: its sign-in
+    /// page opens there, and Claude in Chrome runs there for this account.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chrome_profile: Option<String>,
 }
 
 impl Account {
@@ -157,6 +161,35 @@ fn normalize(path: &Path) -> PathBuf {
     path.components().collect()
 }
 
+/// A short account name derived from an email: its local part, lowercased,
+/// with anything other than letters, digits, `-` and `_` turned into `-`.
+/// A suffix (`-2`, `-3`…) avoids names already taken.
+pub fn alias_from_email(email: &str, taken: &[&str]) -> String {
+    let local = email.split('@').next().unwrap_or_default().to_lowercase();
+    let mut base = String::new();
+    for c in local.chars() {
+        let c = if c.is_ascii_alphanumeric() || c == '_' {
+            c
+        } else {
+            '-'
+        };
+        if c == '-' && (base.is_empty() || base.ends_with('-')) {
+            continue;
+        }
+        base.push(c);
+    }
+    let base = base.trim_end_matches('-');
+    let base = if base.is_empty() { "account" } else { base };
+    let base: String = base.chars().take(28).collect();
+    if !taken.contains(&base.as_str()) {
+        return base;
+    }
+    (2..)
+        .map(|n| format!("{base}-{n}"))
+        .find(|candidate| !taken.contains(&candidate.as_str()))
+        .unwrap_or(base)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -168,6 +201,7 @@ mod tests {
             account_uuid: None,
             org_id: None,
             config_dir: config_dir.map(PathBuf::from),
+            chrome_profile: None,
         }
     }
 
@@ -278,5 +312,33 @@ mod tests {
         assert!(registry
             .find_by_config_dir(Some(Path::new("/p/zz")))
             .is_none());
+    }
+
+    #[test]
+    fn alias_comes_from_the_local_part_of_the_email() {
+        assert_eq!(alias_from_email("hello@company.example", &[]), "hello");
+        assert_eq!(
+            alias_from_email("First.Last@mail.example", &[]),
+            "first-last"
+        );
+        assert_eq!(alias_from_email("a+b@example.com", &[]), "a-b");
+    }
+
+    #[test]
+    fn alias_gets_a_suffix_when_taken() {
+        assert_eq!(
+            alias_from_email("first@other.example", &["first"]),
+            "first-2"
+        );
+        assert_eq!(
+            alias_from_email("first@other.example", &["first", "first-2"]),
+            "first-3"
+        );
+    }
+
+    #[test]
+    fn alias_never_comes_out_empty() {
+        assert_eq!(alias_from_email("@example.com", &[]), "account");
+        assert_eq!(alias_from_email("...@example.com", &[]), "account");
     }
 }

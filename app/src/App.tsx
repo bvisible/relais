@@ -291,22 +291,39 @@ function Settings(props: { overview: Overview; onBack: () => void; onStatusline:
   );
 }
 
-function AddAccount(props: { existing: string[]; onBack: () => void; onRefresh: () => Promise<void>; onSignIn: (alias: string) => Promise<void> }) {
+function AddAccount(props: { existing: string[]; onBack: () => void; onRefresh: () => Promise<void>; onSignIn: (email: string) => Promise<void> }) {
+  const [email, setEmail] = useState("");
   const [alias, setAlias] = useState("");
   const [state, setState] = useState<"idle" | "waiting" | "done">("idle");
-  const valid = /^[a-z0-9_-]{1,32}$/.test(alias) && !props.existing.includes(alias);
+  const valid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+
+  useEffect(() => {
+    if (!valid) {
+      setAlias("");
+      return;
+    }
+    let cancelled = false;
+    api
+      .suggestAlias(email.trim())
+      .then((name) => !cancelled && setAlias(name))
+      .catch(() => !cancelled && setAlias(""));
+    return () => {
+      cancelled = true;
+    };
+  }, [email, valid]);
 
   useEffect(() => {
     if (state !== "waiting") return;
+    const wanted = email.trim().toLowerCase();
     const timer = window.setInterval(async () => {
       const next = await api.overview().catch(() => null);
-      if (next?.accounts.some((a) => a.alias === alias)) {
+      if (next?.accounts.some((a) => (a.email ?? "").toLowerCase() === wanted)) {
         setState("done");
         void props.onRefresh();
       }
     }, 3000);
     return () => window.clearInterval(timer);
-  }, [state, alias, props]);
+  }, [state, email, props]);
 
   return (
     <div className="page">
@@ -318,20 +335,35 @@ function AddAccount(props: { existing: string[]; onBack: () => void; onRefresh: 
       </div>
       <p className="muted small">{t("addIntro")}</p>
       <div className="field">
-        <label htmlFor="alias" className="strong small">
+        <label htmlFor="email" className="strong small">
           {t("aliasLabel")}
         </label>
-        <input id="alias" className="input" value={alias} placeholder="hello" autoComplete="off" spellCheck={false} onChange={(e) => setAlias(e.target.value.toLowerCase())} />
-        <span className="muted tiny">{t("aliasHint")}</span>
+        <input
+          id="email"
+          type="text"
+          inputMode="email"
+          data-1p-ignore="true"
+          data-lpignore="true"
+          className="input"
+          value={email}
+          placeholder="nom@exemple.com"
+          autoComplete="off"
+          spellCheck={false}
+          onChange={(e) => {
+            setEmail(e.target.value);
+            setState("idle");
+          }}
+        />
+        <span className="muted tiny">{alias ? t("aliasHint", { alias }) : "\u00a0"}</span>
       </div>
       <div className="card step">
         <span className="step-number">1</span>
-        <span className="small grow">{t("addStepTerminal")}</span>
+        <span className="small grow">{t("addStepTerminal", { email: valid ? email.trim() : "…" })}</span>
         <button
           className="button primary"
-          disabled={!valid || state !== "idle"}
+          disabled={!valid || state === "waiting"}
           onClick={async () => {
-            await props.onSignIn(alias);
+            await props.onSignIn(email.trim());
             setState("waiting");
           }}
         >

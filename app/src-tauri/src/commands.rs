@@ -4,6 +4,7 @@ use std::path::Path;
 
 use relais_core::claude::transcripts;
 use relais_core::integration;
+use relais_core::registry;
 use relais_core::service::Relais;
 use relais_core::usage::{Availability, UsageReading, Window};
 use relais_core::Layout;
@@ -134,7 +135,8 @@ pub fn switch_account(app: AppHandle, alias: String) -> Result<Overview, String>
 pub fn conversations(limit: usize) -> Result<Vec<ConversationView>, String> {
     let layout = layout()?;
     let home = layout.home.display().to_string();
-    let list = transcripts::list_conversations(&layout.claude_dir.join("projects"), limit).map_err(text)?;
+    let list = transcripts::list_conversations(&layout.claude_dir.join("projects"), limit)
+        .map_err(text)?;
     Ok(list
         .into_iter()
         .map(|c| ConversationView {
@@ -149,9 +151,10 @@ pub fn conversations(limit: usize) -> Result<Vec<ConversationView>, String> {
 #[tauri::command]
 pub fn resume(window: WebviewWindow, session_id: String, target: String) -> Result<(), String> {
     let layout = layout()?;
-    let conversation = transcripts::find_conversation(&layout.claude_dir.join("projects"), &session_id)
-        .map_err(text)?
-        .ok_or("conversation not found")?;
+    let conversation =
+        transcripts::find_conversation(&layout.claude_dir.join("projects"), &session_id)
+            .map_err(text)?
+            .ok_or("conversation not found")?;
     let cwd = conversation
         .cwd
         .clone()
@@ -165,17 +168,32 @@ pub fn resume(window: WebviewWindow, session_id: String, target: String) -> Resu
     Ok(())
 }
 
+/// The name Relais will give the account of `email`.
 #[tauri::command]
-pub fn add_account(window: WebviewWindow, alias: String) -> Result<(), String> {
-    let valid = !alias.is_empty()
-        && alias.len() <= 32
-        && alias.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_');
+pub fn suggest_alias(email: String) -> Result<String, String> {
+    let relais = load()?;
+    let taken: Vec<&str> = relais
+        .registry
+        .accounts
+        .iter()
+        .map(|a| a.alias.as_str())
+        .collect();
+    Ok(registry::alias_from_email(&email, &taken))
+}
+
+/// Opens Terminal on `relais account add <email>`: Claude Code's sign-in page
+/// then opens in a Chrome profile of its own.
+#[tauri::command]
+pub fn add_account(window: WebviewWindow, email: String) -> Result<(), String> {
+    let email = email.trim().to_string();
+    let valid =
+        email.contains('@') && !email.chars().any(char::is_whitespace) && email.len() <= 254;
     if !valid {
-        return Err("invalid account name".into());
+        return Err("invalid email".into());
     }
     let layout = layout()?;
     let home = layout.home.display().to_string();
-    platform::open_terminal_with(&layout, &home, &["account", "add", &alias])?;
+    platform::open_terminal_with(&layout, &home, &["account", "add", &email])?;
     let _ = window.hide();
     Ok(())
 }
@@ -185,7 +203,10 @@ pub fn set_statusline(enabled: bool) -> Result<Overview, String> {
     let layout = layout()?;
     if enabled {
         let cli = platform::relais_cli().ok_or("relais command not found")?;
-        let command = format!("{} statusline", platform::shell_quote(&cli.display().to_string()));
+        let command = format!(
+            "{} statusline",
+            platform::shell_quote(&cli.display().to_string())
+        );
         integration::install_statusline(&layout, &command, now()).map_err(text)?;
     } else {
         integration::uninstall_statusline(&layout, now()).map_err(text)?;

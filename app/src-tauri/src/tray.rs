@@ -49,7 +49,10 @@ fn toggle_panel(app: &AppHandle, rect: Rect) {
     let scale = window.scale_factor().unwrap_or(1.0);
     let position = rect.position.to_physical::<f64>(scale);
     let size = rect.size.to_physical::<f64>(scale);
-    let width = window.outer_size().map(|s| f64::from(s.width)).unwrap_or(380.0 * scale);
+    let width = window
+        .outer_size()
+        .map(|s| f64::from(s.width))
+        .unwrap_or(380.0 * scale);
     let x = position.x + size.width / 2.0 - width / 2.0;
     let y = position.y + size.height + 4.0 * scale;
     let _ = window.set_position(PhysicalPosition::new(x, y));

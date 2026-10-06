@@ -16,7 +16,7 @@
   "init.done": "Compte {alias} ({email}) enregistré et actif.",
   "init.already": "Relais est déjà configuré.",
   "init.next": "Ensuite : `relais account add <nom>` pour chaque autre compte, puis `relais statusline-install` et `relais shell-install`.",
-  "add.signin": "Connecte-toi avec le compte de {alias} dans le navigateur qui s'ouvre…",
+  "add.signin": "Connecte-toi avec le compte de {alias} dans la fenêtre Chrome qui s'ouvre…",
   "add.done": "Compte {alias} ({email}) ajouté. Pour l'utiliser : `relais switch {alias}`.",
   "remove.done": "Compte {alias} retiré. Son profil reste dans {dir}.",
   "switch.done": "Compte actif : {alias}{usage}",
@@ -74,5 +74,6 @@
   "shell.uninstalled": "`claude` fonctionne de nouveau seul dans les nouveaux terminaux.",
   "shell.not_installed": "`claude` ne passait pas par Relais.",
   "help.shell-install": "Faire passer `claude` par Relais (ajoute une ligne à ~/.zshrc)",
-  "help.shell-uninstall": "Retirer cette ligne de ~/.zshrc"
+  "help.shell-uninstall": "Retirer cette ligne de ~/.zshrc",
+  "error.wrong_account": "Tu t'es connecté avec {actual}, pas avec {expected} : rien n'a été enregistré. Recommence en choisissant {expected} sur la page de connexion."
 }

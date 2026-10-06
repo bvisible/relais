@@ -21,6 +21,7 @@ case "$1 $2" in
     printf '{"loggedIn":false}'
     exit 1;;
   "auth login")
+    printf '%s' "$BROWSER" > "$HOME/browser-env"
     mkdir -p "$dir"
     printf '%s' "$FAKE_LOGIN_EMAIL" > "$dir/fake-account"
     if [ -f "$global" ]; then content=$(cat "$global"); else content='{}'; fi
@@ -65,6 +66,7 @@ impl Env {
             .env("RELAIS_CLAUDE_BIN", self.root.path().join("bin/claude"))
             .env("RELAIS_LANG", "en")
             .env("FAKE_LOG", self.root.path().join("claude.log"))
+            .env("RELAIS_CHROME_APP", "Google Chrome")
             .env_remove("CLAUDE_CONFIG_DIR")
             .env_remove("RELAIS_HOME")
             .current_dir(self.root.path());
@@ -384,6 +386,52 @@ fn continue_resumes_a_conversation_from_its_directory() {
     assert!(log.contains("ARGS=--resume s-42"), "{log}");
     let pwd = workdir.canonicalize().unwrap();
     assert!(log.contains(&format!("PWD={}", pwd.display())), "{log}");
+}
+
+#[test]
+fn account_add_by_email_derives_the_name_and_signs_in_through_its_own_chrome_profile() {
+    let env = Env::new();
+    env.sign_in_default("main@example.com");
+    assert_ok(&env.run(&["init"]));
+
+    let output = env.add_account("hello@example.com", "hello@example.com");
+
+    assert_ok(&output);
+    let registry = env.registry();
+    assert_eq!(registry["accounts"][1]["alias"], json!("hello"));
+    assert_eq!(registry["accounts"][1]["email"], json!("hello@example.com"));
+    assert_eq!(
+        registry["accounts"][1]["chromeProfile"],
+        json!("Relais-hello")
+    );
+    let browser = fs::read_to_string(env.home().join("browser-env")).unwrap();
+    let opener = fs::read_to_string(&browser).unwrap_or_default();
+    assert!(
+        opener.contains("--profile-directory=Relais-hello"),
+        "BROWSER={browser}: {opener}"
+    );
+    assert!(opener.contains("Google Chrome"), "{opener}");
+}
+
+#[test]
+fn account_add_refuses_a_sign_in_with_another_email() {
+    let env = Env::new();
+    env.sign_in_default("main@example.com");
+    assert_ok(&env.run(&["init"]));
+
+    let output = env.add_account("hello@example.com", "someone-else@example.com");
+
+    assert!(!output.status.success());
+    let message = text(&output);
+    assert!(
+        message.contains("someone-else@example.com") && message.contains("hello@example.com"),
+        "{message}"
+    );
+    assert_eq!(env.registry()["accounts"].as_array().unwrap().len(), 1);
+    assert!(
+        !profile(&env, "hello").exists(),
+        "the half-made profile is removed"
+    );
 }
 
 fn chrono_now() -> i64 {

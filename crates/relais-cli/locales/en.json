@@ -16,7 +16,7 @@
   "init.done": "Account {alias} ({email}) registered and active.",
   "init.already": "Relais is already set up.",
   "init.next": "Next: `relais account add <name>` for each other account, then `relais statusline-install` and `relais shell-install`.",
-  "add.signin": "Sign in with the account for {alias} in the browser that opens…",
+  "add.signin": "Sign in with the account for {alias} in the Chrome window that opens…",
   "add.done": "Account {alias} ({email}) added. Switch to it with `relais switch {alias}`.",
   "remove.done": "Account {alias} removed. Its profile stays in {dir}.",
   "switch.done": "Active account: {alias}{usage}",
@@ -74,5 +74,6 @@
   "shell.uninstalled": "`claude` runs on its own again in new terminals.",
   "shell.not_installed": "`claude` was not running through Relais.",
   "help.shell-install": "Make `claude` run through Relais (adds a line to ~/.zshrc)",
-  "help.shell-uninstall": "Remove that line from ~/.zshrc"
+  "help.shell-uninstall": "Remove that line from ~/.zshrc",
+  "error.wrong_account": "You signed in as {actual}, not {expected}: nothing was registered. Try again and choose {expected} on the sign-in page."
 }

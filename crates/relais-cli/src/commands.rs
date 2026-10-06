@@ -8,7 +8,7 @@ use std::process::{Command, ExitStatus, Stdio};
 
 use relais_core::claude::cli as claude;
 use relais_core::claude::transcripts;
-use relais_core::registry::Account;
+use relais_core::registry::{self, Account};
 use relais_core::service::Relais;
 use relais_core::usage::Availability;
 use relais_core::{integration, Error, Layout};
@@ -186,6 +186,7 @@ pub fn init(alias: Option<String>) -> Outcome {
             .and_then(|i| i.org_id.clone())
             .or(status.org_id),
         config_dir: None,
+        chrome_profile: None,
     })?;
     relais.save()?;
     println!(
@@ -235,18 +236,45 @@ fn alias_from_email(email: Option<&str>) -> String {
     }
 }
 
-pub fn account_add(alias: &str) -> Outcome {
-    let alias = validate_alias(alias)?;
+/// Adds an account. `target` is an email (the name is derived from it and the
+/// sign-in must match it) or a short name.
+pub fn account_add(target: &str) -> Outcome {
     let binary = claude_binary()?;
     let mut relais = load()?;
     require_accounts(&relais)?;
+    let taken: Vec<String> = relais
+        .registry
+        .accounts
+        .iter()
+        .map(|a| a.alias.clone())
+        .collect();
+    let taken: Vec<&str> = taken.iter().map(String::as_str).collect();
+    let (alias, expected_email) = if target.contains('@') {
+        (
+            registry::alias_from_email(target, &taken),
+            Some(target.trim().to_string()),
+        )
+    } else {
+        (validate_alias(target)?, None)
+    };
+    if let Some(email) = &expected_email {
+        if is_registered(&relais, email, &alias) {
+            return Err(Failure::Core(Error::DuplicateEmail(email.clone())));
+        }
+    }
     let config_dir = relais.layout.profile_dir(&alias);
+    let account_dir = config_dir
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| config_dir.clone());
+    let chrome_profile = format!("Relais-{alias}");
     relais.registry.add(Account {
         alias: alias.clone(),
         email: None,
         account_uuid: None,
         org_id: None,
         config_dir: Some(config_dir.clone()),
+        chrome_profile: Some(chrome_profile.clone()),
     })?;
     let account = relais
         .registry
@@ -256,14 +284,19 @@ pub fn account_add(alias: &str) -> Outcome {
     prepare(&relais, &account);
 
     println!("{}", t("add.signin", &[("alias", &alias)]));
-    let login = claude::command_for_profile(&binary, Some(&config_dir))
-        .args(["auth", "login", "--claudeai"])
+    let mut login = claude::command_for_profile(&binary, Some(&config_dir));
+    login.args(["auth", "login", "--claudeai"]);
+    if let Some(opener) = write_browser_opener(&account_dir, &chrome_profile) {
+        login.env("BROWSER", opener);
+    }
+    let login = login
         .status()
         .map_err(|e| Failure::Message(t("error.generic", &[("details", &e.to_string())])))?;
     let status = claude::auth_status(&binary, Some(&config_dir))
         .ok()
         .filter(|s| s.logged_in);
     let Some(status) = status.filter(|_| login.success()) else {
+        forget_profile(&account_dir);
         return Err(Failure::Message(t(
             "error.login_failed",
             &[("alias", &alias)],
@@ -271,15 +304,18 @@ pub fn account_add(alias: &str) -> Outcome {
     };
 
     let email = status.email.clone();
+    if let (Some(expected), Some(actual)) = (&expected_email, &email) {
+        if !expected.eq_ignore_ascii_case(actual) {
+            forget_profile(&account_dir);
+            return Err(Failure::Message(t(
+                "error.wrong_account",
+                &[("expected", expected), ("actual", actual)],
+            )));
+        }
+    }
     if let Some(email) = &email {
-        let taken = relais.registry.accounts.iter().any(|other| {
-            other.alias != alias
-                && other
-                    .email
-                    .as_deref()
-                    .is_some_and(|e| e.eq_ignore_ascii_case(email))
-        });
-        if taken {
+        if is_registered(&relais, email, &alias) {
+            forget_profile(&account_dir);
             return Err(Failure::Core(Error::DuplicateEmail(email.clone())));
         }
     }
@@ -310,6 +346,51 @@ pub fn account_add(alias: &str) -> Outcome {
         )
     );
     Ok(0)
+}
+
+fn is_registered(relais: &Relais, email: &str, except_alias: &str) -> bool {
+    relais.registry.accounts.iter().any(|other| {
+        other.alias != except_alias
+            && other
+                .email
+                .as_deref()
+                .is_some_and(|e| e.eq_ignore_ascii_case(email))
+    })
+}
+
+/// Removes an account folder that never got registered. `remove_dir_all`
+/// deletes symbolic links themselves and never what they point to, so
+/// `~/.claude` is untouched.
+fn forget_profile(account_dir: &Path) {
+    let _ = std::fs::remove_dir_all(account_dir);
+}
+
+/// The Chrome application to open sign-in pages with: `$RELAIS_CHROME_APP`,
+/// else Google Chrome when it is installed.
+fn chrome_app() -> Option<String> {
+    if let Some(app) = std::env::var_os("RELAIS_CHROME_APP").and_then(|a| a.into_string().ok()) {
+        return Some(app);
+    }
+    Path::new("/Applications/Google Chrome.app")
+        .exists()
+        .then(|| "Google Chrome".to_string())
+}
+
+/// Writes the script Claude Code runs as `BROWSER` during sign-in: it opens
+/// the page in this account's own Chrome profile, so the browser where
+/// another account is signed in to claude.ai is left alone.
+fn write_browser_opener(account_dir: &Path, chrome_profile: &str) -> Option<PathBuf> {
+    let app = chrome_app()?;
+    std::fs::create_dir_all(account_dir).ok()?;
+    let path = account_dir.join("open-browser");
+    let script = format!(
+        "#!/bin/sh\n# Opens Claude's sign-in page in this account's own Chrome profile.\nexec /usr/bin/open -na {} --args --profile-directory={} \"$@\"\n",
+        shell_quote(&app),
+        shell_quote(chrome_profile)
+    );
+    std::fs::write(&path, script).ok()?;
+    std::fs::set_permissions(&path, std::os::unix::fs::PermissionsExt::from_mode(0o755)).ok()?;
+    Some(path)
 }
 
 pub fn account_remove(alias: &str) -> Outcome {

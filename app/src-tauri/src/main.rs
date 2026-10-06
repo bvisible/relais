@@ -18,6 +18,7 @@ fn main() {
             commands::conversations,
             commands::resume,
             commands::add_account,
+            commands::suggest_alias,
             commands::set_statusline,
             commands::set_shell,
             commands::hide,
