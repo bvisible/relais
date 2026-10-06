@@ -6,9 +6,11 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "test": "LANG=fr_FR.UTF-8 LC_ALL=fr_FR.UTF-8 node --test tests/*.test.ts"
   },
   "dependencies": {
+    "@fontsource-variable/bricolage-grotesque": "^5.3.0",
     "@fontsource-variable/manrope": "^5.3.0",
     "@tauri-apps/api": "^2.12.1",
     "react": "^19.3.0",

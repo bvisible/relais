@@ -1,3 +1,4 @@
+import "@fontsource-variable/bricolage-grotesque";
 import "@fontsource-variable/manrope";
 import "./styles.css";
 

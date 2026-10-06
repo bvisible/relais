@@ -9,6 +9,7 @@ use std::fs;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
+use serde::Deserialize;
 use serde_json::Value;
 
 use crate::error::{Error, Result};
@@ -20,8 +21,14 @@ pub const SDK_ENTRYPOINTS: &[&str] = &["sdk-cli", "sdk-ts", "sdk-py"];
 /// Longest title kept, in characters.
 pub const TITLE_MAX_CHARS: usize = 80;
 
+/// Activity is counted over the last hour, in five-minute buckets.
+pub const ACTIVITY_BUCKETS: usize = 12;
+pub const ACTIVITY_BUCKET_SECS: i64 = 300;
+
 const HEAD_BYTES: u64 = 64 * 1024;
 const TAIL_BYTES: u64 = 256 * 1024;
+/// The most an activity count reads back from the end of a transcript.
+const ACTIVITY_MAX_BYTES: u64 = 8 * 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Conversation {
@@ -101,6 +108,87 @@ pub fn parse_transcript(path: &Path) -> Result<Conversation> {
         .or(first_message)
         .map(|title| shorten(&title));
     Ok(conversation)
+}
+
+/// What a session did lately, read from the messages of its transcript.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Activity {
+    /// Messages per five minutes over the last hour, oldest first.
+    pub buckets: Vec<u32>,
+    /// Unix seconds of the newest message read. Claude Code also writes
+    /// bookkeeping lines to an idle session, so the file's modification time
+    /// can be later than the last real exchange.
+    pub last_message: Option<i64>,
+}
+
+/// Counts the messages of the last hour. Only the end of the file is read.
+pub fn activity(path: &Path, now: i64) -> Result<Activity> {
+    activity_reading(path, now, TAIL_BYTES)
+}
+
+/// Reads back from the end of the transcript, doubling `chunk` until the
+/// oldest message read is more than an hour old, the whole file is read, or
+/// [`ACTIVITY_MAX_BYTES`] is reached: one long tool output can fill the last
+/// kilobytes of a busy session.
+fn activity_reading(path: &Path, now: i64, chunk: u64) -> Result<Activity> {
+    let window = ACTIVITY_BUCKET_SECS * ACTIVITY_BUCKETS as i64;
+    let len = fs::metadata(path).map_err(|e| Error::io(path, e))?.len();
+    let mut bytes = chunk.max(1);
+    loop {
+        let times = message_times(&read_tail(path, bytes)?);
+        let covered = times
+            .iter()
+            .min()
+            .is_some_and(|oldest| now - oldest >= window);
+        if covered || bytes >= len || bytes >= ACTIVITY_MAX_BYTES {
+            let mut buckets = vec![0; ACTIVITY_BUCKETS];
+            for &at in &times {
+                let age = (now - at).max(0);
+                if age < window {
+                    buckets[ACTIVITY_BUCKETS - 1 - (age / ACTIVITY_BUCKET_SECS) as usize] += 1;
+                }
+            }
+            return Ok(Activity {
+                buckets,
+                last_message: times.iter().max().copied(),
+            });
+        }
+        bytes = (bytes * 2).min(ACTIVITY_MAX_BYTES);
+    }
+}
+
+/// The two fields an activity count needs; the rest of each line is skipped
+/// without being built, which keeps megabytes of tool output cheap to scan.
+#[derive(Deserialize)]
+struct Stamp {
+    #[serde(rename = "type")]
+    kind: Option<String>,
+    timestamp: Option<String>,
+}
+
+/// When each user or assistant message of `text` was written, in Unix seconds.
+fn message_times(text: &str) -> Vec<i64> {
+    text.lines()
+        .filter_map(|line| serde_json::from_str::<Stamp>(line).ok())
+        .filter(|stamp| matches!(stamp.kind.as_deref(), Some("user" | "assistant")))
+        .filter_map(|stamp| {
+            chrono::DateTime::parse_from_rfc3339(stamp.timestamp.as_deref()?)
+                .ok()
+                .map(|t| t.timestamp())
+        })
+        .collect()
+}
+
+/// The last `bytes` of a file, or all of it when smaller.
+fn read_tail(path: &Path, bytes: u64) -> Result<String> {
+    let mut file = fs::File::open(path).map_err(|e| Error::io(path, e))?;
+    let len = file.metadata().map_err(|e| Error::io(path, e))?.len();
+    file.seek(SeekFrom::Start(len.saturating_sub(bytes)))
+        .map_err(|e| Error::io(path, e))?;
+    let mut tail = Vec::new();
+    file.read_to_end(&mut tail)
+        .map_err(|e| Error::io(path, e))?;
+    Ok(String::from_utf8_lossy(&tail).into_owned())
 }
 
 /// The whole file when small, otherwise its first and last kilobytes.
@@ -434,5 +522,63 @@ mod tests {
         assert!(list_conversations(&dir.path().join("absent"), 5)
             .unwrap()
             .is_empty());
+    }
+
+    #[test]
+    fn activity_counts_messages_per_five_minutes_newest_last() {
+        const NOW: i64 = 1_791_270_000;
+        let at = |ago: i64| {
+            chrono::DateTime::from_timestamp(NOW - ago, 0)
+                .unwrap()
+                .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_transcript(
+            dir.path(),
+            "-work-app",
+            "s1",
+            &[
+                json!({"type": "user", "timestamp": at(4000)}),
+                json!({"type": "user", "timestamp": at(3500)}),
+                json!({"type": "assistant", "timestamp": at(400)}),
+                json!({"type": "assistant", "timestamp": at(30)}),
+                json!({"type": "user", "timestamp": at(10)}),
+                json!({"type": "ai-title", "timestamp": at(5)}),
+                json!({"type": "user", "timestamp": "not a time"}),
+            ],
+        );
+
+        let activity = activity(&path, NOW).unwrap();
+
+        let buckets = &activity.buckets;
+        assert_eq!(buckets.len(), ACTIVITY_BUCKETS);
+        assert_eq!(buckets[0], 1);
+        assert_eq!(buckets[10], 1);
+        assert_eq!(buckets[11], 2);
+        assert_eq!(buckets.iter().sum::<u32>(), 4);
+        assert_eq!(activity.last_message, Some(NOW - 10));
+    }
+
+    #[test]
+    fn activity_reads_back_far_enough_to_cover_the_hour() {
+        const NOW: i64 = 1_791_270_000;
+        let at = |ago: i64| {
+            chrono::DateTime::from_timestamp(NOW - ago, 0)
+                .unwrap()
+                .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+        };
+        let padding = "x".repeat(400);
+        let lines: Vec<Value> = (0..12)
+            .map(|bucket| {
+                json!({"type": "assistant", "timestamp": at(3300 - bucket * 300), "text": padding})
+            })
+            .collect();
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_transcript(dir.path(), "-work-app", "s1", &lines);
+
+        let activity = activity_reading(&path, NOW, 512).unwrap();
+
+        assert_eq!(activity.buckets, vec![1; ACTIVITY_BUCKETS]);
+        assert_eq!(activity.last_message, Some(NOW));
     }
 }

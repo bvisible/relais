@@ -34,17 +34,17 @@ per-project trust and permissions) are kept in sync across profiles.
 |---|---|
 | Shared config sync, account registry, usage readings, conversation index | done, tested |
 | Terminal: `relais` command (accounts, switch, exec, continue, status line, doctor) | done, tested, in daily use on one Mac |
-| Menu bar app (Tauri, React): accounts, gauges, switching, resume in Claude Desktop or the terminal, settings | first version, in daily use on one Mac |
+| Menu bar app (Tauri, React): two rings per account (5-hour window outside, week inside), resets as durations ("in 2h 14m"), one color per account with a theme that follows the active one, the conversations running now with their account and an hour of activity, resume in Claude Desktop or the terminal | second version, in daily use on one Mac |
 | Switching the Claude desktop app's login and Chrome profiles | next |
 
 ```bash
-relais init                      # register the account Claude Code is signed in with
-relais account add work          # add another account (signs in through Claude Code)
-relais statusline-install        # record usage from Claude Code's status line
-eval "$(relais shell-init zsh)"  # make `claude` run with the active account
-relais list                      # every account with its 5-hour and weekly usage
-relais switch next               # or a name, prev, best
-relais continue                  # carry the latest conversation over to the active account
+relais init                         # register the account Claude Code is signed in with
+relais account add me@work.example  # add another account (signs in in its own Chrome profile)
+relais statusline-install           # record usage, and which account runs each session
+eval "$(relais shell-init zsh)"     # make `claude` run with the active account
+relais list                         # every account, its usage and how long until each reset
+relais switch next                  # or a name, prev, best
+relais continue                     # carry the latest conversation over to the active account
 ```
 
 ## License

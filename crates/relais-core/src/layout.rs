@@ -54,6 +54,11 @@ impl Layout {
         self.relais_dir.join("usage")
     }
 
+    /// Which account each Claude Code session ran on, as the status line saw it.
+    pub fn sessions_file(&self) -> PathBuf {
+        self.relais_dir.join("sessions.json")
+    }
+
     pub fn sync_base_file(&self) -> PathBuf {
         self.relais_dir.join("sync").join("base.json")
     }

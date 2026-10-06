@@ -15,6 +15,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             commands::overview,
             commands::switch_account,
+            commands::set_color,
             commands::conversations,
             commands::resume,
             commands::add_account,

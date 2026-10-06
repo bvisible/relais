@@ -52,7 +52,7 @@ fn toggle_panel(app: &AppHandle, rect: Rect) {
     let width = window
         .outer_size()
         .map(|s| f64::from(s.width))
-        .unwrap_or(380.0 * scale);
+        .unwrap_or(400.0 * scale);
     let x = position.x + size.width / 2.0 - width / 2.0;
     let y = position.y + size.height + 4.0 * scale;
     let _ = window.set_position(PhysicalPosition::new(x, y));
@@ -60,8 +60,8 @@ fn toggle_panel(app: &AppHandle, rect: Rect) {
     let _ = window.set_focus();
 }
 
-/// `20 %` for the active account's 5-hour window, or the time it comes back
-/// when it is limited. Empty without accounts or readings.
+/// `20 %` for the active account's 5-hour window, or how long until it comes
+/// back when it is limited. Empty without accounts or readings.
 pub fn title_text() -> String {
     let Ok(relais) = Layout::from_env().and_then(Relais::load) else {
         return String::new();
@@ -74,15 +74,30 @@ pub fn title_text() -> String {
     };
     let now = chrono::Utc::now().timestamp();
     match reading.availability(now) {
-        Availability::Limited { until, exact: true } => chrono::DateTime::from_timestamp(until, 0)
-            .map(|at| at.with_timezone(&chrono::Local).format("%H:%M").to_string())
-            .unwrap_or_default(),
+        Availability::Limited { until, exact: true } => {
+            remaining_text(until - now, platform::prefers_french())
+        }
         Availability::Limited { exact: false, .. } => "100 %".to_string(),
         Availability::Available { .. } => match reading.five_hour_now(now) {
             Some(used) if platform::prefers_french() => format!("{used:.0} %"),
             Some(used) => format!("{used:.0}%"),
             None => String::new(),
         },
+    }
+}
+
+/// A countdown short enough for the menu bar: `45 min`, `1 h 12`, `4 j`
+/// (`45m`, `1h12`, `4d` in English), rounded up to the minute.
+fn remaining_text(secs: i64, french: bool) -> String {
+    let minutes = ((secs.max(0) + 59) / 60).max(1);
+    let (hours, days) = (minutes / 60, minutes / (24 * 60));
+    match (french, days, hours) {
+        (true, 0, 0) => format!("{minutes} min"),
+        (true, 0, _) => format!("{hours} h {:02}", minutes % 60),
+        (true, _, _) => format!("{days} j"),
+        (false, 0, 0) => format!("{minutes}m"),
+        (false, 0, _) => format!("{hours}h{:02}", minutes % 60),
+        (false, _, _) => format!("{days}d"),
     }
 }
 
@@ -99,4 +114,20 @@ pub fn keep_title_fresh(app: AppHandle) {
         refresh_title(&app);
         std::thread::sleep(Duration::from_secs(15));
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_limit_shows_how_long_until_the_account_is_back() {
+        assert_eq!(remaining_text(40, true), "1 min");
+        assert_eq!(remaining_text(45 * 60, true), "45 min");
+        assert_eq!(remaining_text(72 * 60, true), "1 h 12");
+        assert_eq!(remaining_text(4 * 86400 + 6 * 3600, true), "4 j");
+        assert_eq!(remaining_text(45 * 60, false), "45m");
+        assert_eq!(remaining_text(72 * 60, false), "1h12");
+        assert_eq!(remaining_text(4 * 86400 + 6 * 3600, false), "4d");
+    }
 }

@@ -187,6 +187,7 @@ pub fn init(alias: Option<String>) -> Outcome {
             .or(status.org_id),
         config_dir: None,
         chrome_profile: None,
+        color: None,
     })?;
     relais.save()?;
     println!(
@@ -275,6 +276,7 @@ pub fn account_add(target: &str) -> Outcome {
         org_id: None,
         config_dir: Some(config_dir.clone()),
         chrome_profile: Some(chrome_profile.clone()),
+        color: None,
     })?;
     let account = relais
         .registry
@@ -536,25 +538,28 @@ fn offer_to_continue(
     let best_used = format::used_now(relais.usage_of(&best).as_ref(), now)
         .map(format::percent)
         .unwrap_or_else(|| "?".to_string());
-    eprint!(
-        "{}",
+    let prompt = if exact {
         t(
             "exec.limited_prompt",
             &[
                 ("alias", &account.alias),
-                (
-                    "time",
-                    &if exact {
-                        format::time(until, now)
-                    } else {
-                        "?".to_string()
-                    }
-                ),
+                ("in", &format::remaining(until, now)),
+                ("time", &format::time(until, now)),
                 ("best", &best),
-                ("pct", &best_used)
-            ]
+                ("pct", &best_used),
+            ],
         )
-    );
+    } else {
+        t(
+            "exec.limited_prompt_unknown",
+            &[
+                ("alias", &account.alias),
+                ("best", &best),
+                ("pct", &best_used),
+            ],
+        )
+    };
+    eprint!("{prompt}");
     let _ = std::io::stderr().flush();
     let mut answer = String::new();
     let _ = std::io::stdin().read_line(&mut answer);

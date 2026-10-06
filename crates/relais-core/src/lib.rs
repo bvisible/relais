@@ -12,6 +12,7 @@ pub mod integration;
 pub mod layout;
 pub mod registry;
 pub mod service;
+pub mod sessions;
 pub mod usage;
 
 pub use error::{Error, Result};

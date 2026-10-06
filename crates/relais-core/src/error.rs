@@ -31,6 +31,8 @@ pub enum Error {
     Locked(PathBuf),
     #[error("something that is not a link already exists at {0}")]
     Conflict(PathBuf),
+    #[error("{0} is not a color (expected #RRGGBB)")]
+    InvalidColor(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

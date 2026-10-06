@@ -30,6 +30,38 @@ pub fn time(ts: i64, now: i64) -> String {
     }
 }
 
+/// How long until `ts`: `45 min`, `1h 05m`, `4d 6h` (`1 h 05`, `4 j 6 h` in French).
+/// Rounded to the nearest minute, so a reading taken a second ago does not
+/// lose a minute.
+pub fn remaining(ts: i64, now: i64) -> String {
+    let minutes = ((ts - now).max(0) + 30) / 60;
+    if minutes < 1 {
+        return t("in.under_minute", &[]);
+    }
+    if minutes < 60 {
+        return t("in.minutes", &[("m", &minutes.to_string())]);
+    }
+    let hours = minutes / 60;
+    if hours < 24 {
+        return t(
+            "in.hours",
+            &[
+                ("h", &hours.to_string()),
+                ("mm", &format!("{:02}", minutes % 60)),
+            ],
+        );
+    }
+    let (days, hours) = (hours / 24, hours % 24);
+    if hours == 0 {
+        t("in.days_only", &[("d", &days.to_string())])
+    } else {
+        t(
+            "in.days",
+            &[("d", &days.to_string()), ("h", &hours.to_string())],
+        )
+    }
+}
+
 pub fn age(observed_at: i64, now: i64) -> String {
     let minutes = (now - observed_at).max(0) / 60;
     if minutes < 1 {
@@ -47,7 +79,7 @@ pub fn percent(value: f64) -> String {
     t("usage.percent", &[("n", &format!("{:.0}", value))])
 }
 
-/// `5h 64% (resets 16:00) · week 21% (resets Mon 13:00) · 3 min ago`.
+/// `5h 64% (resets in 1h 30m) · week 21% (resets in 1d 6h) · 3 min ago`.
 pub fn usage(reading: Option<&UsageReading>, now: i64) -> String {
     let Some(reading) = reading else {
         return t("usage.never", &[]);
@@ -55,7 +87,10 @@ pub fn usage(reading: Option<&UsageReading>, now: i64) -> String {
     let freshness = age(reading.observed_at, now);
     if let Availability::Limited { until, exact } = reading.availability(now) {
         let limited = if exact {
-            t("usage.limited_until", &[("time", &time(until, now))])
+            t(
+                "usage.limited_until",
+                &[("in", &remaining(until, now)), ("time", &time(until, now))],
+            )
         } else {
             t("usage.limited_unknown", &[])
         };
@@ -80,7 +115,7 @@ pub fn usage(reading: Option<&UsageReading>, now: i64) -> String {
         if let Some(at) = resets_at.filter(|at| *at > now) {
             part.push_str(&format!(
                 " ({})",
-                t("usage.resets", &[("time", &time(at, now))])
+                t("usage.resets", &[("in", &remaining(at, now))])
             ));
         }
         parts.push(part);

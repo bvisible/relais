@@ -26,7 +26,24 @@ pub struct Account {
     /// page opens there, and Claude in Chrome runs there for this account.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chrome_profile: Option<String>,
+    /// The color the user picked for this account (`#RRGGBB`). Without one,
+    /// the account gets a free color of [`PALETTE`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
 }
+
+/// The colors offered for accounts, by name; accounts without a chosen color
+/// take the first ones still free, in this order.
+pub const PALETTE: [(&str, &str); 8] = [
+    ("sage", "#4CC38A"),
+    ("ocean", "#4C8DFF"),
+    ("violet", "#A78BFA"),
+    ("coral", "#FF7A6B"),
+    ("amber", "#F2B33D"),
+    ("rose", "#F472B6"),
+    ("lime", "#C3D94E"),
+    ("sky", "#38BDF8"),
+];
 
 impl Account {
     pub fn is_default_profile(&self) -> bool {
@@ -142,6 +159,51 @@ impl Registry {
         self.accounts.get(index)
     }
 
+    /// The account's color: the one chosen, else the first palette color that
+    /// neither a chosen color nor an earlier account already holds.
+    pub fn color_of(&self, alias: &str) -> Option<String> {
+        let mut taken: Vec<String> = self
+            .accounts
+            .iter()
+            .filter_map(|a| a.color.clone())
+            .collect();
+        for (index, account) in self.accounts.iter().enumerate() {
+            let color = match &account.color {
+                Some(color) => color.clone(),
+                None => {
+                    let free = PALETTE
+                        .iter()
+                        .map(|(_, hex)| hex.to_string())
+                        .find(|hex| !taken.contains(hex));
+                    let color = free.unwrap_or_else(|| PALETTE[index % PALETTE.len()].1.into());
+                    taken.push(color.clone());
+                    color
+                }
+            };
+            if account.alias == alias {
+                return Some(color);
+            }
+        }
+        None
+    }
+
+    /// Gives an account the color `hex` (`#RRGGBB`, any case).
+    pub fn set_color(&mut self, alias: &str, hex: &str) -> Result<()> {
+        let valid = hex.len() == 7
+            && hex.starts_with('#')
+            && hex[1..].chars().all(|c| c.is_ascii_hexdigit());
+        let account = self
+            .accounts
+            .iter_mut()
+            .find(|a| a.alias == alias)
+            .ok_or_else(|| Error::UnknownAccount(alias.to_string()))?;
+        if !valid {
+            return Err(Error::InvalidColor(hex.to_string()));
+        }
+        account.color = Some(hex.to_ascii_uppercase());
+        Ok(())
+    }
+
     /// The account whose profile is `config_dir`; `None` means the default profile.
     pub fn find_by_config_dir(&self, config_dir: Option<&Path>) -> Option<&Account> {
         match config_dir {
@@ -202,6 +264,7 @@ mod tests {
             org_id: None,
             config_dir: config_dir.map(PathBuf::from),
             chrome_profile: None,
+            color: None,
         }
     }
 
@@ -318,21 +381,18 @@ mod tests {
     fn alias_comes_from_the_local_part_of_the_email() {
         assert_eq!(alias_from_email("hello@company.example", &[]), "hello");
         assert_eq!(
-            alias_from_email("First.Last@mail.example", &[]),
-            "first-last"
+            alias_from_email("Ada.Lovelace@mail.example", &[]),
+            "ada-lovelace"
         );
         assert_eq!(alias_from_email("a+b@example.com", &[]), "a-b");
     }
 
     #[test]
     fn alias_gets_a_suffix_when_taken() {
+        assert_eq!(alias_from_email("sam@other.example", &["sam"]), "sam-2");
         assert_eq!(
-            alias_from_email("first@other.example", &["first"]),
-            "first-2"
-        );
-        assert_eq!(
-            alias_from_email("first@other.example", &["first", "first-2"]),
-            "first-3"
+            alias_from_email("sam@other.example", &["sam", "sam-2"]),
+            "sam-3"
         );
     }
 
@@ -340,5 +400,66 @@ mod tests {
     fn alias_never_comes_out_empty() {
         assert_eq!(alias_from_email("@example.com", &[]), "account");
         assert_eq!(alias_from_email("...@example.com", &[]), "account");
+    }
+
+    #[test]
+    fn accounts_without_a_color_get_distinct_palette_colors_in_order() {
+        let registry = three_accounts();
+        assert_eq!(registry.color_of("a").as_deref(), Some(PALETTE[0].1));
+        assert_eq!(registry.color_of("b").as_deref(), Some(PALETTE[1].1));
+        assert_eq!(registry.color_of("c").as_deref(), Some(PALETTE[2].1));
+        assert_eq!(registry.color_of("zz"), None);
+    }
+
+    #[test]
+    fn a_chosen_color_is_kept_and_the_others_avoid_it() {
+        let mut registry = three_accounts();
+        registry.set_color("b", PALETTE[0].1).unwrap();
+        assert_eq!(registry.color_of("b").as_deref(), Some(PALETTE[0].1));
+        assert_eq!(registry.color_of("a").as_deref(), Some(PALETTE[1].1));
+        assert_eq!(registry.color_of("c").as_deref(), Some(PALETTE[2].1));
+    }
+
+    #[test]
+    fn colors_are_hex_and_survive_a_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("accounts.json");
+        let mut registry = three_accounts();
+
+        registry.set_color("c", "#38bdf8").unwrap();
+        registry.save(&path).unwrap();
+
+        assert_eq!(
+            Registry::load(&path).unwrap().color_of("c").as_deref(),
+            Some("#38BDF8")
+        );
+        assert!(matches!(
+            registry.set_color("c", "blue"),
+            Err(Error::InvalidColor(_))
+        ));
+        assert!(matches!(
+            registry.set_color("c", "#12345"),
+            Err(Error::InvalidColor(_))
+        ));
+        assert!(matches!(
+            registry.set_color("zz", "#123456"),
+            Err(Error::UnknownAccount(_))
+        ));
+    }
+
+    #[test]
+    fn colors_wrap_around_once_the_palette_is_used_up() {
+        let mut registry = Registry::default();
+        for n in 0..=PALETTE.len() {
+            registry
+                .add(account(
+                    &format!("n{n}"),
+                    &format!("n{n}@example.com"),
+                    Some(&format!("/p/{n}")),
+                ))
+                .unwrap();
+        }
+        let last = format!("n{}", PALETTE.len());
+        assert_eq!(registry.color_of(&last).as_deref(), Some(PALETTE[0].1));
     }
 }

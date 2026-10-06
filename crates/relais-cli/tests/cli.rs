@@ -348,7 +348,7 @@ fn list_shows_accounts_with_their_usage() {
     let now = chrono_now();
     fs::write(
         env.home().join(".relais/usage/work.json"),
-        json!({"fiveHour": {"usedPercentage": 64.0, "resetsAt": now + 3600}, "sevenDay": {"usedPercentage": 21.0, "resetsAt": now + 86400},
+        json!({"fiveHour": {"usedPercentage": 64.0, "resetsAt": now + 5400}, "sevenDay": {"usedPercentage": 21.0, "resetsAt": now + 30 * 3600},
                "observedAt": now - 120, "source": "statusline"})
         .to_string(),
     )
@@ -366,6 +366,30 @@ fn list_shows_accounts_with_their_usage() {
         listing.contains("work") && listing.contains("64%") && listing.contains("21%"),
         "{listing}"
     );
+    assert!(listing.contains("resets in 1h 30m"), "{listing}");
+    assert!(listing.contains("resets in 1d 6h"), "{listing}");
+}
+
+#[test]
+fn list_says_how_long_until_a_limited_account_is_back() {
+    let env = Env::new();
+    env.sign_in_default("main@example.com");
+    assert_ok(&env.run(&["init"]));
+    fs::create_dir_all(env.home().join(".relais/usage")).unwrap();
+    let now = chrono_now();
+    fs::write(
+        env.home().join(".relais/usage/main.json"),
+        json!({"fiveHour": {"usedPercentage": 100.0, "resetsAt": now + 2 * 3600 + 600},
+               "observedAt": now - 60, "source": "statusline"})
+        .to_string(),
+    )
+    .unwrap();
+
+    let output = env.run(&["list"]);
+
+    assert_ok(&output);
+    let listing = String::from_utf8_lossy(&output.stdout);
+    assert!(listing.contains("limited · back in 2h 10m"), "{listing}");
 }
 
 #[test]

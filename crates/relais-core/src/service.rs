@@ -11,6 +11,7 @@ use crate::error::{Error, Result};
 use crate::fsutil;
 use crate::layout::Layout;
 use crate::registry::{Account, Registry};
+use crate::sessions::SessionAccounts;
 use crate::usage::{self, UsageReading, UsageStore};
 
 /// How long a sync waits for Claude Code to release a config file.
@@ -70,8 +71,9 @@ impl Relais {
     }
 
     /// Stores the usage carried by one status line input under the account of
-    /// the session (`CLAUDE_CONFIG_DIR`, or the default profile when unset).
-    /// Returns the account it was stored for.
+    /// the session (`CLAUDE_CONFIG_DIR`, or the default profile when unset),
+    /// and notes which account the session runs on.
+    /// Returns the account the usage was stored for.
     pub fn record_statusline(
         &self,
         config_dir: Option<&Path>,
@@ -85,11 +87,24 @@ impl Relais {
         let Some(account) = self.registry.find_by_config_dir(config_dir) else {
             return Ok(None);
         };
+        if let Some(session_id) = value.get("session_id").and_then(Value::as_str) {
+            // Best effort: a lost write only delays the account's color by one render.
+            let _ = SessionAccounts::new(&self.layout.sessions_file()).record(
+                session_id,
+                &account.alias,
+                now,
+            );
+        }
         let Some(reading) = usage::reading_from_statusline(&value, now) else {
             return Ok(None);
         };
         UsageStore::new(&self.layout.usage_dir()).save(&account.alias, &reading)?;
         Ok(Some(account.alias.clone()))
+    }
+
+    /// The account a session last ran on, as its status line reported it.
+    pub fn account_of_session(&self, session_id: &str) -> Option<String> {
+        SessionAccounts::new(&self.layout.sessions_file()).account_of(session_id)
     }
 
     /// The newest reading for an account, from the status line or the desktop app.
@@ -173,6 +188,7 @@ mod tests {
                 org_id: Some("org-main".into()),
                 config_dir: None,
                 chrome_profile: None,
+                color: None,
             })
             .unwrap();
         registry
@@ -183,6 +199,7 @@ mod tests {
                 org_id: Some("org-work".into()),
                 config_dir: Some(layout.profile_dir("work")),
                 chrome_profile: None,
+                color: None,
             })
             .unwrap();
         (root, Relais { layout, registry })
@@ -318,6 +335,7 @@ mod tests {
                 org_id: None,
                 config_dir: Some(relais.layout.profile_dir("spare")),
                 chrome_profile: None,
+                color: None,
             })
             .unwrap();
         relais
@@ -346,5 +364,25 @@ mod tests {
             relais.best_account_other_than("work", NOW).as_deref(),
             Some("main")
         );
+    }
+
+    #[test]
+    fn statusline_records_which_account_runs_each_session() {
+        let (_root, relais) = fixture();
+
+        relais
+            .record_statusline(
+                Some(&relais.layout.profile_dir("work")),
+                &statusline_input(42.0),
+                NOW,
+            )
+            .unwrap();
+        relais
+            .record_statusline(None, br#"{"session_id":"s-2"}"#, NOW)
+            .unwrap();
+
+        assert_eq!(relais.account_of_session("s-1").as_deref(), Some("work"));
+        assert_eq!(relais.account_of_session("s-2").as_deref(), Some("main"));
+        assert_eq!(relais.account_of_session("s-3"), None);
     }
 }

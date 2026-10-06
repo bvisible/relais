@@ -2,10 +2,11 @@
 
 use std::path::Path;
 
-use relais_core::claude::transcripts;
+use relais_core::claude::transcripts::{self, ACTIVITY_BUCKETS};
 use relais_core::integration;
 use relais_core::registry;
 use relais_core::service::Relais;
+use relais_core::sessions::SessionAccounts;
 use relais_core::usage::{Availability, UsageReading, Window};
 use relais_core::Layout;
 use serde::Serialize;
@@ -26,6 +27,8 @@ pub struct UsageWindowView {
 pub struct AccountView {
     alias: String,
     email: Option<String>,
+    /// `#RRGGBB`: the color chosen for the account, or the one it was given.
+    color: String,
     active: bool,
     five_hour: Option<UsageWindowView>,
     seven_day: Option<UsageWindowView>,
@@ -36,8 +39,17 @@ pub struct AccountView {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct PaletteColor {
+    name: &'static str,
+    hex: &'static str,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Overview {
     accounts: Vec<AccountView>,
+    /// The colors an account can take, named for the interface to translate.
+    palette: Vec<PaletteColor>,
     best: Option<String>,
     statusline: bool,
     shell: bool,
@@ -51,7 +63,15 @@ pub struct ConversationView {
     id: String,
     title: Option<String>,
     cwd: Option<String>,
+    /// The last folder of `cwd`, shown as the conversation's project.
+    project: Option<String>,
     last_activity: i64,
+    /// The account the status line last saw this session on.
+    account: Option<String>,
+    /// Started in the Claude desktop app rather than in a terminal.
+    desktop: bool,
+    /// Messages per five minutes over the last hour, oldest first.
+    activity: Vec<u32>,
 }
 
 fn now() -> i64 {
@@ -92,6 +112,10 @@ pub fn build_overview(relais: &Relais) -> Overview {
             AccountView {
                 alias: account.alias.clone(),
                 email: account.email.clone(),
+                color: relais
+                    .registry
+                    .color_of(&account.alias)
+                    .unwrap_or_else(|| registry::PALETTE[0].1.to_string()),
                 active: relais.registry.active.as_deref() == Some(account.alias.as_str()),
                 five_hour: reading
                     .as_ref()
@@ -107,6 +131,10 @@ pub fn build_overview(relais: &Relais) -> Overview {
         .collect();
     Overview {
         accounts,
+        palette: registry::PALETTE
+            .iter()
+            .map(|&(name, hex)| PaletteColor { name, hex })
+            .collect(),
         best: relais.best_other_account(now),
         statusline: integration::statusline_installed(&relais.layout),
         shell: integration::shell_installed(&relais.layout),
@@ -120,8 +148,10 @@ pub fn overview() -> Result<Overview, String> {
     Ok(build_overview(&load()?))
 }
 
+/// Async because the config sync may wait a few seconds for Claude Code to
+/// release its file, which must not freeze the menu bar.
 #[tauri::command]
-pub fn switch_account(app: AppHandle, alias: String) -> Result<Overview, String> {
+pub async fn switch_account(app: AppHandle, alias: String) -> Result<Overview, String> {
     let mut relais = load()?;
     relais.registry.set_active(&alias).map_err(text)?;
     relais.save().map_err(text)?;
@@ -134,20 +164,61 @@ pub fn switch_account(app: AppHandle, alias: String) -> Result<Overview, String>
 }
 
 #[tauri::command]
-pub fn conversations(limit: usize) -> Result<Vec<ConversationView>, String> {
-    let layout = layout()?;
+pub fn set_color(alias: String, color: String) -> Result<Overview, String> {
+    let mut relais = load()?;
+    relais.registry.set_color(&alias, &color).map_err(text)?;
+    relais.save().map_err(text)?;
+    Ok(build_overview(&relais))
+}
+
+/// Async so that reading the ends of large transcripts never holds up the
+/// menu bar: Tauri runs synchronous commands on the main thread.
+#[tauri::command]
+pub async fn conversations(limit: usize) -> Result<Vec<ConversationView>, String> {
+    let relais = load()?;
+    let layout = &relais.layout;
     let home = layout.home.display().to_string();
+    let now = now();
+    let sessions = SessionAccounts::new(&layout.sessions_file())
+        .load()
+        .unwrap_or_default();
     let list = transcripts::list_conversations(&layout.claude_dir.join("projects"), limit)
         .map_err(text)?;
-    Ok(list
+    let mut views: Vec<ConversationView> = list
         .into_iter()
-        .map(|c| ConversationView {
-            id: c.session_id,
-            title: c.title,
-            cwd: c.cwd.map(|cwd| cwd.replacen(&home, "~", 1)),
-            last_activity: c.last_activity,
+        .map(|c| {
+            // Activity only covers the last hour: older transcripts are not read again.
+            let activity = (now - c.last_activity < 3600)
+                .then(|| transcripts::activity(&c.path, now).ok())
+                .flatten();
+            let last_activity = activity
+                .as_ref()
+                .and_then(|a| a.last_message)
+                .unwrap_or(c.last_activity);
+            let activity = activity.map_or_else(|| vec![0; ACTIVITY_BUCKETS], |a| a.buckets);
+            let account = sessions
+                .get(&c.session_id)
+                .map(|s| s.alias.clone())
+                .filter(|alias| relais.registry.get(alias).is_some());
+            let project = c.cwd.as_deref().and_then(|cwd| {
+                Path::new(cwd)
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+            });
+            ConversationView {
+                id: c.session_id,
+                desktop: c.entrypoint.as_deref() == Some("claude-desktop"),
+                title: c.title,
+                cwd: c.cwd.map(|cwd| cwd.replacen(&home, "~", 1)),
+                project,
+                last_activity,
+                account,
+                activity,
+            }
         })
-        .collect())
+        .collect();
+    views.sort_by_key(|view| std::cmp::Reverse(view.last_activity));
+    Ok(views)
 }
 
 #[tauri::command]

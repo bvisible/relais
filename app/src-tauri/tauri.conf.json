@@ -15,8 +15,8 @@
       {
         "label": "main",
         "title": "Relais",
-        "width": 380,
-        "height": 640,
+        "width": 400,
+        "height": 720,
         "resizable": false,
         "decorations": false,
         "transparent": true,
@@ -32,10 +32,20 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["app"],
+    "targets": [
+      "app"
+    ],
     "category": "DeveloperTool",
     "copyright": "© 2026 Neoservice",
-    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"],
-    "macOS": { "minimumSystemVersion": "13.0" }
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "macOS": {
+      "minimumSystemVersion": "13.0"
+    }
   }
 }
