@@ -1,0 +1,18 @@
+[package]
+name = "relais-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "relais"
+path = "src/main.rs"
+
+[dependencies]
+relais-core = { path = "../relais-core" }
+serde_json.workspace = true
+chrono.workspace = true
+clap = { version = "4", features = ["derive"] }
+
+[dev-dependencies]
+tempfile.workspace = true
