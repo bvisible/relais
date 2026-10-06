@@ -14,6 +14,8 @@ pub struct Layout {
     pub claude_global_config: PathBuf,
     /// Relais's own directory (`~/.relais`, or `$RELAIS_HOME`).
     pub relais_dir: PathBuf,
+    /// The Claude desktop app's data folder.
+    pub desktop_dir: PathBuf,
 }
 
 impl Layout {
@@ -23,6 +25,7 @@ impl Layout {
             claude_dir: home.join(".claude"),
             claude_global_config: home.join(".claude.json"),
             relais_dir: home.join(".relais"),
+            desktop_dir: home.join("Library/Application Support/Claude"),
         }
     }
 
@@ -65,5 +68,10 @@ impl Layout {
 
     pub fn log_dir(&self) -> PathBuf {
         self.relais_dir.join("logs")
+    }
+
+    /// The desktop app's usage history, one sample per organization and time.
+    pub fn desktop_usage_history(&self) -> PathBuf {
+        self.desktop_dir.join("plan-usage-history.json")
     }
 }

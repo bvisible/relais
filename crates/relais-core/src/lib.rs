@@ -10,6 +10,7 @@ pub mod error;
 pub mod fsutil;
 pub mod layout;
 pub mod registry;
+pub mod service;
 pub mod usage;
 
 pub use error::{Error, Result};
