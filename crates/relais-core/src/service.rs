@@ -13,6 +13,9 @@ use crate::layout::Layout;
 use crate::registry::{Account, Registry};
 use crate::usage::{self, UsageReading, UsageStore};
 
+/// How long a sync waits for Claude Code to release a config file.
+pub const SYNC_LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+
 pub struct Relais {
     pub layout: Layout,
     pub registry: Registry,
@@ -62,6 +65,7 @@ impl Relais {
             &self.layout.sync_base_file(),
             &self.layout.backups_dir(),
             now,
+            SYNC_LOCK_WAIT,
         )
     }
 

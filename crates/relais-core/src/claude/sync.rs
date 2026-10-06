@@ -9,6 +9,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use serde_json::{Map, Value};
 
@@ -313,11 +314,13 @@ pub struct SyncOutcome {
 /// so a new profile starts with the user's MCP servers and project trust.
 /// Every file Relais rewrites is backed up first, and the file is read again
 /// right before writing so changes Claude Code made in between are kept.
+/// Files are written under Claude Code's own lock ([`fsutil::ConfigLock`]).
 pub fn sync_config_files(
     files: &[ConfigFile],
     base_path: &Path,
     backups_dir: &Path,
     now: i64,
+    lock_wait: Duration,
 ) -> Result<SyncOutcome> {
     let base = fsutil::read_json(base_path)?.map(|value| view_from_json(&value));
     let mut participants = Vec::new();
@@ -332,6 +335,13 @@ pub fn sync_config_files(
         }
     }
     let merged = merge(base.as_ref(), &participants);
+
+    // Every file is locked before any is written: if Claude Code holds one of
+    // them, nothing changes, so no profile is left behind the merge base.
+    let _locks = files
+        .iter()
+        .map(|file| fsutil::ConfigLock::acquire(&file.path, lock_wait))
+        .collect::<Result<Vec<_>>>()?;
 
     let mut outcome = SyncOutcome::default();
     for file in files {
@@ -596,6 +606,8 @@ mod tests {
         use super::super::*;
         use serde_json::json;
 
+        const WAIT: Duration = Duration::from_millis(100);
+
         struct Fixture {
             _root: tempfile::TempDir,
             default: PathBuf,
@@ -654,7 +666,7 @@ mod tests {
                 json!({"oauthAccount": {"emailAddress": "b@example.com"}, "mcpServers": {"b": {"v": 1}}}),
             );
 
-            sync_config_files(&files(&f), &f.base, &f.backups, 100).unwrap();
+            sync_config_files(&files(&f), &f.base, &f.backups, 100, WAIT).unwrap();
 
             let default = read(&f.default);
             let work = read(&f.work);
@@ -676,7 +688,7 @@ mod tests {
                 json!({"userID": "u1", "hasCompletedOnboarding": true, "mcpServers": {"a": {"v": 1}}}),
             );
 
-            let outcome = sync_config_files(&files(&f), &f.base, &f.backups, 100).unwrap();
+            let outcome = sync_config_files(&files(&f), &f.base, &f.backups, 100, WAIT).unwrap();
 
             assert_eq!(
                 read(&f.work),
@@ -696,10 +708,10 @@ mod tests {
                 &f.work,
                 json!({"mcpServers": {"a": {"v": 1}, "gone": {"v": 1}}}),
             );
-            sync_config_files(&files(&f), &f.base, &f.backups, 100).unwrap();
+            sync_config_files(&files(&f), &f.base, &f.backups, 100, WAIT).unwrap();
 
             write(&f.work, json!({"mcpServers": {"a": {"v": 1}}}));
-            sync_config_files(&files(&f), &f.base, &f.backups, 200).unwrap();
+            sync_config_files(&files(&f), &f.base, &f.backups, 200, WAIT).unwrap();
 
             assert_eq!(read(&f.default)["mcpServers"], json!({"a": {"v": 1}}));
         }
@@ -713,7 +725,7 @@ mod tests {
                 json!({"mcpServers": {"a": {"v": 1}}, "userID": "u2"}),
             );
 
-            let outcome = sync_config_files(&files(&f), &f.base, &f.backups, 100).unwrap();
+            let outcome = sync_config_files(&files(&f), &f.base, &f.backups, 100, WAIT).unwrap();
 
             assert!(outcome.written.is_empty());
             assert!(!f.backups.exists());
@@ -728,13 +740,37 @@ mod tests {
                     json!({"mcpServers": {format!("s{round}"): {"v": 1}}}),
                 );
                 write(&f.work, json!({}));
-                sync_config_files(&files(&f), &f.base, &f.backups, 1000 + round).unwrap();
+                sync_config_files(&files(&f), &f.base, &f.backups, 1000 + round, WAIT).unwrap();
             }
 
             let kept = fs::read_dir(f.backups.join("claude-json/work"))
                 .unwrap()
                 .count();
             assert_eq!(kept, BACKUPS_KEPT);
+        }
+
+        #[test]
+        fn nothing_is_written_while_claude_code_holds_a_lock() {
+            let f = fixture();
+            write(&f.default, json!({"mcpServers": {"a": {"v": 1}}}));
+            write(&f.work, json!({"mcpServers": {"b": {"v": 1}}}));
+            let mut lock = f.work.clone().into_os_string();
+            lock.push(".lock");
+            fs::create_dir(&lock).unwrap();
+
+            let result = sync_config_files(&files(&f), &f.base, &f.backups, 100, WAIT);
+
+            assert!(matches!(result, Err(Error::Locked(_))));
+            assert_eq!(
+                read(&f.default)["mcpServers"],
+                json!({"a": {"v": 1}}),
+                "the unlocked file is untouched too"
+            );
+            assert!(!f.base.exists(), "no merge base is recorded");
+            assert!(
+                Path::new(&lock).is_dir(),
+                "Claude Code's lock is left in place"
+            );
         }
     }
 }

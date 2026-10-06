@@ -27,6 +27,8 @@ pub enum Error {
     ClaudeNotFound,
     #[error("command failed: {0}")]
     Command(String),
+    #[error("{0} is locked by another program")]
+    Locked(PathBuf),
     #[error("something that is not a link already exists at {0}")]
     Conflict(PathBuf),
 }
