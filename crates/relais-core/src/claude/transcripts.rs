@@ -213,7 +213,7 @@ fn shorten(text: &str) -> String {
 /// The most recent conversations started by a person, newest first.
 pub fn list_conversations(projects_dir: &Path, limit: usize) -> Result<Vec<Conversation>> {
     let mut files = transcript_files(projects_dir)?;
-    files.sort_by(|a, b| b.0.cmp(&a.0));
+    files.sort_by_key(|file| std::cmp::Reverse(file.0));
     let mut conversations = Vec::new();
     for (_, path) in files {
         if conversations.len() >= limit {
