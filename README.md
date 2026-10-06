@@ -32,10 +32,20 @@ per-project trust and permissions) are kept in sync across profiles.
 
 | Part | State |
 |---|---|
-| Shared config sync, account registry | in progress |
-| Terminal: `relais exec`, switching, usage, conversations | planned |
-| Desktop app and Chrome | planned |
+| Shared config sync, account registry, usage readings, conversation index | done, tested |
+| Terminal: `relais` command (accounts, switch, exec, continue, status line, doctor) | done, tested, in daily use on one Mac |
+| Desktop app and Chrome | next |
 | Menu bar app | planned |
+
+```bash
+relais init                      # register the account Claude Code is signed in with
+relais account add work          # add another account (signs in through Claude Code)
+relais statusline-install        # record usage from Claude Code's status line
+eval "$(relais shell-init zsh)"  # make `claude` run with the active account
+relais list                      # every account with its 5-hour and weekly usage
+relais switch next               # or a name, prev, best
+relais continue                  # carry the latest conversation over to the active account
+```
 
 ## License
 
