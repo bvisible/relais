@@ -74,9 +74,10 @@ pub fn title_text() -> String {
     };
     let now = chrono::Utc::now().timestamp();
     match reading.availability(now) {
-        Availability::Limited { until } => chrono::DateTime::from_timestamp(until, 0)
+        Availability::Limited { until, exact: true } => chrono::DateTime::from_timestamp(until, 0)
             .map(|at| at.with_timezone(&chrono::Local).format("%H:%M").to_string())
             .unwrap_or_default(),
+        Availability::Limited { exact: false, .. } => "100 %".to_string(),
         Availability::Available { .. } => match reading.five_hour_now(now) {
             Some(used) if platform::prefers_french() => format!("{used:.0} %"),
             Some(used) => format!("{used:.0}%"),

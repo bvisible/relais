@@ -188,12 +188,14 @@ function Home(props: {
 function Banner({ account, best, now, onSwitch }: { account: Account; best: string | null; now: number; onSwitch: (alias: string) => void }) {
   if (!best) return null;
   const five = account.fiveHour?.used ?? 0;
-  const limited = account.limitedUntil != null && account.limitedUntil > now;
+  const limited = account.limited;
   const near = !limited && five >= 85;
   if (!limited && !near) return null;
-  const text = limited
-    ? t("limitedBanner", { alias: account.alias, time: time(account.limitedUntil ?? now, now), best })
-    : t("nearLimit", { alias: account.alias, best });
+  const text = !limited
+    ? t("nearLimit", { alias: account.alias, best })
+    : account.limitedUntil != null
+      ? t("limitedBanner", { alias: account.alias, time: time(account.limitedUntil, now), best })
+      : t("limitedBannerUnknown", { alias: account.alias, best });
   return (
     <div className={`banner ${limited ? "banner-full" : "banner-warm"}`} role="status">
       <span className="banner-text">{text}</span>
@@ -205,7 +207,7 @@ function Banner({ account, best, now, onSwitch }: { account: Account; best: stri
 }
 
 function AccountCard({ account, color, now, onSwitch }: { account: Account; color: string; now: number; onSwitch: (alias: string) => void }) {
-  const limited = account.limitedUntil != null && account.limitedUntil > now;
+  const limited = account.limited;
   const measured = account.fiveHour != null || account.sevenDay != null;
   return (
     <article className={`card account ${account.active ? "is-active" : ""}`}>
@@ -218,7 +220,11 @@ function AccountCard({ account, color, now, onSwitch }: { account: Account; colo
           <div className="muted small ellipsis">{account.email ?? ""}</div>
         </div>
         {account.active && <span className="pill pill-active">{t("active")}</span>}
-        {limited && <span className="pill pill-full">{t("limitedUntil", { time: time(account.limitedUntil ?? now, now) })}</span>}
+        {limited && (
+          <span className="pill pill-full">
+            {account.limitedUntil != null ? t("limitedUntil", { time: time(account.limitedUntil, now) }) : t("limited")}
+          </span>
+        )}
         {!account.active && !limited && (
           <button className="button small-button" onClick={() => onSwitch(account.alias)}>
             {t("switchHere")}

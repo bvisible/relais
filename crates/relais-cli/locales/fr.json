@@ -75,5 +75,6 @@
   "shell.not_installed": "`claude` ne passait pas par Relais.",
   "help.shell-install": "Faire passer `claude` par Relais (ajoute une ligne à ~/.zshrc)",
   "help.shell-uninstall": "Retirer cette ligne de ~/.zshrc",
-  "error.wrong_account": "Tu t'es connecté avec {actual}, pas avec {expected} : rien n'a été enregistré. Recommence en choisissant {expected} sur la page de connexion."
+  "error.wrong_account": "Tu t'es connecté avec {actual}, pas avec {expected} : rien n'a été enregistré. Recommence en choisissant {expected} sur la page de connexion.",
+  "usage.limited_unknown": "limité · heure de retour inconnue"
 }

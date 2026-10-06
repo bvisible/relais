@@ -53,8 +53,9 @@ pub struct UsageReading {
 pub enum Availability {
     /// The account can work; `used` is the highest window percentage right now.
     Available { used: f64 },
-    /// A window is full until `until` (Unix seconds).
-    Limited { until: i64 },
+    /// A window is full until `until` (Unix seconds). Without a reset time
+    /// in the reading, `until` is the latest it can be and `exact` is false.
+    Limited { until: i64, exact: bool },
 }
 
 /// Builds a reading from the JSON Claude Code passes to the status line.
@@ -137,12 +138,13 @@ impl UsageReading {
             .iter()
             .filter_map(|(window, length)| {
                 let window = (*window)?;
+                let exact = window.resets_at.is_some();
                 let until = window.resets_at.unwrap_or(self.observed_at + length);
-                (window.used_percentage >= 100.0 && until > now).then_some(until)
+                (window.used_percentage >= 100.0 && until > now).then_some((until, exact))
             })
-            .max();
+            .max_by_key(|(until, _)| *until);
         match limited_until {
-            Some(until) => Availability::Limited { until },
+            Some((until, exact)) => Availability::Limited { until, exact },
             None => {
                 let used = [self.five_hour_now(now), self.seven_day_now(now)]
                     .into_iter()
@@ -316,7 +318,10 @@ mod tests {
         let r = reading(Some((100.0, NOW + 3600)), Some((100.0, NOW + 7200)));
         assert_eq!(
             r.availability(NOW),
-            Availability::Limited { until: NOW + 7200 }
+            Availability::Limited {
+                until: NOW + 7200,
+                exact: true
+            }
         );
     }
 
@@ -435,5 +440,23 @@ mod tests {
             UsageStore::new(dir.path()).load("a"),
             Err(Error::Json { .. })
         ));
+    }
+
+    #[test]
+    fn a_full_window_without_reset_time_is_limited_with_an_estimate_only() {
+        let mut r = reading(None, None);
+        r.seven_day = Some(Window {
+            used_percentage: 100.0,
+            resets_at: None,
+        });
+        r.observed_at = NOW - 3600;
+
+        assert_eq!(
+            r.availability(NOW),
+            Availability::Limited {
+                until: NOW - 3600 + SEVEN_DAYS_SECS,
+                exact: false
+            }
+        );
     }
 }

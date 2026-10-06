@@ -53,11 +53,13 @@ pub fn usage(reading: Option<&UsageReading>, now: i64) -> String {
         return t("usage.never", &[]);
     };
     let freshness = age(reading.observed_at, now);
-    if let Availability::Limited { until } = reading.availability(now) {
-        return format!(
-            "{} · {freshness}",
+    if let Availability::Limited { until, exact } = reading.availability(now) {
+        let limited = if exact {
             t("usage.limited_until", &[("time", &time(until, now))])
-        );
+        } else {
+            t("usage.limited_unknown", &[])
+        };
+        return format!("{limited} · {freshness}");
     }
     let mut parts = Vec::new();
     let windows = [

@@ -12,6 +12,7 @@ export type Account = {
   fiveHour: UsageWindow | null;
   sevenDay: UsageWindow | null;
   observedAt: number | null;
+  limited: boolean;
   limitedUntil: number | null;
 };
 
@@ -65,6 +66,7 @@ let previewState: Overview = {
       fiveHour: { used: 20, resetsAt: nowSecs() + 3 * 3600 },
       sevenDay: { used: 30, resetsAt: nowSecs() + 6 * 86400 },
       observedAt: nowSecs() - 30,
+      limited: false,
       limitedUntil: null,
     },
     {
@@ -74,6 +76,7 @@ let previewState: Overview = {
       fiveHour: null,
       sevenDay: null,
       observedAt: null,
+      limited: false,
       limitedUntil: null,
     },
     {
@@ -83,6 +86,7 @@ let previewState: Overview = {
       fiveHour: { used: 0, resetsAt: null },
       sevenDay: { used: 100, resetsAt: nowSecs() + 5 * 86400 },
       observedAt: nowSecs() - 3600,
+      limited: true,
       limitedUntil: nowSecs() + 5 * 86400,
     },
   ],

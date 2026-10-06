@@ -75,5 +75,6 @@
   "shell.not_installed": "`claude` was not running through Relais.",
   "help.shell-install": "Make `claude` run through Relais (adds a line to ~/.zshrc)",
   "help.shell-uninstall": "Remove that line from ~/.zshrc",
-  "error.wrong_account": "You signed in as {actual}, not {expected}: nothing was registered. Try again and choose {expected} on the sign-in page."
+  "error.wrong_account": "You signed in as {actual}, not {expected}: nothing was registered. Try again and choose {expected} on the sign-in page.",
+  "usage.limited_unknown": "limited · return time unknown"
 }

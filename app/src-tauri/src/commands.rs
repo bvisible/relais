@@ -30,6 +30,7 @@ pub struct AccountView {
     five_hour: Option<UsageWindowView>,
     seven_day: Option<UsageWindowView>,
     observed_at: Option<i64>,
+    limited: bool,
     limited_until: Option<i64>,
 }
 
@@ -84,8 +85,8 @@ pub fn build_overview(relais: &Relais) -> Overview {
         .iter()
         .map(|account| {
             let reading: Option<UsageReading> = relais.usage_of(&account.alias);
-            let limited_until = reading.as_ref().and_then(|r| match r.availability(now) {
-                Availability::Limited { until } => Some(until),
+            let limit = reading.as_ref().and_then(|r| match r.availability(now) {
+                Availability::Limited { until, exact } => Some(exact.then_some(until)),
                 Availability::Available { .. } => None,
             });
             AccountView {
@@ -99,7 +100,8 @@ pub fn build_overview(relais: &Relais) -> Overview {
                     .as_ref()
                     .and_then(|r| window_view(r.seven_day.as_ref(), r.seven_day_now(now))),
                 observed_at: reading.as_ref().map(|r| r.observed_at),
-                limited_until,
+                limited: limit.is_some(),
+                limited_until: limit.flatten(),
             }
         })
         .collect();

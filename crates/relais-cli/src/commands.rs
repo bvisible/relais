@@ -525,7 +525,8 @@ fn offer_to_continue(
 ) -> Result<Option<ExitStatus>, Failure> {
     let now = now();
     let reading = relais.usage_of(&account.alias);
-    let Some(Availability::Limited { until }) = reading.as_ref().map(|r| r.availability(now))
+    let Some(Availability::Limited { until, exact }) =
+        reading.as_ref().map(|r| r.availability(now))
     else {
         return Ok(None);
     };
@@ -541,7 +542,14 @@ fn offer_to_continue(
             "exec.limited_prompt",
             &[
                 ("alias", &account.alias),
-                ("time", &format::time(until, now)),
+                (
+                    "time",
+                    &if exact {
+                        format::time(until, now)
+                    } else {
+                        "?".to_string()
+                    }
+                ),
                 ("best", &best),
                 ("pct", &best_used)
             ]
