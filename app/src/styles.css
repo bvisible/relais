@@ -1032,6 +1032,45 @@ input:focus-visible {
   gap: 8px;
 }
 
+.where {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.where-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  background: var(--ground);
+  color: var(--ink-2);
+}
+
+.where-text {
+  flex: 1;
+  min-width: 0;
+  color: var(--ink);
+}
+
+.where-button {
+  min-height: 32px;
+  padding: 0 12px;
+  font-size: 12px;
+}
+
+.chip-desktop {
+  display: inline-flex;
+  margin-right: 4px;
+  vertical-align: -1px;
+  color: var(--c-ink);
+}
+
+.no-margin {
+  margin: 0;
+}
+
 .button-accent {
   border-color: var(--c-edge);
   background: var(--c-wash);

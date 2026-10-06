@@ -65,6 +65,9 @@ enum Commands {
     ShellInstall,
     ShellUninstall,
     Doctor,
+    Desktop {
+        alias: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -79,6 +82,7 @@ fn localized_command() -> clap::Command {
     let mut command = Cli::command().about(t("help.about", &[]));
     for name in [
         "init",
+        "desktop",
         "account",
         "list",
         "switch",
@@ -140,6 +144,7 @@ fn main() -> ExitCode {
         Commands::ShellInstall => commands::shell_install(),
         Commands::ShellUninstall => commands::shell_uninstall(),
         Commands::Doctor => commands::doctor(),
+        Commands::Desktop { alias } => commands::desktop(alias.as_deref()),
     };
     match outcome {
         Ok(code) => ExitCode::from(code.clamp(0, 255) as u8),

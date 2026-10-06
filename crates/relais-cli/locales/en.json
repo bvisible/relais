@@ -87,5 +87,14 @@
   "login.signin": "Sign in again with the account for {alias} in the Chrome window that opens…",
   "login.done": "{alias} is signed in again ({email}).",
   "error.relogin_failed": "Sign-in did not complete for {alias}.",
-  "error.relogin_wrong_account": "You signed in as {actual}, not {expected}: that sign-in was undone. Try again and choose {expected} on the sign-in page."
+  "error.relogin_wrong_account": "You signed in as {actual}, not {expected}: that sign-in was undone. Try again and choose {expected} on the sign-in page.",
+  "help.desktop": "Show or change the account the Claude desktop app uses (the terminal is left alone)",
+  "desktop.ready": "has its desktop app folder",
+  "desktop.no_folder": "no desktop app folder yet: sign in once after switching",
+  "desktop.already": "The Claude desktop app already uses {alias}.",
+  "desktop.closing": "Closing the Claude desktop app…",
+  "desktop.still_running": "The Claude desktop app did not close; nothing was moved. Quit it, then try again.",
+  "desktop.open_failed": "The Claude desktop app could not be opened again; open it yourself.",
+  "desktop.sign_in": "The Claude desktop app opens without an account: sign in with {email}. Next time, {alias} will be there straight away.",
+  "desktop.switched": "The Claude desktop app is on {alias}."
 }

@@ -10,6 +10,8 @@ export type Account = {
   email: string | null;
   /** The account's own Chrome profile; `null` for the account Claude Code started with. */
   chromeProfile: string | null;
+  /** The Claude desktop app has a data folder for this account. */
+  desktopFolder: boolean;
   /** `#RRGGBB`. */
   color: string;
   active: boolean;
@@ -25,6 +27,8 @@ export type PaletteColor = { name: string; hex: string };
 export type Overview = {
   accounts: Account[];
   palette: PaletteColor[];
+  /** The account whose folder the Claude desktop app uses. */
+  desktopOwner: string | null;
   best: string | null;
   statusline: boolean;
   shell: boolean;
@@ -65,6 +69,8 @@ export type AccountSignIn = {
   plan: string | null;
 };
 
+export type DesktopSwitch = { outcome: "already" | "restored" | "signInNeeded"; overview: Overview };
+
 export type ResumeTarget = "terminal" | "desktop";
 
 const inTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -82,6 +88,7 @@ export const api = {
   openChrome: (alias: string) => call<void>("open_chrome", { alias }),
   signInAgain: (alias: string) => call<void>("sign_in_again", { alias }),
   removeAccount: (alias: string) => call<Overview>("remove_account", { alias }),
+  switchDesktop: (alias: string) => call<DesktopSwitch>("switch_desktop", { alias }),
   conversations: (limit: number) => call<Conversation[]>("conversations", { limit }),
   resume: (sessionId: string, target: ResumeTarget) => call<void>("resume", { sessionId, target }),
   addAccount: (email: string) => call<void>("add_account", { email }),
@@ -115,6 +122,7 @@ let previewState: Overview = {
     {
       alias: "main",
       email: "main@example.com",
+      desktopFolder: true,
       chromeProfile: null,
       color: "#4CC38A",
       active: true,
@@ -130,6 +138,7 @@ let previewState: Overview = {
     {
       alias: "studio",
       email: "studio@example.com",
+      desktopFolder: true,
       chromeProfile: "Relais-studio",
       color: "#A78BFA",
       active: false,
@@ -142,6 +151,7 @@ let previewState: Overview = {
     {
       alias: "spare",
       email: "spare@example.com",
+      desktopFolder: false,
       chromeProfile: "Relais-spare",
       color: "#4C8DFF",
       active: false,
@@ -153,6 +163,7 @@ let previewState: Overview = {
     },
   ],
   palette: PREVIEW_PALETTE,
+  desktopOwner: "main",
   best: "spare",
   statusline: true,
   shell: false,
@@ -194,6 +205,18 @@ async function preview<T>(command: string, args?: Record<string, unknown>): Prom
     return previewState.accounts.map((a) => ({ alias: a.alias, signedIn: true, email: a.email, plan: "max" })) as T;
   }
   if (command === "open_chrome" || command === "sign_in_again") return undefined as T;
+  if (command === "switch_desktop") {
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    const alias = String(args?.alias);
+    const target = previewState.accounts.find((a) => a.alias === alias);
+    const outcome = target?.desktopFolder ? "restored" : "signInNeeded";
+    previewState = {
+      ...previewState,
+      desktopOwner: alias,
+      accounts: previewState.accounts.map((a) => (a.alias === alias ? { ...a, desktopFolder: true } : a)),
+    };
+    return { outcome, overview: { ...previewState, now: nowSecs() } } as T;
+  }
   if (command === "set_statusline") previewState = { ...previewState, statusline: Boolean(args?.enabled) };
   if (command === "set_shell") previewState = { ...previewState, shell: Boolean(args?.enabled) };
   if (command === "suggest_alias") {

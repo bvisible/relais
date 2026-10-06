@@ -2,12 +2,14 @@
 
 use std::path::Path;
 
-use relais_core::claude::{cli as claude, transcripts};
+use relais_core::claude::desktop_app::{DesktopApp, DESKTOP_QUIT_WAIT};
+use relais_core::claude::{cli as claude, desktop_profile, transcripts};
 use relais_core::history;
 use relais_core::integration;
 use relais_core::registry;
 use relais_core::service::Relais;
 use relais_core::usage::{Availability, UsageReading, Window};
+use relais_core::Error;
 use relais_core::Layout;
 use serde::Serialize;
 use tauri::{AppHandle, WebviewWindow};
@@ -30,6 +32,8 @@ pub struct AccountView {
     /// The account's own Chrome profile; `None` for the account Claude Code
     /// started with, which uses the usual profile.
     chrome_profile: Option<String>,
+    /// The Claude desktop app has a data folder for this account, in place or parked.
+    desktop_folder: bool,
     /// `#RRGGBB`: the color chosen for the account, or the one it was given.
     color: String,
     active: bool,
@@ -53,6 +57,8 @@ pub struct Overview {
     accounts: Vec<AccountView>,
     /// The colors an account can take, named for the interface to translate.
     palette: Vec<PaletteColor>,
+    /// The account whose folder the Claude desktop app uses.
+    desktop_owner: Option<String>,
     best: Option<String>,
     statusline: bool,
     shell: bool,
@@ -116,6 +122,11 @@ pub fn build_overview(relais: &Relais) -> Overview {
                 alias: account.alias.clone(),
                 email: account.email.clone(),
                 chrome_profile: account.chrome_profile.clone(),
+                desktop_folder: desktop_profile::has_folder(
+                    &relais.layout,
+                    &relais.registry,
+                    &account.alias,
+                ),
                 color: relais
                     .registry
                     .color_of(&account.alias)
@@ -139,6 +150,7 @@ pub fn build_overview(relais: &Relais) -> Overview {
             .iter()
             .map(|&(name, hex)| PaletteColor { name, hex })
             .collect(),
+        desktop_owner: desktop_profile::owner(&relais.layout, &relais.registry),
         best: relais.best_other_account(now),
         statusline: integration::statusline_installed(&relais.layout),
         shell: integration::shell_installed(&relais.layout),
@@ -351,6 +363,54 @@ pub fn sign_in_again(window: WebviewWindow, alias: String) -> Result<(), String>
     platform::open_terminal_with(&layout, &home, &["account", "login", &alias])?;
     let _ = window.hide();
     Ok(())
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DesktopSwitchView {
+    /// `already`, `restored` or `signInNeeded`.
+    outcome: &'static str,
+    overview: Overview,
+}
+
+/// Errors the interface translates, by code.
+fn desktop_error(error: Error) -> String {
+    match error {
+        Error::DesktopStillRunning => "desktop-still-running".into(),
+        Error::DesktopNotOpened => "desktop-not-opened".into(),
+        Error::UnknownDesktopOwner => "desktop-owner-unknown".into(),
+        Error::Conflict(_) => "desktop-conflict".into(),
+        other => other.to_string(),
+    }
+}
+
+/// Puts the Claude desktop app on `alias`: closes it, swaps its data folder
+/// and opens it again. The terminal's active account is left alone. Async,
+/// since the app may take a few seconds to close.
+#[tauri::command]
+pub async fn switch_desktop(alias: String) -> Result<DesktopSwitchView, String> {
+    let relais = load()?;
+    if desktop_profile::owner(&relais.layout, &relais.registry).as_deref() == Some(alias.as_str()) {
+        return Ok(DesktopSwitchView {
+            outcome: "already",
+            overview: build_overview(&relais),
+        });
+    }
+    let app = DesktopApp::from_env();
+    if app.is_running() {
+        app.quit(DESKTOP_QUIT_WAIT).map_err(desktop_error)?;
+    }
+    let outcome =
+        desktop_profile::switch(&relais.layout, &relais.registry, &alias).map_err(desktop_error)?;
+    app.open().map_err(desktop_error)?;
+    Ok(DesktopSwitchView {
+        outcome: match outcome {
+            desktop_profile::Switch::AlreadyThere => "already",
+            desktop_profile::Switch::Restored => "restored",
+            desktop_profile::Switch::SignInNeeded => "signInNeeded",
+        },
+        overview: build_overview(&relais),
+    })
 }
 
 /// Removes an account from Relais. Its sign-in and its profile stay on disk.

@@ -35,6 +35,18 @@ printf 'CONFIG_DIR=%s PWD=%s ARGS=%s\n' "${CLAUDE_CONFIG_DIR:-unset}" "$(pwd)" "
 exit "${FAKE_EXIT:-0}"
 "#;
 
+/// Stands in for the Claude desktop app, so no test ever stops or starts the
+/// real one: `running` answers from a file, `quit` and `open` are logged.
+const FAKE_DESKTOP: &str = r#"#!/bin/sh
+state="$HOME/desktop-running"
+case "$1" in
+  running) [ -f "$state" ] && exit 0; exit 1;;
+  quit) printf 'quit\n' >> "$HOME/desktop.log"; rm -f "$state"; exit 0;;
+  open) printf 'open\n' >> "$HOME/desktop.log"; touch "$state"; exit 0;;
+esac
+exit 2
+"#;
+
 struct Env {
     root: tempfile::TempDir,
 }
@@ -48,6 +60,9 @@ impl Env {
         fs::create_dir_all(fake.parent().unwrap()).unwrap();
         fs::write(&fake, FAKE_CLAUDE).unwrap();
         fs::set_permissions(&fake, fs::Permissions::from_mode(0o755)).unwrap();
+        let desktop = root.path().join("bin/desktop");
+        fs::write(&desktop, FAKE_DESKTOP).unwrap();
+        fs::set_permissions(&desktop, fs::Permissions::from_mode(0o755)).unwrap();
         Env { root }
     }
 
@@ -67,6 +82,10 @@ impl Env {
             .env("RELAIS_LANG", "en")
             .env("FAKE_LOG", self.root.path().join("claude.log"))
             .env("RELAIS_CHROME_APP", "Google Chrome")
+            .env(
+                "RELAIS_DESKTOP_CONTROL",
+                self.root.path().join("bin/desktop"),
+            )
             .env_remove("CLAUDE_CONFIG_DIR")
             .env_remove("RELAIS_HOME")
             .current_dir(self.root.path());
@@ -525,6 +544,69 @@ fn account_login_names_an_unknown_account() {
 
     assert!(!output.status.success());
     assert!(text(&output).contains("nobody"), "{}", text(&output));
+}
+
+fn desktop_folder(env: &Env) -> PathBuf {
+    env.home().join("Library/Application Support/Claude")
+}
+
+#[test]
+fn desktop_switch_closes_the_app_parks_its_folder_and_opens_it_again() {
+    let env = Env::new();
+    env.sign_in_default("main@example.com");
+    assert_ok(&env.run(&["init"]));
+    assert_ok(&env.add_account("work", "work@example.com"));
+    fs::create_dir_all(desktop_folder(&env)).unwrap();
+    fs::write(desktop_folder(&env).join("marker"), "main's data").unwrap();
+    fs::write(
+        desktop_folder(&env).join("plan-usage-history.json"),
+        json!({"samples": [{"t": 1, "org": "org-main", "u": {"fh": 1}}]}).to_string(),
+    )
+    .unwrap();
+    fs::write(env.home().join("desktop-running"), "").unwrap();
+    let active_before = env.registry()["active"].clone();
+
+    let output = env.run(&["desktop", "work"]);
+
+    assert_ok(&output);
+    let log = fs::read_to_string(env.home().join("desktop.log")).unwrap_or_default();
+    assert_eq!(log, "quit\nopen\n");
+    assert!(!desktop_folder(&env).join("marker").exists());
+    let parked = env.home().join(".relais/accounts/main/desktop/marker");
+    assert_eq!(fs::read_to_string(parked).unwrap(), "main's data");
+    assert!(
+        text(&output).contains("work@example.com"),
+        "{}",
+        text(&output)
+    );
+    assert_eq!(env.registry()["active"], active_before);
+}
+
+#[test]
+fn desktop_without_an_account_says_which_account_the_app_uses() {
+    let env = Env::new();
+    env.sign_in_default("main@example.com");
+    assert_ok(&env.run(&["init"]));
+    assert_ok(&env.add_account("work", "work@example.com"));
+    fs::create_dir_all(desktop_folder(&env)).unwrap();
+    fs::write(
+        desktop_folder(&env).join("plan-usage-history.json"),
+        json!({"samples": [{"t": 1, "org": "org-work@example.com", "u": {"fh": 1}}]}).to_string(),
+    )
+    .unwrap();
+
+    let output = env.run(&["desktop"]);
+
+    assert_ok(&output);
+    let listing = String::from_utf8_lossy(&output.stdout);
+    let row = listing
+        .lines()
+        .find(|l| l.contains("work"))
+        .unwrap_or_default();
+    assert!(row.contains('●'), "{listing}");
+    assert!(!fs::read_to_string(env.home().join("desktop.log"))
+        .unwrap_or_default()
+        .contains("quit"));
 }
 
 #[test]

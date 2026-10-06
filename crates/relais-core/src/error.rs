@@ -33,6 +33,12 @@ pub enum Error {
     Conflict(PathBuf),
     #[error("{0} is not a color (expected #RRGGBB)")]
     InvalidColor(String),
+    #[error("cannot tell which account the Claude desktop app folder belongs to")]
+    UnknownDesktopOwner,
+    #[error("the Claude desktop app did not close")]
+    DesktopStillRunning,
+    #[error("the Claude desktop app could not be opened")]
+    DesktopNotOpened,
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

@@ -87,5 +87,14 @@
   "login.signin": "Reconnecte-toi avec le compte de {alias} dans la fenêtre Chrome qui s'ouvre…",
   "login.done": "{alias} est reconnecté ({email}).",
   "error.relogin_failed": "La connexion de {alias} n'a pas abouti.",
-  "error.relogin_wrong_account": "Tu t'es connecté avec {actual}, pas {expected} : cette connexion est annulée. Recommence et choisis {expected} sur la page de connexion."
+  "error.relogin_wrong_account": "Tu t'es connecté avec {actual}, pas {expected} : cette connexion est annulée. Recommence et choisis {expected} sur la page de connexion.",
+  "help.desktop": "Afficher ou changer le compte de l'app Claude Desktop (le terminal n'est pas touché)",
+  "desktop.ready": "a son dossier de l'app Desktop",
+  "desktop.no_folder": "pas encore de dossier Desktop : se connecter une fois après la bascule",
+  "desktop.already": "L'app Claude Desktop utilise déjà {alias}.",
+  "desktop.closing": "Fermeture de l'app Claude Desktop…",
+  "desktop.still_running": "L'app Claude Desktop ne s'est pas fermée ; rien n'a bougé. Quitte-la, puis recommence.",
+  "desktop.open_failed": "L'app Claude Desktop n'a pas pu se rouvrir : ouvre-la toi-même.",
+  "desktop.sign_in": "L'app Claude Desktop s'ouvre sans compte : connecte-toi avec {email}. La prochaine fois, {alias} sera là tout de suite.",
+  "desktop.switched": "L'app Claude Desktop est sur {alias}."
 }

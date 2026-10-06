@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState, type CSSProperties, type ReactNode } from "react";
 
-import { api, type Account, type AccountSignIn, type AccountStats, type Conversation, type Overview, type PaletteColor, type ResumeTarget } from "./api";
+import { api, type Account, type AccountSignIn, type AccountStats, type Conversation, type DesktopSwitch, type Overview, type PaletteColor, type ResumeTarget } from "./api";
 import { age, dayLabels, inTime, isLive, margin, mood, remaining, time, type Mood } from "./format";
-import { t, type MessageKey } from "./i18n";
+import { isMessageKey, t, type MessageKey } from "./i18n";
 
 type View = "home" | "settings" | "add" | "accounts";
 
@@ -60,6 +60,12 @@ function emphasize(key: MessageKey, slot: string, value: string, args: Record<st
       {after}
     </>
   );
+}
+
+/** A command's error, translated when it comes as a message code. */
+function describeError(error: unknown): string {
+  const text = String(error);
+  return isMessageKey(text) ? t(text) : text;
 }
 
 function projectColor(name: string): string {
@@ -143,7 +149,19 @@ export function App() {
       setNow(nowSecs());
       setError(null);
     } catch (e) {
-      setError(String(e));
+      setError(describeError(e));
+    }
+  };
+
+  const switchDesktop = async (alias: string): Promise<DesktopSwitch | null> => {
+    try {
+      const result = await api.switchDesktop(alias);
+      setOverview(result.overview);
+      setError(null);
+      return result;
+    } catch (e) {
+      setError(describeError(e));
+      return null;
     }
   };
 
@@ -185,6 +203,7 @@ export function App() {
           onOpenChrome={(alias) => run(() => api.openChrome(alias))}
           onSignInAgain={(alias) => run(() => api.signInAgain(alias))}
           onRemove={(alias) => run(() => api.removeAccount(alias)).then(() => loadStats())}
+          onSwitchDesktop={switchDesktop}
           onAdd={() => setView("add")}
         />
       )}
@@ -264,7 +283,7 @@ function Home(props: {
           </div>
         )}
 
-        {accounts.length > 0 && <AccountsStrip accounts={accounts} signIns={props.signIns} onOpen={props.onAccounts} />}
+        {accounts.length > 0 && <AccountsStrip accounts={accounts} signIns={props.signIns} desktopOwner={overview?.desktopOwner ?? null} onOpen={props.onAccounts} />}
 
         {active && (active.limited ? <RestingHero account={active} handoff={handingOff} now={now} onSwitch={props.onSwitch} /> : <Hero account={active} now={now} />)}
 
@@ -288,7 +307,7 @@ function Home(props: {
 }
 
 /** The accounts side by side: who runs, who is ready, who rests. */
-function AccountsStrip({ accounts, signIns, onOpen }: { accounts: Account[]; signIns: SignIns | null; onOpen: (alias: string | null) => void }) {
+function AccountsStrip({ accounts, signIns, desktopOwner, onOpen }: { accounts: Account[]; signIns: SignIns | null; desktopOwner: string | null; onOpen: (alias: string | null) => void }) {
   const ready = accounts.filter((a) => !a.limited && !a.active).length;
   const resting = accounts.filter((a) => a.limited).length;
   const connected = signIns?.checkedAt ? signIns.list.filter((s) => s.signedIn).length : null;
@@ -327,7 +346,14 @@ function AccountsStrip({ accounts, signIns, onOpen }: { accounts: Account[]; sig
                 <span className="chip-initial">{initial(account.alias)}</span>
                 {signIn?.signedIn === false && <span className="chip-alert" title={t("signedOut")} />}
               </span>
-              <span className="chip-alias">{account.alias}</span>
+              <span className="chip-alias">
+                {desktopOwner === account.alias && (
+                  <span className="chip-desktop" title={t("desktopOnAccount")} aria-label={t("desktopOnAccount")}>
+                    <MonitorIcon size={10} />
+                  </span>
+                )}
+                {account.alias}
+              </span>
               <span className={`chip-state ${account.limited ? "muted" : "tinted-text"}`}>{state}</span>
             </button>
           );
@@ -608,6 +634,7 @@ function AccountsPage(props: {
   onOpenChrome: (alias: string) => void;
   onSignInAgain: (alias: string) => void;
   onRemove: (alias: string) => void;
+  onSwitchDesktop: (alias: string) => Promise<DesktopSwitch | null>;
   onAdd: () => void;
 }) {
   const { overview, signIns, now } = props;
@@ -673,6 +700,8 @@ function AccountsPage(props: {
           onOpenChrome={props.onOpenChrome}
           onSignInAgain={props.onSignInAgain}
           onRemove={props.onRemove}
+          desktopOwner={overview.desktopOwner}
+          onSwitchDesktop={props.onSwitchDesktop}
         />
       ))}
 
@@ -695,9 +724,21 @@ function AccountCard(props: {
   onOpenChrome: (alias: string) => void;
   onSignInAgain: (alias: string) => void;
   onRemove: (alias: string) => void;
+  desktopOwner: string | null;
+  onSwitchDesktop: (alias: string) => Promise<DesktopSwitch | null>;
 }) {
   const { account, stats, signIn, now } = props;
   const [confirming, setConfirming] = useState(false);
+  const [desktopStep, setDesktopStep] = useState<"idle" | "confirm" | "busy">("idle");
+  const [desktopNote, setDesktopNote] = useState<string | null>(null);
+  const desktopHere = props.desktopOwner === account.alias;
+  const email = account.email ?? signIn?.email ?? account.alias;
+  const switchDesktop = async () => {
+    setDesktopStep("busy");
+    const result = await props.onSwitchDesktop(account.alias);
+    setDesktopStep("idle");
+    if (result) setDesktopNote(result.outcome === "signInNeeded" ? t("desktopSignInNow", { email }) : t("desktopDone", { alias: account.alias }));
+  };
   const five = account.fiveHour;
   const week = account.sevenDay;
   const signedOut = signIn?.signedIn === false;
@@ -716,13 +757,53 @@ function AccountCard(props: {
           <div className="account-alias">{account.alias}</div>
           <div className="muted tiny ellipsis">{account.email ?? signIn?.email ?? ""}</div>
         </div>
-        {account.active ? (
-          <span className="mood">{t("active")}</span>
-        ) : !account.limited ? (
-          <button className="relay-button" onClick={() => props.onSwitch(account.alias)}>
-            {t("passRelay")}
-          </button>
-        ) : null}
+      </div>
+
+      <div className="where">
+        <span className="muted tiny">{t("whereItWorks")}</span>
+        <div className="where-row">
+          <PromptIcon size={14} />
+          <div className="where-text">
+            <div className="strong small">{t("terminalRow")}</div>
+            <div className="muted tiny">{t("terminalDetail")}</div>
+          </div>
+          {account.active ? (
+            <span className="mood">{t("terminalActive")}</span>
+          ) : (
+            <button className="relay-button" onClick={() => props.onSwitch(account.alias)}>
+              {t("useHere")}
+            </button>
+          )}
+        </div>
+        <div className="where-row">
+          <MonitorIcon size={14} />
+          <div className="where-text">
+            <div className="strong small">{t("desktopRow")}</div>
+            <div className="muted tiny">{desktopHere ? t("desktopDetailHere") : account.desktopFolder ? t("desktopDetailReady") : t("desktopDetailNone")}</div>
+          </div>
+          {desktopHere ? (
+            <span className="mood">{t("desktopHere")}</span>
+          ) : (
+            <button className="button where-button" disabled={desktopStep !== "idle"} onClick={() => setDesktopStep("confirm")}>
+              {account.desktopFolder ? t("desktopOpenHere") : t("desktopConnect")}
+            </button>
+          )}
+        </div>
+        {desktopStep === "confirm" && (
+          <div className="confirm">
+            <span className="small">{account.desktopFolder ? t("desktopConfirmRestore", { alias: account.alias }) : t("desktopConfirmFirst", { email })}</span>
+            <div className="actions">
+              <button className="button" onClick={() => setDesktopStep("idle")}>
+                {t("cancel")}
+              </button>
+              <button className="button button-accent" onClick={() => void switchDesktop()}>
+                {t("desktopSwitch")}
+              </button>
+            </div>
+          </div>
+        )}
+        {desktopStep === "busy" && <p className="muted small no-margin">{t("desktopSwitching")}</p>}
+        {desktopNote && desktopStep === "idle" && <p className="small no-margin tinted-text">{desktopNote}</p>}
       </div>
 
       <div className="badges">

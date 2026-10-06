@@ -147,7 +147,12 @@ impl Relais {
                 .filter(|(_, session)| self.registry.get(&session.alias).is_some())
                 .map(|(id, session)| (id, (session.alias, session.seen_at)))
                 .collect();
-        for (id, session) in desktop::session_accounts(&self.layout.desktop_dir) {
+        let desktop_sessions = self
+            .desktop_dirs()
+            .iter()
+            .flat_map(|dir| desktop::session_accounts(dir))
+            .collect::<Vec<_>>();
+        for (id, session) in desktop_sessions {
             let account = self
                 .registry
                 .accounts
@@ -200,7 +205,7 @@ impl Relais {
         };
         let mut samples = HistoryStore::new(&self.layout.usage_dir()).load(alias);
         if let Some(org) = account.org_id.as_deref() {
-            if let Ok(Some(desktop)) = fsutil::read_json(&self.layout.desktop_usage_history()) {
+            for desktop in self.desktop_histories() {
                 samples.extend(history::from_desktop_history(&desktop, org));
             }
         }
@@ -241,6 +246,32 @@ impl Relais {
         self.session_accounts().remove(session_id)
     }
 
+    /// The desktop app's data folders: the one in place, and those parked for
+    /// the accounts the app is not using right now.
+    fn desktop_dirs(&self) -> Vec<PathBuf> {
+        std::iter::once(self.layout.desktop_dir.clone())
+            .chain(
+                self.registry
+                    .accounts
+                    .iter()
+                    .map(|account| self.layout.desktop_profile_dir(&account.alias)),
+            )
+            .filter(|dir| dir.is_dir())
+            .collect()
+    }
+
+    /// The usage history each desktop app folder keeps.
+    fn desktop_histories(&self) -> Vec<Value> {
+        self.desktop_dirs()
+            .iter()
+            .filter_map(|dir| {
+                fsutil::read_json(&dir.join(crate::layout::DESKTOP_USAGE_HISTORY))
+                    .ok()
+                    .flatten()
+            })
+            .collect()
+    }
+
     /// The newest reading for an account, from the status line or the desktop app.
     pub fn usage_of(&self, alias: &str) -> Option<UsageReading> {
         let account = self.registry.get(alias)?;
@@ -249,10 +280,10 @@ impl Relais {
             .ok()
             .flatten();
         let desktop = account.org_id.as_deref().and_then(|org| {
-            let history = fsutil::read_json(&self.layout.desktop_usage_history())
-                .ok()
-                .flatten()?;
-            usage::reading_from_desktop_history(&history, org)
+            self.desktop_histories()
+                .iter()
+                .filter_map(|history| usage::reading_from_desktop_history(history, org))
+                .max_by_key(|reading| reading.observed_at)
         });
         match (stored, desktop) {
             (Some(stored), Some(desktop)) => Some(if desktop.observed_at > stored.observed_at {
@@ -689,5 +720,31 @@ mod tests {
         assert_eq!(counts["work"].today, 1);
         assert_eq!(counts["work"].week, 2);
         assert_eq!(counts["work"].last_seen, Some(NOW - 3600));
+    }
+
+    #[test]
+    fn a_parked_desktop_folder_still_counts_for_usage_and_sessions() {
+        let (_root, relais) = fixture();
+        let parked = relais.layout.desktop_profile_dir("main");
+        fs::create_dir_all(parked.join("claude-code-sessions/acc-main/org")).unwrap();
+        let history = json!({"samples": [{"t": (NOW - 600) * 1000, "org": "org-main", "u": {"fh": 7, "sd": 21}}]});
+        fs::write(parked.join("plan-usage-history.json"), history.to_string()).unwrap();
+        fs::write(
+            parked.join("claude-code-sessions/acc-main/org/local_x.json"),
+            r#"{"cliSessionId":"cli-parked"}"#,
+        )
+        .unwrap();
+
+        let times: Vec<i64> = relais.usage_history("main").iter().map(|s| s.t).collect();
+
+        assert_eq!(times, vec![NOW - 600]);
+        assert_eq!(
+            relais.usage_of("main").unwrap().five_hour_now(NOW),
+            Some(7.0)
+        );
+        assert_eq!(
+            relais.account_of_session("cli-parked").as_deref(),
+            Some("main")
+        );
     }
 }

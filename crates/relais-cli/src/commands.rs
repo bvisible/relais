@@ -7,7 +7,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
 
 use relais_core::claude::cli as claude;
-use relais_core::claude::transcripts;
+use relais_core::claude::desktop_app::{DesktopApp, DESKTOP_QUIT_WAIT};
+use relais_core::claude::{desktop_profile, transcripts};
 use relais_core::registry::{self, Account};
 use relais_core::service::Relais;
 use relais_core::usage::Availability;
@@ -43,6 +44,8 @@ impl Failure {
             }
             Failure::Core(Error::NoAccounts) => t("error.no_accounts", &[]),
             Failure::Core(Error::ClaudeNotFound) => t("error.claude_not_found", &[]),
+            Failure::Core(Error::DesktopStillRunning) => t("desktop.still_running", &[]),
+            Failure::Core(Error::DesktopNotOpened) => t("desktop.open_failed", &[]),
             Failure::Core(other) => t("error.generic", &[("details", &other.to_string())]),
         }
     }
@@ -963,4 +966,60 @@ fn doctor_account(relais: &Relais, account: &Account, binary: &Path) {
             );
         }
     }
+}
+
+/// Without an account: which account the Claude desktop app uses, and which
+/// accounts have a folder of their own. With one: closes the app, puts that
+/// account's folder in place and opens the app again. The terminal's active
+/// account is left alone.
+pub fn desktop(alias: Option<&str>) -> Outcome {
+    let relais = load()?;
+    let owner = desktop_profile::owner(&relais.layout, &relais.registry);
+    let Some(alias) = alias else {
+        for account in &relais.registry.accounts {
+            let marker = if owner.as_deref() == Some(account.alias.as_str()) {
+                "●"
+            } else {
+                " "
+            };
+            let state =
+                if desktop_profile::has_folder(&relais.layout, &relais.registry, &account.alias) {
+                    t("desktop.ready", &[])
+                } else {
+                    t("desktop.no_folder", &[])
+                };
+            println!("{marker} {:<20}  {state}", account.alias);
+        }
+        return Ok(0);
+    };
+    let account = relais
+        .registry
+        .get(alias)
+        .cloned()
+        .ok_or_else(|| Error::UnknownAccount(alias.to_string()))?;
+    if owner.as_deref() == Some(alias) {
+        println!("{}", t("desktop.already", &[("alias", alias)]));
+        return Ok(0);
+    }
+    let app = DesktopApp::from_env();
+    if app.is_running() {
+        println!("{}", t("desktop.closing", &[]));
+        app.quit(DESKTOP_QUIT_WAIT)?;
+    }
+    let outcome = desktop_profile::switch(&relais.layout, &relais.registry, alias)?;
+    app.open()?;
+    match outcome {
+        desktop_profile::Switch::SignInNeeded => println!(
+            "{}",
+            t(
+                "desktop.sign_in",
+                &[
+                    ("alias", alias),
+                    ("email", account.email.as_deref().unwrap_or(alias))
+                ]
+            )
+        ),
+        _ => println!("{}", t("desktop.switched", &[("alias", alias)])),
+    }
+    Ok(0)
 }

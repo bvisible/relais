@@ -2,6 +2,8 @@
 
 pub mod cli;
 pub mod desktop;
+pub mod desktop_app;
+pub mod desktop_profile;
 pub mod profile;
 pub mod sync;
 pub mod transcripts;
