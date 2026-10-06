@@ -1,0 +1,875 @@
+//! What each `relais` subcommand does.
+
+use std::ffi::OsString;
+use std::io::{IsTerminal, Read, Write};
+use std::os::unix::process::ExitStatusExt;
+use std::path::{Path, PathBuf};
+use std::process::{Command, ExitStatus, Stdio};
+
+use relais_core::claude::cli as claude;
+use relais_core::claude::transcripts;
+use relais_core::registry::Account;
+use relais_core::service::Relais;
+use relais_core::usage::Availability;
+use relais_core::{fsutil, Error, Layout};
+use serde_json::{json, Value};
+
+use crate::format;
+use crate::i18n::t;
+
+/// A failure already worded for the user, or one from the core.
+pub enum Failure {
+    Core(Error),
+    Message(String),
+}
+
+impl From<Error> for Failure {
+    fn from(error: Error) -> Self {
+        Failure::Core(error)
+    }
+}
+
+impl Failure {
+    pub fn describe(&self) -> String {
+        match self {
+            Failure::Message(message) => message.clone(),
+            Failure::Core(Error::UnknownAccount(alias)) => {
+                t("error.unknown_account", &[("alias", alias)])
+            }
+            Failure::Core(Error::DuplicateAlias(alias)) => {
+                t("error.duplicate_alias", &[("alias", alias)])
+            }
+            Failure::Core(Error::DuplicateEmail(email)) => {
+                t("error.duplicate_email", &[("email", email)])
+            }
+            Failure::Core(Error::NoAccounts) => t("error.no_accounts", &[]),
+            Failure::Core(Error::ClaudeNotFound) => t("error.claude_not_found", &[]),
+            Failure::Core(other) => t("error.generic", &[("details", &other.to_string())]),
+        }
+    }
+}
+
+pub type Outcome = Result<i32, Failure>;
+
+fn now() -> i64 {
+    chrono::Utc::now().timestamp()
+}
+
+fn warn(message: String) {
+    eprintln!("{}", t("warn.prefix", &[("message", &message)]));
+}
+
+fn claude_binary() -> Result<PathBuf, Failure> {
+    let override_path = std::env::var_os(claude::CLAUDE_BIN_ENV).map(PathBuf::from);
+    claude::find_claude_binary(
+        override_path.as_deref(),
+        std::env::var_os("PATH").as_deref(),
+    )
+    .ok_or(Failure::Core(Error::ClaudeNotFound))
+}
+
+fn load() -> Result<Relais, Failure> {
+    Ok(Relais::load(Layout::from_env()?)?)
+}
+
+fn require_accounts(relais: &Relais) -> Result<(), Failure> {
+    if relais.registry.accounts.is_empty() {
+        return Err(Failure::Core(Error::NoAccounts));
+    }
+    Ok(())
+}
+
+fn exit_code(status: ExitStatus) -> i32 {
+    status
+        .code()
+        .unwrap_or_else(|| 128 + status.signal().unwrap_or(1))
+}
+
+/// Ignores Ctrl+C and Ctrl+\ in Relais while Claude runs in the foreground, so
+/// they reach Claude only and Relais is still there when Claude exits.
+struct IgnoreInterrupts {
+    previous: [(i32, usize); 2],
+}
+
+extern "C" {
+    fn signal(signum: i32, handler: usize) -> usize;
+}
+
+const SIGINT: i32 = 2;
+const SIGQUIT: i32 = 3;
+const SIG_IGN: usize = 1;
+
+impl IgnoreInterrupts {
+    fn new() -> Self {
+        // SAFETY: `signal` with SIG_IGN only changes this process's disposition.
+        let previous = unsafe {
+            [
+                (SIGINT, signal(SIGINT, SIG_IGN)),
+                (SIGQUIT, signal(SIGQUIT, SIG_IGN)),
+            ]
+        };
+        IgnoreInterrupts { previous }
+    }
+}
+
+impl Drop for IgnoreInterrupts {
+    fn drop(&mut self) {
+        for (signum, handler) in self.previous {
+            // SAFETY: restores the disposition saved in `new`.
+            unsafe {
+                signal(signum, handler);
+            }
+        }
+    }
+}
+
+/// Runs Claude Code for one profile and waits for it.
+fn run_claude(
+    binary: &Path,
+    config_dir: Option<&Path>,
+    args: &[OsString],
+    cwd: Option<&Path>,
+) -> Result<ExitStatus, Failure> {
+    let mut command = claude::command_for_profile(binary, config_dir);
+    command.args(args);
+    if let Some(dir) = cwd {
+        command.current_dir(dir);
+    }
+    let mut child = command
+        .spawn()
+        .map_err(|e| Failure::Message(t("error.generic", &[("details", &e.to_string())])))?;
+    // Installed after the spawn: an ignored signal would be inherited by Claude.
+    let _guard = IgnoreInterrupts::new();
+    child
+        .wait()
+        .map_err(|e| Failure::Message(t("error.generic", &[("details", &e.to_string())])))
+}
+
+/// Links the profile and syncs shared settings; problems are reported, never fatal.
+fn prepare(relais: &Relais, account: &Account) {
+    if let Err(error) = relais.prepare_profile(account) {
+        warn(t(
+            "warn.profile",
+            &[("alias", &account.alias), ("details", &error.to_string())],
+        ));
+    }
+    if let Err(error) = relais.sync_shared_config(now()) {
+        warn(t("warn.sync", &[("details", &error.to_string())]));
+    }
+}
+
+pub fn init(alias: Option<String>) -> Outcome {
+    let binary = claude_binary()?;
+    let mut relais = load()?;
+    if !relais.registry.accounts.is_empty() {
+        println!("{}", t("init.already", &[]));
+        return list();
+    }
+    let status = claude::auth_status(&binary, None)?;
+    if !status.logged_in {
+        return Err(Failure::Message(t("error.not_logged_in_default", &[])));
+    }
+    let identity = claude::read_account_identity(&relais.layout.claude_global_config)?;
+    let email = status
+        .email
+        .clone()
+        .or_else(|| identity.as_ref().and_then(|i| i.email.clone()));
+    let alias = match alias {
+        Some(alias) => validate_alias(&alias)?,
+        None => alias_from_email(email.as_deref()),
+    };
+    relais.registry.add(Account {
+        alias: alias.clone(),
+        email: email.clone(),
+        account_uuid: identity.as_ref().and_then(|i| i.account_uuid.clone()),
+        org_id: identity
+            .as_ref()
+            .and_then(|i| i.org_id.clone())
+            .or(status.org_id),
+        config_dir: None,
+    })?;
+    relais.save()?;
+    println!(
+        "{}",
+        t(
+            "init.done",
+            &[
+                ("alias", &alias),
+                ("email", email.as_deref().unwrap_or("?"))
+            ]
+        )
+    );
+    println!("{}", t("init.next", &[]));
+    Ok(0)
+}
+
+fn validate_alias(alias: &str) -> Result<String, Failure> {
+    let valid = !alias.is_empty()
+        && alias.len() <= 32
+        && alias
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_');
+    if valid {
+        Ok(alias.to_string())
+    } else {
+        Err(Failure::Message(t("error.invalid_alias", &[])))
+    }
+}
+
+fn alias_from_email(email: Option<&str>) -> String {
+    let local = email.and_then(|e| e.split('@').next()).unwrap_or("main");
+    let cleaned: String = local
+        .to_lowercase()
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    if cleaned.is_empty() {
+        "main".to_string()
+    } else {
+        cleaned
+    }
+}
+
+pub fn account_add(alias: &str) -> Outcome {
+    let alias = validate_alias(alias)?;
+    let binary = claude_binary()?;
+    let mut relais = load()?;
+    require_accounts(&relais)?;
+    let config_dir = relais.layout.profile_dir(&alias);
+    relais.registry.add(Account {
+        alias: alias.clone(),
+        email: None,
+        account_uuid: None,
+        org_id: None,
+        config_dir: Some(config_dir.clone()),
+    })?;
+    let account = relais
+        .registry
+        .get(&alias)
+        .cloned()
+        .ok_or_else(|| Error::UnknownAccount(alias.clone()))?;
+    prepare(&relais, &account);
+
+    println!("{}", t("add.signin", &[("alias", &alias)]));
+    let login = claude::command_for_profile(&binary, Some(&config_dir))
+        .args(["auth", "login", "--claudeai"])
+        .status()
+        .map_err(|e| Failure::Message(t("error.generic", &[("details", &e.to_string())])))?;
+    let status = claude::auth_status(&binary, Some(&config_dir))
+        .ok()
+        .filter(|s| s.logged_in);
+    let Some(status) = status.filter(|_| login.success()) else {
+        return Err(Failure::Message(t(
+            "error.login_failed",
+            &[("alias", &alias)],
+        )));
+    };
+
+    let email = status.email.clone();
+    if let Some(email) = &email {
+        let taken = relais.registry.accounts.iter().any(|other| {
+            other.alias != alias
+                && other
+                    .email
+                    .as_deref()
+                    .is_some_and(|e| e.eq_ignore_ascii_case(email))
+        });
+        if taken {
+            return Err(Failure::Core(Error::DuplicateEmail(email.clone())));
+        }
+    }
+    let identity = claude::read_account_identity(&config_dir.join(".claude.json"))?;
+    if let Some(entry) = relais
+        .registry
+        .accounts
+        .iter_mut()
+        .find(|a| a.alias == alias)
+    {
+        entry.email = email.clone();
+        entry.account_uuid = identity.as_ref().and_then(|i| i.account_uuid.clone());
+        entry.org_id = identity
+            .as_ref()
+            .and_then(|i| i.org_id.clone())
+            .or(status.org_id.clone());
+    }
+    relais.save()?;
+    prepare(&relais, &account);
+    println!(
+        "{}",
+        t(
+            "add.done",
+            &[
+                ("alias", &alias),
+                ("email", email.as_deref().unwrap_or("?"))
+            ]
+        )
+    );
+    Ok(0)
+}
+
+pub fn account_remove(alias: &str) -> Outcome {
+    let mut relais = load()?;
+    let removed = relais.registry.remove(alias)?;
+    relais.save()?;
+    let dir = removed
+        .config_dir
+        .unwrap_or_else(|| relais.layout.claude_dir.clone());
+    println!(
+        "{}",
+        t(
+            "remove.done",
+            &[("alias", alias), ("dir", &dir.display().to_string())]
+        )
+    );
+    Ok(0)
+}
+
+pub fn list() -> Outcome {
+    let relais = load()?;
+    require_accounts(&relais)?;
+    let now = now();
+    let width = relais
+        .registry
+        .accounts
+        .iter()
+        .map(|a| a.alias.len())
+        .max()
+        .unwrap_or(0);
+    let email_width = relais
+        .registry
+        .accounts
+        .iter()
+        .map(|a| a.email.as_deref().unwrap_or("").len())
+        .max()
+        .unwrap_or(0);
+    for account in &relais.registry.accounts {
+        let marker = if relais.registry.active.as_deref() == Some(account.alias.as_str()) {
+            "●"
+        } else {
+            " "
+        };
+        let usage = format::usage(relais.usage_of(&account.alias).as_ref(), now);
+        println!(
+            "{marker} {:<width$}  {:<email_width$}  {usage}",
+            account.alias,
+            account.email.as_deref().unwrap_or(""),
+        );
+    }
+    Ok(0)
+}
+
+pub fn switch(target: &str) -> Outcome {
+    let mut relais = load()?;
+    require_accounts(&relais)?;
+    let now = now();
+    let alias = match target {
+        "next" => relais.registry.neighbour(1).map(|a| a.alias.clone()),
+        "prev" | "previous" => relais.registry.neighbour(-1).map(|a| a.alias.clone()),
+        "best" => Some(
+            relais
+                .best_other_account(now)
+                .ok_or_else(|| Failure::Message(t("error.no_better_account", &[])))?,
+        ),
+        alias => Some(alias.to_string()),
+    }
+    .ok_or(Failure::Core(Error::NoAccounts))?;
+    relais.registry.set_active(&alias)?;
+    relais.save()?;
+    if let Some(account) = relais.registry.get(&alias).cloned() {
+        prepare(&relais, &account);
+    }
+    let usage = format!(
+        " ({})",
+        format::usage(relais.usage_of(&alias).as_ref(), now)
+    );
+    println!(
+        "{}",
+        t("switch.done", &[("alias", &alias), ("usage", &usage)])
+    );
+    println!("{}", t("switch.note", &[]));
+    Ok(0)
+}
+
+pub fn sync() -> Outcome {
+    let relais = load()?;
+    require_accounts(&relais)?;
+    relais.sync_shared_config(now())?;
+    Ok(0)
+}
+
+/// Runs Claude Code with the active account, or with `account_override`.
+/// Never stands in Claude's way: without accounts, it runs Claude unchanged.
+pub fn exec(account_override: Option<&str>, args: Vec<OsString>) -> Outcome {
+    let binary = claude_binary()?;
+    let mut relais = match load() {
+        Ok(relais) if !relais.registry.accounts.is_empty() => relais,
+        _ => return run_claude(&binary, None, &args, None).map(exit_code),
+    };
+    let alias = match account_override {
+        Some(alias) => alias.to_string(),
+        None => match relais.registry.active.clone() {
+            Some(alias) => alias,
+            None => return run_claude(&binary, None, &args, None).map(exit_code),
+        },
+    };
+    let account = relais
+        .registry
+        .get(&alias)
+        .cloned()
+        .ok_or_else(|| Error::UnknownAccount(alias.clone()))?;
+    prepare(&relais, &account);
+    let status = run_claude(&binary, account.config_dir.as_deref(), &args, None)?;
+
+    let interactive = std::io::stdin().is_terminal() && std::io::stderr().is_terminal();
+    let print_mode = args.iter().any(|a| a == "-p" || a == "--print");
+    if interactive && !print_mode {
+        if let Some(continued) = offer_to_continue(&mut relais, &account, &binary)? {
+            return Ok(exit_code(continued));
+        }
+    }
+    Ok(exit_code(status))
+}
+
+/// When the account that just ran is limited, offers to carry the
+/// conversation over to the account with the most room left.
+fn offer_to_continue(
+    relais: &mut Relais,
+    account: &Account,
+    binary: &Path,
+) -> Result<Option<ExitStatus>, Failure> {
+    let now = now();
+    let reading = relais.usage_of(&account.alias);
+    let Some(Availability::Limited { until }) = reading.as_ref().map(|r| r.availability(now))
+    else {
+        return Ok(None);
+    };
+    let Some(best) = relais.best_account_other_than(&account.alias, now) else {
+        return Ok(None);
+    };
+    let best_used = format::used_now(relais.usage_of(&best).as_ref(), now)
+        .map(format::percent)
+        .unwrap_or_else(|| "?".to_string());
+    eprint!(
+        "{}",
+        t(
+            "exec.limited_prompt",
+            &[
+                ("alias", &account.alias),
+                ("time", &format::time(until, now)),
+                ("best", &best),
+                ("pct", &best_used)
+            ]
+        )
+    );
+    let _ = std::io::stderr().flush();
+    let mut answer = String::new();
+    let _ = std::io::stdin().read_line(&mut answer);
+    let answer = answer.trim().to_lowercase();
+    if !(answer.is_empty() || ["y", "yes", "o", "oui"].contains(&answer.as_str())) {
+        return Ok(None);
+    }
+
+    relais.registry.set_active(&best)?;
+    relais.save()?;
+    let next = relais
+        .registry
+        .get(&best)
+        .cloned()
+        .ok_or_else(|| Error::UnknownAccount(best.clone()))?;
+    prepare(relais, &next);
+    let session = reading.and_then(|r| r.session_id);
+    let resume_args = resume_args(&relais.layout, session.as_deref());
+    eprintln!("{}", t("exec.continuing", &[("alias", &best)]));
+    run_claude(binary, next.config_dir.as_deref(), &resume_args, None).map(Some)
+}
+
+/// `--resume <id>` when the session belongs to this directory, else `--continue`.
+fn resume_args(layout: &Layout, session_id: Option<&str>) -> Vec<OsString> {
+    let projects = layout.claude_dir.join("projects");
+    let here = std::env::current_dir()
+        .ok()
+        .and_then(|d| d.canonicalize().ok());
+    if let Some(id) = session_id {
+        if let Ok(Some(conversation)) = transcripts::find_conversation(&projects, id) {
+            let same_dir = conversation
+                .cwd
+                .as_deref()
+                .and_then(|cwd| Path::new(cwd).canonicalize().ok())
+                .is_some_and(|cwd| Some(cwd) == here);
+            if same_dir {
+                return vec!["--resume".into(), id.into()];
+            }
+        }
+    }
+    vec!["--continue".into()]
+}
+
+pub fn conversations(limit: usize) -> Outcome {
+    let layout = Layout::from_env()?;
+    let list = transcripts::list_conversations(&layout.claude_dir.join("projects"), limit)?;
+    if list.is_empty() {
+        println!("{}", t("conversations.empty", &[]));
+        return Ok(0);
+    }
+    let now = now();
+    let home = layout.home.display().to_string();
+    for conversation in list {
+        let cwd = conversation
+            .cwd
+            .as_deref()
+            .unwrap_or("")
+            .replacen(&home, "~", 1);
+        println!(
+            "{}  {:<12}  {}  {}",
+            conversation.session_id.chars().take(8).collect::<String>(),
+            format::age(conversation.last_activity, now),
+            conversation.title.as_deref().unwrap_or("—"),
+            cwd
+        );
+    }
+    Ok(0)
+}
+
+/// Resumes a conversation with the active account, from its own directory.
+pub fn continue_conversation(session_id: Option<&str>, desktop: bool) -> Outcome {
+    let binary = claude_binary()?;
+    let relais = load()?;
+    let projects = relais.layout.claude_dir.join("projects");
+    let conversation = match session_id {
+        Some(id) => transcripts::find_conversation(&projects, id)?,
+        None => transcripts::list_conversations(&projects, 1)?
+            .into_iter()
+            .next(),
+    }
+    .ok_or_else(|| Failure::Message(t("continue.none", &[])))?;
+    let account = relais.registry.active().cloned();
+    if let Some(account) = &account {
+        prepare(&relais, account);
+    }
+    let config_dir = account.as_ref().and_then(|a| a.config_dir.clone());
+    let cwd = conversation
+        .cwd
+        .as_deref()
+        .map(PathBuf::from)
+        .filter(|dir| dir.is_dir());
+    let mut args: Vec<OsString> = Vec::new();
+    if desktop {
+        args.push("--desktop".into());
+    }
+    args.push("--resume".into());
+    args.push(conversation.session_id.clone().into());
+    run_claude(&binary, config_dir.as_deref(), &args, cwd.as_deref()).map(exit_code)
+}
+
+fn statusline_state(layout: &Layout) -> PathBuf {
+    layout.relais_dir.join("statusline.json")
+}
+
+fn settings_path(layout: &Layout) -> PathBuf {
+    layout.claude_dir.join("settings.json")
+}
+
+/// Records the usage Claude Code hands to the status line, then renders the
+/// user's own status line with the same input. Never fails the status line.
+pub fn statusline(command: Vec<OsString>) -> Outcome {
+    let mut input = Vec::new();
+    let _ = std::io::stdin().read_to_end(&mut input);
+
+    let layout = Layout::from_env().ok();
+    if let Some(layout) = &layout {
+        let config_dir = std::env::var_os("CLAUDE_CONFIG_DIR").map(PathBuf::from);
+        let recorded = Relais::load(layout.clone())
+            .and_then(|relais| relais.record_statusline(config_dir.as_deref(), &input, now()));
+        if let Err(error) = recorded {
+            log_line(layout, "statusline", &error.to_string());
+        }
+    }
+
+    let mut user_command = if let Some((program, rest)) = command.split_first() {
+        let mut c = Command::new(program);
+        c.args(rest);
+        c
+    } else {
+        let saved = layout
+            .as_ref()
+            .and_then(|l| fsutil::read_json(&statusline_state(l)).ok().flatten());
+        let Some(text) = saved
+            .as_ref()
+            .and_then(|s| s.pointer("/original/command"))
+            .and_then(Value::as_str)
+        else {
+            return Ok(0);
+        };
+        let mut c = Command::new("/bin/sh");
+        c.arg("-c").arg(text);
+        c
+    };
+    let Ok(mut child) = user_command.stdin(Stdio::piped()).spawn() else {
+        return Ok(0);
+    };
+    if let Some(mut stdin) = child.stdin.take() {
+        let _ = stdin.write_all(&input);
+    }
+    Ok(child.wait().map(exit_code).unwrap_or(0))
+}
+
+fn log_line(layout: &Layout, name: &str, message: &str) {
+    let dir = layout.log_dir();
+    if std::fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join(format!("{name}.log")))
+    {
+        let _ = writeln!(file, "{} {message}", chrono::Utc::now().to_rfc3339());
+    }
+}
+
+fn own_statusline_command() -> String {
+    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("relais"));
+    format!("{} statusline", shell_quote(&exe.display().to_string()))
+}
+
+fn shell_quote(text: &str) -> String {
+    if text
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || "/._-+".contains(c))
+    {
+        text.to_string()
+    } else {
+        format!("'{}'", text.replace('\'', r"'\''"))
+    }
+}
+
+/// Points Claude Code's status line at `relais statusline`, keeping the user's
+/// command so `relais statusline` can still render it.
+pub fn statusline_install() -> Outcome {
+    let layout = Layout::from_env()?;
+    let path = settings_path(&layout);
+    let mut settings = fsutil::read_json(&path)?.unwrap_or_else(|| json!({}));
+    let ours = own_statusline_command();
+    let current = settings.get("statusLine").cloned();
+    let already = current
+        .as_ref()
+        .and_then(|s| s.get("command"))
+        .and_then(Value::as_str)
+        == Some(ours.as_str());
+    if already {
+        println!("{}", t("statusline.already", &[]));
+        return Ok(0);
+    }
+    fsutil::write_json_atomic(&statusline_state(&layout), &json!({ "original": current }))?;
+    backup_settings(&layout, &path)?;
+    let mut status_line = current.unwrap_or_else(|| json!({"type": "command"}));
+    if let Some(object) = status_line.as_object_mut() {
+        object.insert("type".into(), json!("command"));
+        object.insert("command".into(), json!(ours));
+    }
+    if let Some(object) = settings.as_object_mut() {
+        object.insert("statusLine".into(), status_line);
+    }
+    fsutil::write_json_atomic(&path, &settings)?;
+    println!("{}", t("statusline.installed", &[]));
+    Ok(0)
+}
+
+pub fn statusline_uninstall() -> Outcome {
+    let layout = Layout::from_env()?;
+    let state_path = statusline_state(&layout);
+    let Some(state) = fsutil::read_json(&state_path)? else {
+        println!("{}", t("statusline.not_installed", &[]));
+        return Ok(0);
+    };
+    let path = settings_path(&layout);
+    let mut settings = fsutil::read_json(&path)?.unwrap_or_else(|| json!({}));
+    backup_settings(&layout, &path)?;
+    if let Some(object) = settings.as_object_mut() {
+        match state.get("original").filter(|o| !o.is_null()) {
+            Some(original) => {
+                object.insert("statusLine".into(), original.clone());
+            }
+            None => {
+                object.remove("statusLine");
+            }
+        }
+    }
+    fsutil::write_json_atomic(&path, &settings)?;
+    std::fs::remove_file(&state_path)
+        .map_err(|e| Failure::Message(t("error.generic", &[("details", &e.to_string())])))?;
+    println!("{}", t("statusline.uninstalled", &[]));
+    Ok(0)
+}
+
+fn backup_settings(layout: &Layout, path: &Path) -> Result<(), Failure> {
+    if !path.exists() {
+        return Ok(());
+    }
+    let dir = layout.backups_dir().join("settings");
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| Failure::Message(t("error.generic", &[("details", &e.to_string())])))?;
+    let target = dir.join(format!("{:012}.json", now()));
+    std::fs::copy(path, target)
+        .map_err(|e| Failure::Message(t("error.generic", &[("details", &e.to_string())])))?;
+    Ok(())
+}
+
+pub fn shell_init(shell: &str) -> Outcome {
+    let script = match shell {
+        "zsh" | "bash" | "sh" => {
+            r#"# Relais: `claude` runs with the active account, or unchanged when relais is missing.
+claude() {
+  if command -v relais >/dev/null 2>&1; then
+    relais exec -- "$@"
+  else
+    command claude "$@"
+  fi
+}
+"#
+        }
+        _ => {
+            return Err(Failure::Message(t(
+                "error.generic",
+                &[("details", &format!("unsupported shell: {shell}"))],
+            )))
+        }
+    };
+    print!("{script}");
+    Ok(0)
+}
+
+pub fn doctor() -> Outcome {
+    let relais = load()?;
+    match claude_binary() {
+        Ok(binary) => {
+            let version = Command::new(&binary)
+                .arg("--version")
+                .output()
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                .unwrap_or_default();
+            println!(
+                "✓ {}",
+                t(
+                    "doctor.claude",
+                    &[
+                        ("path", &binary.display().to_string()),
+                        ("version", &version)
+                    ]
+                )
+            );
+            let active = relais.registry.active.clone().unwrap_or_else(|| "—".into());
+            println!(
+                "✓ {}",
+                t(
+                    "doctor.accounts",
+                    &[
+                        ("count", &relais.registry.accounts.len().to_string()),
+                        ("active", &active)
+                    ]
+                )
+            );
+            for account in &relais.registry.accounts {
+                doctor_account(&relais, account, &binary);
+            }
+        }
+        Err(failure) => println!("✗ {}", failure.describe()),
+    }
+    let settings = fsutil::read_json(&settings_path(&relais.layout))
+        .ok()
+        .flatten();
+    let wrapped = settings
+        .as_ref()
+        .and_then(|s| s.pointer("/statusLine/command"))
+        .and_then(Value::as_str)
+        .is_some_and(|c| c.ends_with(" statusline"));
+    if wrapped {
+        println!("✓ {}", t("doctor.statusline_on", &[]));
+    } else {
+        println!("✗ {}", t("doctor.statusline_off", &[]));
+    }
+    let zshrc = std::fs::read_to_string(relais.layout.home.join(".zshrc")).unwrap_or_default();
+    if zshrc.contains("relais shell-init") || zshrc.contains("relais exec") {
+        println!("✓ {}", t("doctor.shell_on", &[]));
+    } else {
+        println!("✗ {}", t("doctor.shell_off", &[]));
+    }
+    Ok(0)
+}
+
+fn doctor_account(relais: &Relais, account: &Account, binary: &Path) {
+    match claude::auth_status(binary, account.config_dir.as_deref()) {
+        Ok(status) if status.logged_in => {
+            let actual = status.email.unwrap_or_default();
+            let expected = account.email.clone().unwrap_or_default();
+            if expected.is_empty() || actual.eq_ignore_ascii_case(&expected) {
+                println!(
+                    "✓ {}",
+                    t(
+                        "doctor.account_ok",
+                        &[("alias", &account.alias), ("email", &actual)]
+                    )
+                );
+            } else {
+                println!(
+                    "✗ {}",
+                    t(
+                        "doctor.account_mismatch",
+                        &[
+                            ("alias", &account.alias),
+                            ("actual", &actual),
+                            ("expected", &expected)
+                        ]
+                    )
+                );
+            }
+        }
+        _ => {
+            let dir = account
+                .config_dir
+                .clone()
+                .unwrap_or_else(|| relais.layout.claude_dir.clone());
+            println!(
+                "✗ {}",
+                t(
+                    "doctor.account_signed_out",
+                    &[
+                        ("alias", &account.alias),
+                        ("dir", &dir.display().to_string())
+                    ]
+                )
+            );
+        }
+    }
+    if let Ok(Some(report)) = relais.prepare_profile(account) {
+        let count = report.created.len() + report.already_linked.len();
+        println!(
+            "✓ {}",
+            t(
+                "doctor.links",
+                &[("alias", &account.alias), ("count", &count.to_string())]
+            )
+        );
+        let odd: Vec<String> = report
+            .conflicts
+            .iter()
+            .chain(&report.foreign_links)
+            .cloned()
+            .collect();
+        if !odd.is_empty() {
+            println!(
+                "✗ {}",
+                t(
+                    "doctor.conflicts",
+                    &[("alias", &account.alias), ("names", &odd.join(", "))]
+                )
+            );
+        }
+    }
+}

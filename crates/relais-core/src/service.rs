@@ -111,13 +111,13 @@ impl Relais {
         }
     }
 
-    /// The account with the most room left, other than the active one.
-    pub fn best_other_account(&self, now: i64) -> Option<String> {
+    /// The account with the most room left, other than `alias`.
+    pub fn best_account_other_than(&self, alias: &str, now: i64) -> Option<String> {
         let readings: Vec<(String, Option<UsageReading>)> = self
             .registry
             .accounts
             .iter()
-            .filter(|account| self.registry.active.as_deref() != Some(account.alias.as_str()))
+            .filter(|account| account.alias != alias)
             .map(|account| (account.alias.clone(), self.usage_of(&account.alias)))
             .collect();
         let candidates: Vec<(&str, Option<&UsageReading>)> = readings
@@ -125,6 +125,12 @@ impl Relais {
             .map(|(alias, reading)| (alias.as_str(), reading.as_ref()))
             .collect();
         usage::best_account(&candidates, now).map(String::from)
+    }
+
+    /// The account with the most room left, other than the active one.
+    pub fn best_other_account(&self, now: i64) -> Option<String> {
+        let active = self.registry.active.clone().unwrap_or_default();
+        self.best_account_other_than(&active, now)
     }
 }
 
@@ -292,5 +298,46 @@ mod tests {
             .unwrap();
 
         assert_eq!(relais.best_other_account(NOW).as_deref(), Some("work"));
+    }
+
+    #[test]
+    fn best_account_other_than_ignores_the_given_account_even_when_not_active() {
+        let (_root, mut relais) = fixture();
+        relais
+            .registry
+            .add(Account {
+                alias: "spare".into(),
+                email: Some("spare@example.com".into()),
+                account_uuid: None,
+                org_id: None,
+                config_dir: Some(relais.layout.profile_dir("spare")),
+            })
+            .unwrap();
+        relais
+            .record_statusline(None, &statusline_input(1.0), NOW)
+            .unwrap();
+        relais
+            .record_statusline(
+                Some(&relais.layout.profile_dir("work")),
+                &statusline_input(30.0),
+                NOW,
+            )
+            .unwrap();
+        relais
+            .record_statusline(
+                Some(&relais.layout.profile_dir("spare")),
+                &statusline_input(60.0),
+                NOW,
+            )
+            .unwrap();
+
+        assert_eq!(
+            relais.best_account_other_than("main", NOW).as_deref(),
+            Some("work")
+        );
+        assert_eq!(
+            relais.best_account_other_than("work", NOW).as_deref(),
+            Some("main")
+        );
     }
 }

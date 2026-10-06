@@ -1,0 +1,397 @@
+//! End-to-end tests: the real `relais` binary, a temporary home and a fake
+//! `claude` that plays sign-in and records how it was started.
+
+use std::fs;
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output, Stdio};
+
+use serde_json::{json, Value};
+
+const FAKE_CLAUDE: &str = r#"#!/bin/sh
+dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+if [ -n "$CLAUDE_CONFIG_DIR" ]; then global="$CLAUDE_CONFIG_DIR/.claude.json"; else global="$HOME/.claude.json"; fi
+case "$1 $2" in
+  "auth status")
+    if [ -f "$dir/fake-account" ]; then
+      email=$(cat "$dir/fake-account")
+      printf '{"loggedIn":true,"email":"%s","orgId":"org-%s","subscriptionType":"max"}' "$email" "$email"
+      exit 0
+    fi
+    printf '{"loggedIn":false}'
+    exit 1;;
+  "auth login")
+    mkdir -p "$dir"
+    printf '%s' "$FAKE_LOGIN_EMAIL" > "$dir/fake-account"
+    if [ -f "$global" ]; then content=$(cat "$global"); else content='{}'; fi
+    rest="${content#\{}"
+    case "$rest" in "}"*) sep="";; *) sep=",";; esac
+    printf '{"oauthAccount":{"accountUuid":"acc-%s","emailAddress":"%s","organizationUuid":"org-%s"}%s%s' \
+      "$FAKE_LOGIN_EMAIL" "$FAKE_LOGIN_EMAIL" "$FAKE_LOGIN_EMAIL" "$sep" "$rest" > "$global"
+    exit 0;;
+esac
+printf 'CONFIG_DIR=%s PWD=%s ARGS=%s\n' "${CLAUDE_CONFIG_DIR:-unset}" "$(pwd)" "$*" >> "$FAKE_LOG"
+exit "${FAKE_EXIT:-0}"
+"#;
+
+struct Env {
+    root: tempfile::TempDir,
+}
+
+impl Env {
+    fn new() -> Self {
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path().join("home");
+        fs::create_dir_all(home.join(".claude")).unwrap();
+        let fake = root.path().join("bin/claude");
+        fs::create_dir_all(fake.parent().unwrap()).unwrap();
+        fs::write(&fake, FAKE_CLAUDE).unwrap();
+        fs::set_permissions(&fake, fs::Permissions::from_mode(0o755)).unwrap();
+        Env { root }
+    }
+
+    fn home(&self) -> PathBuf {
+        self.root.path().join("home")
+    }
+
+    fn log(&self) -> String {
+        fs::read_to_string(self.root.path().join("claude.log")).unwrap_or_default()
+    }
+
+    fn relais(&self) -> Command {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_relais"));
+        command
+            .env("HOME", self.home())
+            .env("RELAIS_CLAUDE_BIN", self.root.path().join("bin/claude"))
+            .env("RELAIS_LANG", "en")
+            .env("FAKE_LOG", self.root.path().join("claude.log"))
+            .env_remove("CLAUDE_CONFIG_DIR")
+            .env_remove("RELAIS_HOME")
+            .current_dir(self.root.path());
+        command
+    }
+
+    fn run(&self, args: &[&str]) -> Output {
+        self.relais().args(args).output().unwrap()
+    }
+
+    fn sign_in_default(&self, email: &str) {
+        fs::write(self.home().join(".claude/fake-account"), email).unwrap();
+        fs::write(
+            self.home().join(".claude.json"),
+            json!({"oauthAccount": {"accountUuid": "acc-main", "emailAddress": email, "organizationUuid": "org-main"},
+                   "mcpServers": {"github": {"command": "gh"}}})
+            .to_string(),
+        )
+        .unwrap();
+    }
+
+    fn registry(&self) -> Value {
+        serde_json::from_slice(&fs::read(self.home().join(".relais/accounts.json")).unwrap())
+            .unwrap()
+    }
+
+    fn add_account(&self, alias: &str, email: &str) -> Output {
+        self.relais()
+            .args(["account", "add", alias])
+            .env("FAKE_LOGIN_EMAIL", email)
+            .output()
+            .unwrap()
+    }
+}
+
+fn text(output: &Output) -> String {
+    format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    )
+}
+
+fn assert_ok(output: &Output) {
+    assert!(output.status.success(), "relais failed: {}", text(output));
+}
+
+fn profile(env: &Env, alias: &str) -> PathBuf {
+    env.home()
+        .join(".relais/accounts")
+        .join(alias)
+        .join("claude")
+}
+
+#[test]
+fn init_registers_the_signed_in_default_profile() {
+    let env = Env::new();
+    env.sign_in_default("main@example.com");
+
+    let output = env.run(&["init"]);
+
+    assert_ok(&output);
+    let registry = env.registry();
+    assert_eq!(registry["active"], json!("main"));
+    assert_eq!(registry["accounts"][0]["email"], json!("main@example.com"));
+    assert_eq!(registry["accounts"][0]["accountUuid"], json!("acc-main"));
+    assert!(registry["accounts"][0].get("configDir").is_none());
+}
+
+#[test]
+fn account_add_creates_a_linked_profile_and_registers_the_new_login() {
+    let env = Env::new();
+    env.sign_in_default("main@example.com");
+    assert_ok(&env.run(&["init"]));
+
+    let output = env.add_account("work", "work@example.com");
+
+    assert_ok(&output);
+    let dir = profile(&env, "work");
+    assert_eq!(
+        fs::read_link(dir.join("projects")).unwrap(),
+        env.home().join(".claude/projects")
+    );
+    let config: Value =
+        serde_json::from_slice(&fs::read(dir.join(".claude.json")).unwrap()).unwrap();
+    assert_eq!(
+        config["mcpServers"],
+        json!({"github": {"command": "gh"}}),
+        "shared MCP servers are seeded"
+    );
+    assert_eq!(
+        config["oauthAccount"]["emailAddress"],
+        json!("work@example.com")
+    );
+    let registry = env.registry();
+    assert_eq!(registry["accounts"][1]["alias"], json!("work"));
+    assert_eq!(registry["accounts"][1]["email"], json!("work@example.com"));
+    assert_eq!(
+        registry["active"],
+        json!("main"),
+        "adding an account does not switch to it"
+    );
+}
+
+#[test]
+fn account_add_refuses_an_account_already_registered() {
+    let env = Env::new();
+    env.sign_in_default("main@example.com");
+    assert_ok(&env.run(&["init"]));
+
+    let output = env.add_account("again", "MAIN@example.com");
+
+    assert!(!output.status.success());
+    assert!(
+        text(&output).contains("main@example.com") || text(&output).contains("MAIN@example.com"),
+        "{}",
+        text(&output)
+    );
+    assert_eq!(env.registry()["accounts"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn switch_moves_the_active_account() {
+    let env = Env::new();
+    env.sign_in_default("main@example.com");
+    assert_ok(&env.run(&["init"]));
+    assert_ok(&env.add_account("work", "work@example.com"));
+
+    assert_ok(&env.run(&["switch", "work"]));
+    assert_eq!(env.registry()["active"], json!("work"));
+    assert_ok(&env.run(&["switch", "next"]));
+    assert_eq!(env.registry()["active"], json!("main"));
+    assert_ok(&env.run(&["switch", "prev"]));
+    assert_eq!(env.registry()["active"], json!("work"));
+    assert!(!env.run(&["switch", "nobody"]).status.success());
+}
+
+#[test]
+fn exec_runs_claude_in_the_profile_of_the_active_account() {
+    let env = Env::new();
+    env.sign_in_default("main@example.com");
+    assert_ok(&env.run(&["init"]));
+    assert_ok(&env.add_account("work", "work@example.com"));
+
+    assert_ok(&env.run(&["exec", "--", "--version"]));
+    assert_ok(&env.run(&["switch", "work"]));
+    assert_ok(&env.run(&["exec", "--", "-p", "hello"]));
+
+    let log = env.log();
+    let lines: Vec<&str> = log.lines().collect();
+    assert!(
+        lines[0].starts_with("CONFIG_DIR=unset") && lines[0].ends_with("ARGS=--version"),
+        "{log}"
+    );
+    let work_dir = profile(&env, "work");
+    assert!(
+        lines[1].starts_with(&format!("CONFIG_DIR={}", work_dir.display())),
+        "{log}"
+    );
+    assert!(lines[1].ends_with("ARGS=-p hello"), "{log}");
+}
+
+#[test]
+fn exec_without_accounts_still_runs_claude() {
+    let env = Env::new();
+
+    let output = env
+        .relais()
+        .args(["exec", "--", "--version"])
+        .env("FAKE_EXIT", "3")
+        .output()
+        .unwrap();
+
+    assert_eq!(
+        output.status.code(),
+        Some(3),
+        "the exit code of claude is kept"
+    );
+    assert!(env.log().contains("ARGS=--version"));
+}
+
+#[test]
+fn statusline_install_wraps_the_existing_command_and_uninstall_restores_it() {
+    let env = Env::new();
+    let settings = env.home().join(".claude/settings.json");
+    fs::write(&settings, json!({"model": "x", "statusLine": {"type": "command", "command": "printf hello", "padding": 0}}).to_string())
+        .unwrap();
+
+    assert_ok(&env.run(&["statusline-install"]));
+    let installed: Value = serde_json::from_slice(&fs::read(&settings).unwrap()).unwrap();
+    let command = installed["statusLine"]["command"].as_str().unwrap();
+    assert!(command.ends_with(" statusline"), "{command}");
+    assert_eq!(installed["statusLine"]["padding"], json!(0));
+    assert_eq!(installed["model"], json!("x"));
+
+    assert_ok(&env.run(&["statusline-uninstall"]));
+    let restored: Value = serde_json::from_slice(&fs::read(&settings).unwrap()).unwrap();
+    assert_eq!(restored["statusLine"]["command"], json!("printf hello"));
+}
+
+#[test]
+fn statusline_records_usage_and_still_renders_the_users_status_line() {
+    let env = Env::new();
+    env.sign_in_default("main@example.com");
+    assert_ok(&env.run(&["init"]));
+    assert_ok(&env.add_account("work", "work@example.com"));
+    let settings = env.home().join(".claude/settings.json");
+    fs::write(&settings, json!({"statusLine": {"type": "command", "command": "cat > \"$HOME/seen.json\"; printf rendered"}}).to_string())
+        .unwrap();
+    assert_ok(&env.run(&["statusline-install"]));
+    let input = json!({"session_id": "s-1", "rate_limits": {
+        "five_hour": {"used_percentage": 42, "resets_at": 4_102_444_800_i64},
+        "seven_day": {"used_percentage": 7, "resets_at": 4_102_444_800_i64}}});
+
+    let mut child = env
+        .relais()
+        .arg("statusline")
+        .env("CLAUDE_CONFIG_DIR", profile(&env, "work"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    std::io::Write::write_all(child.stdin.as_mut().unwrap(), input.to_string().as_bytes()).unwrap();
+    let output = child.wait_with_output().unwrap();
+
+    assert_ok(&output);
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "rendered");
+    let seen: Value =
+        serde_json::from_slice(&fs::read(env.home().join("seen.json")).unwrap()).unwrap();
+    assert_eq!(seen, input, "the user's command receives the same input");
+    let usage: Value =
+        serde_json::from_slice(&fs::read(env.home().join(".relais/usage/work.json")).unwrap())
+            .unwrap();
+    assert_eq!(usage["fiveHour"]["usedPercentage"], json!(42.0));
+}
+
+#[test]
+fn statusline_survives_input_it_cannot_read() {
+    let env = Env::new();
+    fs::write(
+        env.home().join(".claude/settings.json"),
+        json!({"statusLine": {"type": "command", "command": "printf still-here"}}).to_string(),
+    )
+    .unwrap();
+    assert_ok(&env.run(&["statusline-install"]));
+
+    let mut child = env
+        .relais()
+        .arg("statusline")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    std::io::Write::write_all(child.stdin.as_mut().unwrap(), b"not json at all").unwrap();
+    let output = child.wait_with_output().unwrap();
+
+    assert_ok(&output);
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "still-here");
+}
+
+#[test]
+fn shell_init_prints_a_claude_function_that_falls_back_to_claude() {
+    let env = Env::new();
+    let output = env.run(&["shell-init", "zsh"]);
+    assert_ok(&output);
+    let script = String::from_utf8_lossy(&output.stdout);
+    assert!(script.contains("claude()"), "{script}");
+    assert!(script.contains("relais exec --"), "{script}");
+    assert!(script.contains("command claude"), "{script}");
+}
+
+#[test]
+fn list_shows_accounts_with_their_usage() {
+    let env = Env::new();
+    env.sign_in_default("main@example.com");
+    assert_ok(&env.run(&["init"]));
+    assert_ok(&env.add_account("work", "work@example.com"));
+    fs::create_dir_all(env.home().join(".relais/usage")).unwrap();
+    let now = chrono_now();
+    fs::write(
+        env.home().join(".relais/usage/work.json"),
+        json!({"fiveHour": {"usedPercentage": 64.0, "resetsAt": now + 3600}, "sevenDay": {"usedPercentage": 21.0, "resetsAt": now + 86400},
+               "observedAt": now - 120, "source": "statusline"})
+        .to_string(),
+    )
+    .unwrap();
+
+    let output = env.run(&["list"]);
+
+    assert_ok(&output);
+    let listing = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        listing.contains("main") && listing.contains("main@example.com"),
+        "{listing}"
+    );
+    assert!(
+        listing.contains("work") && listing.contains("64%") && listing.contains("21%"),
+        "{listing}"
+    );
+}
+
+#[test]
+fn continue_resumes_a_conversation_from_its_directory() {
+    let env = Env::new();
+    env.sign_in_default("main@example.com");
+    assert_ok(&env.run(&["init"]));
+    let workdir = env.root.path().join("workdir");
+    fs::create_dir_all(&workdir).unwrap();
+    let project = env.home().join(".claude/projects/-workdir");
+    fs::create_dir_all(&project).unwrap();
+    let line = json!({"type": "user", "cwd": workdir, "entrypoint": "cli", "message": {"role": "user", "content": "hello"}});
+    fs::write(project.join("s-42.jsonl"), format!("{line}\n")).unwrap();
+
+    assert_ok(&env.run(&["continue", "s-42"]));
+
+    let log = env.log();
+    assert!(log.contains("ARGS=--resume s-42"), "{log}");
+    let pwd = workdir.canonicalize().unwrap();
+    assert!(log.contains(&format!("PWD={}", pwd.display())), "{log}");
+}
+
+fn chrono_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64
+}
+
+#[allow(dead_code)]
+fn unused(_: &Path) {}
