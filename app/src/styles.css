@@ -1,0 +1,497 @@
+:root {
+  --ground: #f3f5f1;
+  --surface: #ffffff;
+  --line: #dce2da;
+  --line-soft: #e2e6df;
+  --ink: #1c2321;
+  --muted: #5b6560;
+  --sage: #2f6f5e;
+  --sage-deep: #1f4f42;
+  --sage-wash: #e3efea;
+  --warm: #b45309;
+  --warm-wash: #fdf1dc;
+  --warm-ink: #6b4206;
+  --full: #9a3412;
+  --full-wash: #fbe9dd;
+  --full-ink: #6b2c0a;
+  --track: #e6ebe4;
+  --dark-button: #1c2321;
+  --dark-button-ink: #ffffff;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ground: #161b19;
+    --surface: #1e2522;
+    --line: #2f3833;
+    --line-soft: #2a322e;
+    --ink: #e8ede9;
+    --muted: #a3ada7;
+    --sage: #74b8a1;
+    --sage-deep: #a9d8c7;
+    --sage-wash: #24382f;
+    --warm: #e0a24a;
+    --warm-wash: #3a2c17;
+    --warm-ink: #f3d4a0;
+    --full: #e58a5a;
+    --full-wash: #3d2219;
+    --full-ink: #f6c9ae;
+    --track: #2c3531;
+    --dark-button: #e8ede9;
+    --dark-button-ink: #161b19;
+    color-scheme: dark;
+  }
+}
+
+html,
+body {
+  margin: 0;
+  background: transparent;
+  font-family: "Manrope Variable", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -webkit-user-select: none;
+  user-select: none;
+  cursor: default;
+}
+
+.input {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+.panel {
+  width: 380px;
+  height: 640px;
+  background: var(--ground);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  color: var(--ink);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  font-variant-numeric: tabular-nums;
+}
+
+.header {
+  padding: 16px 18px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.logo {
+  color: var(--sage);
+  display: flex;
+}
+
+.brand-name {
+  font-weight: 800;
+  font-size: 17px;
+  letter-spacing: -0.01em;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.small {
+  font-size: 12px;
+}
+
+.tiny {
+  font-size: 11px;
+}
+
+.strong {
+  font-weight: 700;
+}
+
+.ellipsis {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.no-margin {
+  margin: 0;
+}
+
+.pad {
+  padding: 4px 8px;
+  margin: 0;
+}
+
+.grow {
+  flex: 1;
+}
+
+.banner {
+  margin: 0 12px 8px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.banner-warm {
+  background: var(--warm-wash);
+  color: var(--warm-ink);
+}
+
+.banner-full {
+  background: var(--full-wash);
+  color: var(--full-ink);
+}
+
+.banner-text {
+  flex: 1;
+  font-size: 13px;
+  line-height: 1.4;
+  font-weight: 600;
+}
+
+.accounts {
+  padding: 0 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+  flex: 0 0 auto;
+  max-height: 360px;
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--line-soft);
+  border-radius: 14px;
+}
+
+.account {
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.account.is-active {
+  border-color: var(--sage);
+}
+
+.empty {
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.account-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.avatar {
+  width: 30px;
+  height: 30px;
+  flex: none;
+  border-radius: 50%;
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.account-names {
+  flex: 1;
+  min-width: 0;
+}
+
+.account-alias {
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.pill {
+  padding: 4px 10px;
+  border-radius: 99px;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.pill-active {
+  background: var(--sage-wash);
+  color: var(--sage-deep);
+}
+
+.pill-full {
+  background: var(--full-wash);
+  color: var(--full-ink);
+}
+
+.gauges {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.gauge {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.gauge-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+}
+
+.track {
+  height: 6px;
+  border-radius: 99px;
+  background: var(--track);
+  overflow: hidden;
+}
+
+.fill {
+  height: 100%;
+  border-radius: 99px;
+  transition: width 400ms ease;
+}
+
+.fill-calm {
+  background: var(--sage);
+}
+
+.fill-warm {
+  background: var(--warm);
+}
+
+.fill-full {
+  background: var(--full);
+}
+
+.section-title {
+  margin: 0;
+  padding: 16px 18px 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.conversations {
+  padding: 0 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.conversation {
+  border-radius: 10px;
+  padding: 7px 8px;
+}
+
+.conversation:hover {
+  background: var(--surface);
+}
+
+.conversation-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.conversation-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.conversation-title {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.resume-choices {
+  display: flex;
+  gap: 6px;
+  padding-top: 8px;
+}
+
+.footer {
+  border-top: 1px solid var(--line);
+  padding: 10px 12px;
+  display: flex;
+  gap: 8px;
+}
+
+.button {
+  min-height: 36px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--ink);
+  font: 600 13px "Manrope Variable", system-ui, sans-serif;
+  cursor: pointer;
+}
+
+.button:hover:not(:disabled) {
+  border-color: var(--sage);
+}
+
+.button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.button:focus-visible,
+.input:focus-visible,
+.check:focus-visible {
+  outline: 2px solid var(--sage);
+  outline-offset: 2px;
+}
+
+.small-button {
+  min-height: 32px;
+  padding: 0 12px;
+}
+
+.button.primary {
+  background: var(--sage);
+  border-color: var(--sage);
+  color: #ffffff;
+}
+
+.button.soft {
+  background: var(--sage-wash);
+  border-color: transparent;
+  color: var(--sage-deep);
+  min-height: 32px;
+  padding: 0 12px;
+}
+
+.button.dark {
+  background: var(--dark-button);
+  border-color: var(--dark-button);
+  color: var(--dark-button-ink);
+}
+
+.page {
+  padding: 18px 18px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  height: 100%;
+}
+
+.page-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.page-title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+
+.list {
+  padding: 2px 14px;
+}
+
+.list-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 0;
+}
+
+.list-row + .list-row {
+  border-top: 1px solid var(--line-soft);
+}
+
+.list-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 14px;
+}
+
+.check {
+  width: 20px;
+  height: 20px;
+  accent-color: var(--sage);
+  cursor: pointer;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.input {
+  min-height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--ink);
+  font: 500 14px "Manrope Variable", system-ui, sans-serif;
+}
+
+.step {
+  padding: 12px 14px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.step-number {
+  width: 26px;
+  height: 26px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--sage-wash);
+  color: var(--sage-deep);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 13px;
+}
+
+.error {
+  margin: 0;
+  padding: 8px 14px;
+  font-size: 12px;
+  color: var(--full-ink);
+  background: var(--full-wash);
+}

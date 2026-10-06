@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/relais-core", "crates/relais-cli"]
+members = ["crates/relais-core", "crates/relais-cli", "app/src-tauri"]
 
 [workspace.package]
 version = "0.1.0"

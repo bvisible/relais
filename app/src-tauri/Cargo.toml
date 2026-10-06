@@ -1,0 +1,19 @@
+[package]
+name = "relais-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "relais-app"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+relais-core = { path = "../../crates/relais-core" }
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+tauri = { version = "2", features = ["tray-icon", "image-png", "macos-private-api"] }
