@@ -7,7 +7,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
 
 use relais_core::claude::cli as claude;
-use relais_core::claude::desktop_app::{DesktopApp, DESKTOP_QUIT_WAIT};
+use relais_core::claude::desktop_app::{
+    self, DesktopApp, DesktopSignIn, DESKTOP_QUIT_WAIT, DESKTOP_SIGN_IN_WAIT,
+};
 use relais_core::claude::{desktop_profile, transcripts};
 use relais_core::registry::{self, Account};
 use relais_core::service::Relais;
@@ -1007,19 +1009,30 @@ pub fn desktop(alias: Option<&str>) -> Outcome {
         app.quit(DESKTOP_QUIT_WAIT)?;
     }
     let outcome = desktop_profile::switch(&relais.layout, &relais.registry, alias)?;
+    let since = chrono::Local::now().naive_local() - chrono::Duration::seconds(1);
     app.open()?;
-    match outcome {
-        desktop_profile::Switch::SignInNeeded => println!(
-            "{}",
-            t(
-                "desktop.sign_in",
-                &[
-                    ("alias", alias),
-                    ("email", account.email.as_deref().unwrap_or(alias))
-                ]
-            )
-        ),
-        _ => println!("{}", t("desktop.switched", &[("alias", alias)])),
-    }
+    let wait = if app.is_scripted() {
+        std::time::Duration::from_secs(3)
+    } else {
+        DESKTOP_SIGN_IN_WAIT
+    };
+    let state = desktop_app::wait_for_sign_in(&relais.layout.desktop_log_file(), since, wait);
+    let email = account.email.as_deref().unwrap_or(alias);
+    let message = match state {
+        Some(DesktopSignIn::SignedIn { account_uuid })
+            if account.account_uuid.as_deref() == Some(account_uuid.as_str()) =>
+        {
+            t("desktop.signed_in", &[("alias", alias)])
+        }
+        Some(DesktopSignIn::SignedIn { .. }) => t("desktop.other_account", &[("alias", alias)]),
+        Some(DesktopSignIn::SignedOut) => {
+            t("desktop.sign_in", &[("alias", alias), ("email", email)])
+        }
+        None if outcome == desktop_profile::Switch::SignInNeeded => {
+            t("desktop.sign_in", &[("alias", alias), ("email", email)])
+        }
+        None => t("desktop.switched", &[("alias", alias)]),
+    };
+    println!("{message}");
     Ok(0)
 }

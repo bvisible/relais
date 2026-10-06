@@ -746,6 +746,97 @@ input:focus-visible {
   white-space: nowrap;
 }
 
+.where-bar {
+  margin: 8px 12px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.where-pills {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.where-pill {
+  min-height: 36px;
+  min-width: 0;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--ink-2);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--body);
+  cursor: pointer;
+}
+
+.where-pill.is-open,
+.where-pill:hover {
+  border-color: var(--c-edge, var(--line-soft));
+}
+
+.where-pill-label {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.where-pill-alias {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--c-ink, var(--ink));
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.picker {
+  padding: 10px;
+  border-radius: 14px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.picker-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.picker-option {
+  min-height: 32px;
+  max-width: 100%;
+  padding: 0 10px 0 6px;
+  border: 1px solid var(--c-edge);
+  border-radius: 99px;
+  background: var(--c-wash);
+  color: var(--ink);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font: 700 12px var(--body);
+  cursor: pointer;
+}
+
+.picker-option:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.where-note {
+  padding: 0 8px;
+  color: var(--ink-2);
+}
+
 .relay-line {
   margin: 8px 12px 0;
   padding: 10px 12px;

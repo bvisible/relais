@@ -42,7 +42,14 @@ state="$HOME/desktop-running"
 case "$1" in
   running) [ -f "$state" ] && exit 0; exit 1;;
   quit) printf 'quit\n' >> "$HOME/desktop.log"; rm -f "$state"; exit 0;;
-  open) printf 'open\n' >> "$HOME/desktop.log"; touch "$state"; exit 0;;
+  open) printf 'open\n' >> "$HOME/desktop.log"; touch "$state"
+    log="$HOME/Library/Logs/Claude/main.log"; mkdir -p "$(dirname "$log")"
+    if [ -n "$FAKE_DESKTOP_ACCOUNT" ]; then
+      printf "%s [info] [ScheduledTasks] Initialized { accountId: '%s', orgId: 'org' }\n" "$(date '+%Y-%m-%d %H:%M:%S')" "$FAKE_DESKTOP_ACCOUNT" >> "$log"
+    else
+      printf "%s [info] [account] User is logged out, skipping account ID wait\n" "$(date '+%Y-%m-%d %H:%M:%S')" >> "$log"
+    fi
+    exit 0;;
 esac
 exit 2
 "#;
@@ -580,6 +587,31 @@ fn desktop_switch_closes_the_app_parks_its_folder_and_opens_it_again() {
         text(&output)
     );
     assert_eq!(env.registry()["active"], active_before);
+}
+
+#[test]
+fn desktop_switch_confirms_the_account_the_app_started_with() {
+    let env = Env::new();
+    env.sign_in_default("main@example.com");
+    assert_ok(&env.run(&["init"]));
+    assert_ok(&env.add_account("work", "work@example.com"));
+    fs::create_dir_all(desktop_folder(&env)).unwrap();
+    fs::write(
+        env.home().join(".relais/desktop.json"),
+        r#"{"owner":"main"}"#,
+    )
+    .unwrap();
+    fs::create_dir_all(env.home().join(".relais/accounts/work/desktop")).unwrap();
+
+    let output = env
+        .relais()
+        .args(["desktop", "work"])
+        .env("FAKE_DESKTOP_ACCOUNT", "acc-work@example.com")
+        .output()
+        .unwrap();
+
+    assert_ok(&output);
+    assert!(text(&output).contains("signed in"), "{}", text(&output));
 }
 
 #[test]

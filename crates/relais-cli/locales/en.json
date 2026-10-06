@@ -96,5 +96,7 @@
   "desktop.still_running": "The Claude desktop app did not close; nothing was moved. Quit it, then try again.",
   "desktop.open_failed": "The Claude desktop app could not be opened again; open it yourself.",
   "desktop.sign_in": "The Claude desktop app opens without an account: sign in with {email}. Next time, {alias} will be there straight away.",
-  "desktop.switched": "The Claude desktop app is on {alias}."
+  "desktop.switched": "The Claude desktop app is on {alias}.",
+  "desktop.signed_in": "The Claude desktop app is on {alias}, signed in.",
+  "desktop.other_account": "The Claude desktop app opened on another account than {alias}: check it before using it."
 }

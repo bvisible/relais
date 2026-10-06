@@ -96,5 +96,7 @@
   "desktop.still_running": "L'app Claude Desktop ne s'est pas fermée ; rien n'a bougé. Quitte-la, puis recommence.",
   "desktop.open_failed": "L'app Claude Desktop n'a pas pu se rouvrir : ouvre-la toi-même.",
   "desktop.sign_in": "L'app Claude Desktop s'ouvre sans compte : connecte-toi avec {email}. La prochaine fois, {alias} sera là tout de suite.",
-  "desktop.switched": "L'app Claude Desktop est sur {alias}."
+  "desktop.switched": "L'app Claude Desktop est sur {alias}.",
+  "desktop.signed_in": "L'app Claude Desktop est sur {alias}, connectée.",
+  "desktop.other_account": "L'app Claude Desktop s'est ouverte sur un autre compte que {alias} : vérifie-la avant de t'en servir."
 }

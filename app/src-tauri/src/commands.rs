@@ -2,7 +2,9 @@
 
 use std::path::Path;
 
-use relais_core::claude::desktop_app::{DesktopApp, DESKTOP_QUIT_WAIT};
+use relais_core::claude::desktop_app::{
+    self, DesktopApp, DesktopSignIn, DESKTOP_QUIT_WAIT, DESKTOP_SIGN_IN_WAIT,
+};
 use relais_core::claude::{cli as claude, desktop_profile, transcripts};
 use relais_core::history;
 use relais_core::integration;
@@ -370,6 +372,9 @@ pub fn sign_in_again(window: WebviewWindow, alias: String) -> Result<(), String>
 pub struct DesktopSwitchView {
     /// `already`, `restored` or `signInNeeded`.
     outcome: &'static str,
+    /// What the app logged once open: `signedIn` (on the right account),
+    /// `signedOut`, `otherAccount`, or `null` when it logged nothing in time.
+    started: Option<&'static str>,
     overview: Overview,
 }
 
@@ -393,6 +398,7 @@ pub async fn switch_desktop(alias: String) -> Result<DesktopSwitchView, String> 
     if desktop_profile::owner(&relais.layout, &relais.registry).as_deref() == Some(alias.as_str()) {
         return Ok(DesktopSwitchView {
             outcome: "already",
+            started: None,
             overview: build_overview(&relais),
         });
     }
@@ -402,8 +408,28 @@ pub async fn switch_desktop(alias: String) -> Result<DesktopSwitchView, String> 
     }
     let outcome =
         desktop_profile::switch(&relais.layout, &relais.registry, &alias).map_err(desktop_error)?;
+    let since = chrono::Local::now().naive_local() - chrono::Duration::seconds(1);
     app.open().map_err(desktop_error)?;
+    let expected = relais
+        .registry
+        .get(&alias)
+        .and_then(|a| a.account_uuid.clone());
+    let started = desktop_app::wait_for_sign_in(
+        &relais.layout.desktop_log_file(),
+        since,
+        DESKTOP_SIGN_IN_WAIT,
+    )
+    .map(|state| match state {
+        DesktopSignIn::SignedIn { account_uuid }
+            if expected.as_deref() == Some(account_uuid.as_str()) =>
+        {
+            "signedIn"
+        }
+        DesktopSignIn::SignedIn { .. } => "otherAccount",
+        DesktopSignIn::SignedOut => "signedOut",
+    });
     Ok(DesktopSwitchView {
+        started,
         outcome: match outcome {
             desktop_profile::Switch::AlreadyThere => "already",
             desktop_profile::Switch::Restored => "restored",

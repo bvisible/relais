@@ -69,7 +69,12 @@ export type AccountSignIn = {
   plan: string | null;
 };
 
-export type DesktopSwitch = { outcome: "already" | "restored" | "signInNeeded"; overview: Overview };
+export type DesktopSwitch = {
+  outcome: "already" | "restored" | "signInNeeded";
+  /** What the desktop app logged once open; `null` when it logged nothing in time. */
+  started: "signedIn" | "signedOut" | "otherAccount" | null;
+  overview: Overview;
+};
 
 export type ResumeTarget = "terminal" | "desktop";
 
@@ -215,7 +220,7 @@ async function preview<T>(command: string, args?: Record<string, unknown>): Prom
       desktopOwner: alias,
       accounts: previewState.accounts.map((a) => (a.alias === alias ? { ...a, desktopFolder: true } : a)),
     };
-    return { outcome, overview: { ...previewState, now: nowSecs() } } as T;
+    return { outcome, started: outcome === "restored" ? "signedIn" : "signedOut", overview: { ...previewState, now: nowSecs() } } as T;
   }
   if (command === "set_statusline") previewState = { ...previewState, statusline: Boolean(args?.enabled) };
   if (command === "set_shell") previewState = { ...previewState, shell: Boolean(args?.enabled) };

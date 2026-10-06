@@ -188,6 +188,7 @@ export function App() {
           onResume={(id, target) => run(() => api.resume(id, target))}
           onAccounts={openAccounts}
           onSettings={() => setView("settings")}
+          onSwitchDesktop={switchDesktop}
         />
       )}
       {view === "accounts" && overview && (
@@ -250,6 +251,7 @@ function Home(props: {
   onResume: (id: string, target: ResumeTarget) => void;
   onAccounts: (alias: string | null) => void;
   onSettings: () => void;
+  onSwitchDesktop: (alias: string) => Promise<DesktopSwitch | null>;
 }) {
   const { overview, conversations, now } = props;
   const accounts = overview?.accounts ?? [];
@@ -284,6 +286,8 @@ function Home(props: {
         )}
 
         {accounts.length > 0 && <AccountsStrip accounts={accounts} signIns={props.signIns} desktopOwner={overview?.desktopOwner ?? null} onOpen={props.onAccounts} />}
+
+        {accounts.length > 1 && <WhereBar accounts={accounts} desktopOwner={overview?.desktopOwner ?? null} onSwitch={props.onSwitch} onSwitchDesktop={props.onSwitchDesktop} />}
 
         {active && (active.limited ? <RestingHero account={active} handoff={handingOff} now={now} onSwitch={props.onSwitch} /> : <Hero account={active} now={now} />)}
 
@@ -359,6 +363,95 @@ function AccountsStrip({ accounts, signIns, desktopOwner, onOpen }: { accounts: 
           );
         })}
       </div>
+    </section>
+  );
+}
+
+/** Which account the terminal and Claude Desktop use, each changed from here. */
+function WhereBar(props: { accounts: Account[]; desktopOwner: string | null; onSwitch: (alias: string) => void; onSwitchDesktop: (alias: string) => Promise<DesktopSwitch | null> }) {
+  const { accounts, desktopOwner } = props;
+  const [open, setOpen] = useState<"terminal" | "desktop" | null>(null);
+  const [target, setTarget] = useState<Account | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+  const terminal = accounts.find((a) => a.active) ?? null;
+  const desktop = accounts.find((a) => a.alias === desktopOwner) ?? null;
+  const toggle = (which: "terminal" | "desktop") => {
+    setOpen(open === which ? null : which);
+    setTarget(null);
+    setNote(null);
+  };
+  const pickDesktop = async (account: Account) => {
+    setBusy(true);
+    const result = await props.onSwitchDesktop(account.alias);
+    setBusy(false);
+    setTarget(null);
+    setOpen(null);
+    if (!result) return;
+    const email = account.email ?? account.alias;
+    if (result.started === "signedIn") setNote(t("desktopSignedIn", { alias: account.alias }));
+    else if (result.started === "otherAccount") setNote(t("desktopOtherAccount", { alias: account.alias }));
+    else if (result.started === "signedOut" || result.outcome === "signInNeeded") setNote(t("desktopSignInNow", { email }));
+    else setNote(t("desktopDone", { alias: account.alias }));
+  };
+  const pill = (which: "terminal" | "desktop", account: Account | null) => (
+    <button className={`where-pill ${open === which ? "is-open" : ""} ${account ? "tinted" : ""}`} style={account ? tint(account.color) : undefined} aria-expanded={open === which} onClick={() => toggle(which)}>
+      {which === "terminal" ? <PromptIcon size={13} /> : <MonitorIcon size={13} />}
+      <span className="where-pill-label">{which === "terminal" ? t("whereTerminal") : t("whereDesktop")}</span>
+      <span className="where-pill-alias">{account?.alias ?? "—"}</span>
+      <ChevronIcon />
+    </button>
+  );
+  return (
+    <section className="where-bar" aria-label={t("whereItWorks")}>
+      <div className="where-pills">
+        {pill("terminal", terminal)}
+        {pill("desktop", desktop)}
+      </div>
+      {open && !target && (
+        <div className="picker">
+          <span className="muted tiny">{open === "terminal" ? t("wherePickTerminal") : t("wherePickDesktop")}</span>
+          <div className="picker-options">
+            {accounts.map((account) => {
+              const current = open === "terminal" ? account.active : account.alias === desktopOwner;
+              return (
+                <button
+                  key={account.alias}
+                  className={`picker-option tinted ${current ? "is-current" : ""}`}
+                  style={tint(account.color)}
+                  disabled={current || busy}
+                  onClick={() => {
+                    if (open === "terminal") {
+                      props.onSwitch(account.alias);
+                      setOpen(null);
+                      setNote(t("terminalSwitched", { alias: account.alias }));
+                    } else {
+                      setTarget(account);
+                    }
+                  }}
+                >
+                  <Avatar color={account.color} label={initial(account.alias)} size={18} />
+                  <span className="ellipsis">{account.alias}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+      {open === "desktop" && target && (
+        <div className="confirm">
+          <span className="small">{target.desktopFolder ? t("desktopConfirmRestore", { alias: target.alias }) : t("desktopConfirmFirst", { email: target.email ?? target.alias })}</span>
+          <div className="actions">
+            <button className="button" disabled={busy} onClick={() => setTarget(null)}>
+              {t("cancel")}
+            </button>
+            <button className="button button-accent" disabled={busy} onClick={() => void pickDesktop(target)}>
+              {busy ? t("desktopSwitching") : t("desktopSwitch")}
+            </button>
+          </div>
+        </div>
+      )}
+      {note && !open && <p className="small no-margin where-note">{note}</p>}
     </section>
   );
 }
@@ -593,6 +686,14 @@ function Logo() {
   );
 }
 
+function ChevronIcon() {
+  return (
+    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M6 9l6 6 6-6" />
+    </svg>
+  );
+}
+
 function MoonIcon() {
   return (
     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -737,7 +838,11 @@ function AccountCard(props: {
     setDesktopStep("busy");
     const result = await props.onSwitchDesktop(account.alias);
     setDesktopStep("idle");
-    if (result) setDesktopNote(result.outcome === "signInNeeded" ? t("desktopSignInNow", { email }) : t("desktopDone", { alias: account.alias }));
+    if (!result) return;
+    if (result.started === "signedIn") setDesktopNote(t("desktopSignedIn", { alias: account.alias }));
+    else if (result.started === "otherAccount") setDesktopNote(t("desktopOtherAccount", { alias: account.alias }));
+    else if (result.started === "signedOut" || result.outcome === "signInNeeded") setDesktopNote(t("desktopSignInNow", { email }));
+    else setDesktopNote(t("desktopDone", { alias: account.alias }));
   };
   const five = account.fiveHour;
   const week = account.sevenDay;

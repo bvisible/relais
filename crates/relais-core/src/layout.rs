@@ -63,6 +63,12 @@ impl Layout {
         self.relais_dir.join("accounts").join(alias).join("desktop")
     }
 
+    /// The desktop app's own log, outside its data folder: it says which
+    /// account each start loaded.
+    pub fn desktop_log_file(&self) -> PathBuf {
+        self.home.join("Library/Logs/Claude/main.log")
+    }
+
     /// Which account's folder the desktop app uses.
     pub fn desktop_state_file(&self) -> PathBuf {
         self.relais_dir.join("desktop.json")
