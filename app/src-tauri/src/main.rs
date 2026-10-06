@@ -12,7 +12,12 @@ const SHOW_WINDOW_ENV: &str = "RELAIS_SHOW_WINDOW";
 
 fn main() {
     let pinned = std::env::var_os(SHOW_WINDOW_ENV).is_some();
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    // A menu bar app starting at login or after an update must not take the
+    // front from the app in use (macOS 13 still honors the launch activation).
+    #[cfg(target_os = "macos")]
+    let builder = builder.activate_ignoring_other_apps(false);
+    builder
         .invoke_handler(tauri::generate_handler![
             commands::overview,
             commands::switch_account,
