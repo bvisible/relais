@@ -7,8 +7,13 @@
 //! tool permissions, and a few onboarding preferences.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
+use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value};
+
+use crate::error::{Error, Result};
+use crate::fsutil;
 
 /// Top-level keys that hold user preferences rather than account state.
 pub const SHARED_TOP_LEVEL_KEYS: &[&str] = &[
@@ -284,6 +289,95 @@ pub fn view_from_json(value: &Value) -> SharedView {
     view
 }
 
+/// Backups kept per file before Relais rewrites it.
+pub const BACKUPS_KEPT: usize = 10;
+
+/// A `.claude.json` that takes part in the sync.
+#[derive(Debug, Clone)]
+pub struct ConfigFile {
+    pub id: String,
+    pub path: PathBuf,
+    pub primary: bool,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct SyncOutcome {
+    /// Files Relais rewrote or created.
+    pub written: Vec<String>,
+}
+
+/// Brings the shared part of every file to the merged state.
+///
+/// Missing files do not take part in the merge (a profile that has not run
+/// yet has nothing to contribute), but they are created with the shared part,
+/// so a new profile starts with the user's MCP servers and project trust.
+/// Every file Relais rewrites is backed up first, and the file is read again
+/// right before writing so changes Claude Code made in between are kept.
+pub fn sync_config_files(
+    files: &[ConfigFile],
+    base_path: &Path,
+    backups_dir: &Path,
+    now: i64,
+) -> Result<SyncOutcome> {
+    let base = fsutil::read_json(base_path)?.map(|value| view_from_json(&value));
+    let mut participants = Vec::new();
+    for file in files {
+        if let Some(config) = fsutil::read_json(&file.path)? {
+            participants.push(Participant {
+                id: file.id.clone(),
+                view: extract(&config),
+                modified: fsutil::modified_secs(&file.path),
+                primary: file.primary,
+            });
+        }
+    }
+    let merged = merge(base.as_ref(), &participants);
+
+    let mut outcome = SyncOutcome::default();
+    for file in files {
+        let mut config = match fsutil::read_json(&file.path)? {
+            Some(config) if extract(&config) == merged => continue,
+            Some(config) => {
+                backup(
+                    &file.path,
+                    &backups_dir.join("claude-json").join(&file.id),
+                    now,
+                )?;
+                config
+            }
+            None => Value::Object(Map::new()),
+        };
+        apply(&mut config, &merged);
+        fsutil::write_json_atomic(&file.path, &config)?;
+        outcome.written.push(file.id.clone());
+    }
+    fsutil::write_json_atomic(base_path, &view_to_json(&merged))?;
+    Ok(outcome)
+}
+
+/// Copies `path` into `dir` and keeps only the newest [`BACKUPS_KEPT`] copies.
+fn backup(path: &Path, dir: &Path, now: i64) -> Result<()> {
+    fs::create_dir_all(dir).map_err(|e| Error::io(dir, e))?;
+    let mut target = dir.join(format!("{now:012}.json"));
+    let mut suffix = 1;
+    while target.exists() {
+        target = dir.join(format!("{now:012}-{suffix}.json"));
+        suffix += 1;
+    }
+    fs::copy(path, &target).map_err(|e| Error::io(&target, e))?;
+
+    let mut backups: Vec<PathBuf> = fs::read_dir(dir)
+        .map_err(|e| Error::io(dir, e))?
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .collect();
+    backups.sort();
+    let excess = backups.len().saturating_sub(BACKUPS_KEPT);
+    for old in backups.into_iter().take(excess) {
+        fs::remove_file(&old).map_err(|e| Error::io(&old, e))?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -496,5 +590,151 @@ mod tests {
     #[test]
     fn config_that_is_not_an_object_yields_an_empty_view() {
         assert!(extract(&json!(null)).is_empty());
+    }
+
+    mod files {
+        use super::super::*;
+        use serde_json::json;
+
+        struct Fixture {
+            _root: tempfile::TempDir,
+            default: PathBuf,
+            work: PathBuf,
+            base: PathBuf,
+            backups: PathBuf,
+        }
+
+        fn fixture() -> Fixture {
+            let root = tempfile::tempdir().unwrap();
+            let default = root.path().join("home/.claude.json");
+            let work = root.path().join("profiles/work/.claude.json");
+            fs::create_dir_all(default.parent().unwrap()).unwrap();
+            fs::create_dir_all(work.parent().unwrap()).unwrap();
+            Fixture {
+                base: root.path().join("relais/sync/base.json"),
+                backups: root.path().join("relais/backups"),
+                default,
+                work,
+                _root: root,
+            }
+        }
+
+        fn files(f: &Fixture) -> Vec<ConfigFile> {
+            vec![
+                ConfigFile {
+                    id: "default".into(),
+                    path: f.default.clone(),
+                    primary: true,
+                },
+                ConfigFile {
+                    id: "work".into(),
+                    path: f.work.clone(),
+                    primary: false,
+                },
+            ]
+        }
+
+        fn read(path: &Path) -> Value {
+            serde_json::from_slice(&fs::read(path).unwrap()).unwrap()
+        }
+
+        fn write(path: &Path, value: Value) {
+            fs::write(path, serde_json::to_vec(&value).unwrap()).unwrap();
+        }
+
+        #[test]
+        fn server_from_one_profile_reaches_the_other_and_account_state_stays() {
+            let f = fixture();
+            write(
+                &f.default,
+                json!({"oauthAccount": {"emailAddress": "a@example.com"}, "mcpServers": {"a": {"v": 1}}}),
+            );
+            write(
+                &f.work,
+                json!({"oauthAccount": {"emailAddress": "b@example.com"}, "mcpServers": {"b": {"v": 1}}}),
+            );
+
+            sync_config_files(&files(&f), &f.base, &f.backups, 100).unwrap();
+
+            let default = read(&f.default);
+            let work = read(&f.work);
+            assert_eq!(default["mcpServers"], json!({"a": {"v": 1}, "b": {"v": 1}}));
+            assert_eq!(work["mcpServers"], json!({"a": {"v": 1}, "b": {"v": 1}}));
+            assert_eq!(
+                default["oauthAccount"]["emailAddress"],
+                json!("a@example.com")
+            );
+            assert_eq!(work["oauthAccount"]["emailAddress"], json!("b@example.com"));
+            assert!(f.base.exists(), "the merge base is stored");
+        }
+
+        #[test]
+        fn a_profile_without_config_starts_with_the_shared_part_only() {
+            let f = fixture();
+            write(
+                &f.default,
+                json!({"userID": "u1", "hasCompletedOnboarding": true, "mcpServers": {"a": {"v": 1}}}),
+            );
+
+            let outcome = sync_config_files(&files(&f), &f.base, &f.backups, 100).unwrap();
+
+            assert_eq!(
+                read(&f.work),
+                json!({"hasCompletedOnboarding": true, "mcpServers": {"a": {"v": 1}}})
+            );
+            assert_eq!(outcome.written, vec!["work".to_string()]);
+        }
+
+        #[test]
+        fn removal_after_a_first_sync_propagates() {
+            let f = fixture();
+            write(
+                &f.default,
+                json!({"mcpServers": {"a": {"v": 1}, "gone": {"v": 1}}}),
+            );
+            write(
+                &f.work,
+                json!({"mcpServers": {"a": {"v": 1}, "gone": {"v": 1}}}),
+            );
+            sync_config_files(&files(&f), &f.base, &f.backups, 100).unwrap();
+
+            write(&f.work, json!({"mcpServers": {"a": {"v": 1}}}));
+            sync_config_files(&files(&f), &f.base, &f.backups, 200).unwrap();
+
+            assert_eq!(read(&f.default)["mcpServers"], json!({"a": {"v": 1}}));
+        }
+
+        #[test]
+        fn nothing_is_written_when_profiles_already_agree() {
+            let f = fixture();
+            write(&f.default, json!({"mcpServers": {"a": {"v": 1}}}));
+            write(
+                &f.work,
+                json!({"mcpServers": {"a": {"v": 1}}, "userID": "u2"}),
+            );
+
+            let outcome = sync_config_files(&files(&f), &f.base, &f.backups, 100).unwrap();
+
+            assert!(outcome.written.is_empty());
+            assert!(!f.backups.exists());
+        }
+
+        #[test]
+        fn rewritten_files_are_backed_up_and_old_backups_pruned() {
+            let f = fixture();
+            for round in 0..(BACKUPS_KEPT as i64 + 3) {
+                write(
+                    &f.default,
+                    json!({"mcpServers": {format!("s{round}"): {"v": 1}}}),
+                );
+                write(&f.work, json!({}));
+                sync_config_files(&files(&f), &f.base, &f.backups, 1000 + round).unwrap();
+            }
+
+            let kept = fs::read_dir(f.backups.join("claude-json/work"))
+                .unwrap()
+                .count();
+            assert_eq!(kept, BACKUPS_KEPT);
+        }
     }
 }
