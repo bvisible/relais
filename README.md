@@ -34,8 +34,8 @@ per-project trust and permissions) are kept in sync across profiles.
 |---|---|
 | Shared config sync, account registry, usage readings, conversation index | done, tested |
 | Terminal: `relais` command (accounts, switch, exec, continue, status line, doctor) | done, tested, in daily use on one Mac |
-| Desktop app and Chrome | next |
-| Menu bar app | planned |
+| Menu bar app (Tauri, React): accounts, gauges, switching, resume in Claude Desktop or the terminal, settings | first version, in daily use on one Mac |
+| Switching the Claude desktop app's login and Chrome profiles | next |
 
 ```bash
 relais init                      # register the account Claude Code is signed in with
