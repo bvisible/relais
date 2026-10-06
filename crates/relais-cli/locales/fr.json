@@ -15,7 +15,7 @@
   "warn.sync": "les réglages communs n'ont pas pu être synchronisés ({details}).",
   "init.done": "Compte {alias} ({email}) enregistré et actif.",
   "init.already": "Relais est déjà configuré.",
-  "init.next": "Ensuite : `relais account add <nom>` pour chaque autre compte, puis `relais statusline-install`, et ajoute `eval \"$(relais shell-init zsh)\"` dans ~/.zshrc.",
+  "init.next": "Ensuite : `relais account add <nom>` pour chaque autre compte, puis `relais statusline-install` et `relais shell-install`.",
   "add.signin": "Connecte-toi avec le compte de {alias} dans le navigateur qui s'ouvre…",
   "add.done": "Compte {alias} ({email}) ajouté. Pour l'utiliser : `relais switch {alias}`.",
   "remove.done": "Compte {alias} retiré. Son profil reste dans {dir}.",
@@ -51,7 +51,7 @@
   "doctor.statusline_on": "Barre d'état : passe par Relais",
   "doctor.statusline_off": "Barre d'état : ne passe pas par Relais (lance `relais statusline-install` pour enregistrer la consommation)",
   "doctor.shell_on": "Shell : `claude` passe par Relais",
-  "doctor.shell_off": "Shell : `claude` ne passe pas encore par Relais (ajoute `eval \"$(relais shell-init zsh)\"` dans ~/.zshrc)",
+  "doctor.shell_off": "Shell : `claude` ne passe pas encore par Relais (lance `relais shell-install`)",
   "help.about": "Plusieurs comptes Claude sur un Mac, qui se passent le relais. Relais ne touche jamais une connexion.",
   "help.init": "Enregistrer le compte connecté dans Claude Code (~/.claude) comme premier compte",
   "help.account": "Ajouter ou retirer un compte",
@@ -68,5 +68,11 @@
   "help.statusline-install": "Faire passer la barre d'état de Claude Code par Relais",
   "help.statusline-uninstall": "Remettre ta barre d'état d'origine",
   "help.shell-init": "Afficher la fonction du shell qui fait passer `claude` par Relais",
-  "help.doctor": "Vérifier les comptes, les profils, la barre d'état et le shell"
+  "help.doctor": "Vérifier les comptes, les profils, la barre d'état et le shell",
+  "shell.installed": "`claude` passe désormais par Relais dans les nouveaux terminaux.",
+  "shell.already": "`claude` passe déjà par Relais.",
+  "shell.uninstalled": "`claude` fonctionne de nouveau seul dans les nouveaux terminaux.",
+  "shell.not_installed": "`claude` ne passait pas par Relais.",
+  "help.shell-install": "Faire passer `claude` par Relais (ajoute une ligne à ~/.zshrc)",
+  "help.shell-uninstall": "Retirer cette ligne de ~/.zshrc"
 }

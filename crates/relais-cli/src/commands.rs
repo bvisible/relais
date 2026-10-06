@@ -11,8 +11,7 @@ use relais_core::claude::transcripts;
 use relais_core::registry::Account;
 use relais_core::service::Relais;
 use relais_core::usage::Availability;
-use relais_core::{fsutil, Error, Layout};
-use serde_json::{json, Value};
+use relais_core::{integration, Error, Layout};
 
 use crate::format;
 use crate::i18n::t;
@@ -567,14 +566,6 @@ pub fn continue_conversation(session_id: Option<&str>, desktop: bool) -> Outcome
     run_claude(&binary, config_dir.as_deref(), &args, cwd.as_deref()).map(exit_code)
 }
 
-fn statusline_state(layout: &Layout) -> PathBuf {
-    layout.relais_dir.join("statusline.json")
-}
-
-fn settings_path(layout: &Layout) -> PathBuf {
-    layout.claude_dir.join("settings.json")
-}
-
 /// Records the usage Claude Code hands to the status line, then renders the
 /// user's own status line with the same input. Never fails the status line.
 pub fn statusline(command: Vec<OsString>) -> Outcome {
@@ -596,13 +587,9 @@ pub fn statusline(command: Vec<OsString>) -> Outcome {
         c.args(rest);
         c
     } else {
-        let saved = layout
+        let Some(text) = layout
             .as_ref()
-            .and_then(|l| fsutil::read_json(&statusline_state(l)).ok().flatten());
-        let Some(text) = saved
-            .as_ref()
-            .and_then(|s| s.pointer("/original/command"))
-            .and_then(Value::as_str)
+            .and_then(integration::statusline_original_command)
         else {
             return Ok(0);
         };
@@ -633,9 +620,15 @@ fn log_line(layout: &Layout, name: &str, message: &str) {
     }
 }
 
+fn own_executable() -> PathBuf {
+    std::env::current_exe().unwrap_or_else(|_| PathBuf::from("relais"))
+}
+
 fn own_statusline_command() -> String {
-    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("relais"));
-    format!("{} statusline", shell_quote(&exe.display().to_string()))
+    format!(
+        "{} statusline",
+        shell_quote(&own_executable().display().to_string())
+    )
 }
 
 fn shell_quote(text: &str) -> String {
@@ -649,100 +642,52 @@ fn shell_quote(text: &str) -> String {
     }
 }
 
-/// Points Claude Code's status line at `relais statusline`, keeping the user's
-/// command so `relais statusline` can still render it.
+fn report(change: integration::Change, done: &str, already: &str) -> Outcome {
+    let key = match change {
+        integration::Change::Done => done,
+        integration::Change::AlreadyDone => already,
+    };
+    println!("{}", t(key, &[]));
+    Ok(0)
+}
+
+/// Points Claude Code's status line at `relais statusline`.
 pub fn statusline_install() -> Outcome {
     let layout = Layout::from_env()?;
-    let path = settings_path(&layout);
-    let mut settings = fsutil::read_json(&path)?.unwrap_or_else(|| json!({}));
-    let ours = own_statusline_command();
-    let current = settings.get("statusLine").cloned();
-    let already = current
-        .as_ref()
-        .and_then(|s| s.get("command"))
-        .and_then(Value::as_str)
-        == Some(ours.as_str());
-    if already {
-        println!("{}", t("statusline.already", &[]));
-        return Ok(0);
-    }
-    fsutil::write_json_atomic(&statusline_state(&layout), &json!({ "original": current }))?;
-    backup_settings(&layout, &path)?;
-    let mut status_line = current.unwrap_or_else(|| json!({"type": "command"}));
-    if let Some(object) = status_line.as_object_mut() {
-        object.insert("type".into(), json!("command"));
-        object.insert("command".into(), json!(ours));
-    }
-    if let Some(object) = settings.as_object_mut() {
-        object.insert("statusLine".into(), status_line);
-    }
-    fsutil::write_json_atomic(&path, &settings)?;
-    println!("{}", t("statusline.installed", &[]));
-    Ok(0)
+    let change = integration::install_statusline(&layout, &own_statusline_command(), now())?;
+    report(change, "statusline.installed", "statusline.already")
 }
 
 pub fn statusline_uninstall() -> Outcome {
     let layout = Layout::from_env()?;
-    let state_path = statusline_state(&layout);
-    let Some(state) = fsutil::read_json(&state_path)? else {
-        println!("{}", t("statusline.not_installed", &[]));
-        return Ok(0);
-    };
-    let path = settings_path(&layout);
-    let mut settings = fsutil::read_json(&path)?.unwrap_or_else(|| json!({}));
-    backup_settings(&layout, &path)?;
-    if let Some(object) = settings.as_object_mut() {
-        match state.get("original").filter(|o| !o.is_null()) {
-            Some(original) => {
-                object.insert("statusLine".into(), original.clone());
-            }
-            None => {
-                object.remove("statusLine");
-            }
-        }
-    }
-    fsutil::write_json_atomic(&path, &settings)?;
-    std::fs::remove_file(&state_path)
-        .map_err(|e| Failure::Message(t("error.generic", &[("details", &e.to_string())])))?;
-    println!("{}", t("statusline.uninstalled", &[]));
-    Ok(0)
-}
-
-fn backup_settings(layout: &Layout, path: &Path) -> Result<(), Failure> {
-    if !path.exists() {
-        return Ok(());
-    }
-    let dir = layout.backups_dir().join("settings");
-    std::fs::create_dir_all(&dir)
-        .map_err(|e| Failure::Message(t("error.generic", &[("details", &e.to_string())])))?;
-    let target = dir.join(format!("{:012}.json", now()));
-    std::fs::copy(path, target)
-        .map_err(|e| Failure::Message(t("error.generic", &[("details", &e.to_string())])))?;
-    Ok(())
+    let change = integration::uninstall_statusline(&layout, now())?;
+    report(change, "statusline.uninstalled", "statusline.not_installed")
 }
 
 pub fn shell_init(shell: &str) -> Outcome {
-    let script = match shell {
+    match shell {
         "zsh" | "bash" | "sh" => {
-            r#"# Relais: `claude` runs with the active account, or unchanged when relais is missing.
-claude() {
-  if command -v relais >/dev/null 2>&1; then
-    relais exec -- "$@"
-  else
-    command claude "$@"
-  fi
+            print!("{}", integration::SHELL_FUNCTION);
+            Ok(0)
+        }
+        _ => Err(Failure::Message(t(
+            "error.generic",
+            &[("details", &format!("unsupported shell: {shell}"))],
+        ))),
+    }
 }
-"#
-        }
-        _ => {
-            return Err(Failure::Message(t(
-                "error.generic",
-                &[("details", &format!("unsupported shell: {shell}"))],
-            )))
-        }
-    };
-    print!("{script}");
-    Ok(0)
+
+/// Adds the `claude` function to `~/.zshrc`.
+pub fn shell_install() -> Outcome {
+    let layout = Layout::from_env()?;
+    let change = integration::install_shell(&layout, &own_executable(), now())?;
+    report(change, "shell.installed", "shell.already")
+}
+
+pub fn shell_uninstall() -> Outcome {
+    let layout = Layout::from_env()?;
+    let change = integration::uninstall_shell(&layout, now())?;
+    report(change, "shell.uninstalled", "shell.not_installed")
 }
 
 pub fn doctor() -> Outcome {
@@ -781,21 +726,12 @@ pub fn doctor() -> Outcome {
         }
         Err(failure) => println!("✗ {}", failure.describe()),
     }
-    let settings = fsutil::read_json(&settings_path(&relais.layout))
-        .ok()
-        .flatten();
-    let wrapped = settings
-        .as_ref()
-        .and_then(|s| s.pointer("/statusLine/command"))
-        .and_then(Value::as_str)
-        .is_some_and(|c| c.ends_with(" statusline"));
-    if wrapped {
+    if integration::statusline_installed(&relais.layout) {
         println!("✓ {}", t("doctor.statusline_on", &[]));
     } else {
         println!("✗ {}", t("doctor.statusline_off", &[]));
     }
-    let zshrc = std::fs::read_to_string(relais.layout.home.join(".zshrc")).unwrap_or_default();
-    if zshrc.contains("relais shell-init") || zshrc.contains("relais exec") {
+    if integration::shell_installed(&relais.layout) {
         println!("✓ {}", t("doctor.shell_on", &[]));
     } else {
         println!("✗ {}", t("doctor.shell_off", &[]));

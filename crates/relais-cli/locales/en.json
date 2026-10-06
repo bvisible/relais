@@ -15,7 +15,7 @@
   "warn.sync": "shared settings could not be synced ({details}).",
   "init.done": "Account {alias} ({email}) registered and active.",
   "init.already": "Relais is already set up.",
-  "init.next": "Next: `relais account add <name>` for each other account, then `relais statusline-install`, and add `eval \"$(relais shell-init zsh)\"` to ~/.zshrc.",
+  "init.next": "Next: `relais account add <name>` for each other account, then `relais statusline-install` and `relais shell-install`.",
   "add.signin": "Sign in with the account for {alias} in the browser that opens…",
   "add.done": "Account {alias} ({email}) added. Switch to it with `relais switch {alias}`.",
   "remove.done": "Account {alias} removed. Its profile stays in {dir}.",
@@ -51,7 +51,7 @@
   "doctor.statusline_on": "Status line: wrapped by Relais",
   "doctor.statusline_off": "Status line: not wrapped (run `relais statusline-install` to record usage)",
   "doctor.shell_on": "Shell: `claude` runs through Relais",
-  "doctor.shell_off": "Shell: `claude` does not run through Relais yet (add `eval \"$(relais shell-init zsh)\"` to ~/.zshrc)",
+  "doctor.shell_off": "Shell: `claude` does not run through Relais yet (run `relais shell-install`)",
   "help.about": "Several Claude accounts on one Mac, working as a relay team. Relais never touches a credential.",
   "help.init": "Register the account Claude Code is signed in with (~/.claude) as the first account",
   "help.account": "Add or remove an account",
@@ -68,5 +68,11 @@
   "help.statusline-install": "Route Claude Code's status line through Relais",
   "help.statusline-uninstall": "Restore your original status line",
   "help.shell-init": "Print the shell function that makes `claude` run through Relais",
-  "help.doctor": "Check accounts, profiles, status line and shell setup"
+  "help.doctor": "Check accounts, profiles, status line and shell setup",
+  "shell.installed": "`claude` now runs through Relais in new terminals.",
+  "shell.already": "`claude` already runs through Relais.",
+  "shell.uninstalled": "`claude` runs on its own again in new terminals.",
+  "shell.not_installed": "`claude` was not running through Relais.",
+  "help.shell-install": "Make `claude` run through Relais (adds a line to ~/.zshrc)",
+  "help.shell-uninstall": "Remove that line from ~/.zshrc"
 }

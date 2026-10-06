@@ -62,6 +62,8 @@ enum Commands {
     ShellInit {
         shell: String,
     },
+    ShellInstall,
+    ShellUninstall,
     Doctor,
 }
 
@@ -88,6 +90,8 @@ fn localized_command() -> clap::Command {
         "statusline-install",
         "statusline-uninstall",
         "shell-init",
+        "shell-install",
+        "shell-uninstall",
         "doctor",
     ] {
         let key = format!("help.{name}");
@@ -128,6 +132,8 @@ fn main() -> ExitCode {
         Commands::StatuslineInstall => commands::statusline_install(),
         Commands::StatuslineUninstall => commands::statusline_uninstall(),
         Commands::ShellInit { shell } => commands::shell_init(&shell),
+        Commands::ShellInstall => commands::shell_install(),
+        Commands::ShellUninstall => commands::shell_uninstall(),
         Commands::Doctor => commands::doctor(),
     };
     match outcome {
