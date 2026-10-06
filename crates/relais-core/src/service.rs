@@ -1,18 +1,35 @@
 //! The operations the CLI and the app share, built on the lower modules.
 
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
+use crate::claude::desktop;
 use crate::claude::profile::{self, LinkReport};
 use crate::claude::sync::{self, ConfigFile, SyncOutcome};
+use crate::claude::transcripts::{self, Conversation, ACTIVITY_BUCKETS};
 use crate::error::{Error, Result};
 use crate::fsutil;
 use crate::layout::Layout;
 use crate::registry::{Account, Registry};
 use crate::sessions::SessionAccounts;
 use crate::usage::{self, UsageReading, UsageStore};
+
+/// A conversation as the menu bar app and `relais conversations` show it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RecentConversation {
+    pub conversation: Conversation,
+    /// The account that last ran it, when Relais saw it run.
+    pub account: Option<String>,
+    /// Unix seconds of its last message: Claude Code also writes bookkeeping
+    /// lines to an idle session, so the transcript's own date runs ahead.
+    /// Transcripts untouched for an hour keep that date and are not read again.
+    pub last_activity: i64,
+    /// Messages per five minutes over the last hour, oldest first.
+    pub activity: Vec<u32>,
+}
 
 /// How long a sync waits for Claude Code to release a config file.
 pub const SYNC_LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
@@ -102,9 +119,66 @@ impl Relais {
         Ok(Some(account.alias.clone()))
     }
 
-    /// The account a session last ran on, as its status line reported it.
+    /// Every session Relais can place, by transcript id, with the alias of the
+    /// account that last ran it. The status line sees the terminal sessions and
+    /// the desktop app's sidebar lists its own; the later sighting wins.
+    pub fn session_accounts(&self) -> HashMap<String, String> {
+        let mut seen: HashMap<String, (String, i64)> =
+            SessionAccounts::new(&self.layout.sessions_file())
+                .load()
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|(_, session)| self.registry.get(&session.alias).is_some())
+                .map(|(id, session)| (id, (session.alias, session.seen_at)))
+                .collect();
+        for (id, session) in desktop::session_accounts(&self.layout.desktop_dir) {
+            let account = self
+                .registry
+                .accounts
+                .iter()
+                .find(|a| a.account_uuid.as_deref() == Some(session.account_uuid.as_str()));
+            let Some(account) = account else {
+                continue;
+            };
+            if seen.get(&id).is_none_or(|(_, at)| *at < session.seen_at) {
+                seen.insert(id, (account.alias.clone(), session.seen_at));
+            }
+        }
+        seen.into_iter()
+            .map(|(id, (alias, _))| (id, alias))
+            .collect()
+    }
+
+    /// The latest conversations started by a person, most recent message first,
+    /// with the account that ran each one and its activity over the last hour.
+    pub fn recent_conversations(&self, limit: usize, now: i64) -> Result<Vec<RecentConversation>> {
+        let accounts = self.session_accounts();
+        let projects = self.layout.claude_dir.join("projects");
+        let mut recent: Vec<RecentConversation> =
+            transcripts::list_conversations(&projects, limit)?
+                .into_iter()
+                .map(|conversation| {
+                    let activity = (now - conversation.last_activity < 3600)
+                        .then(|| transcripts::activity(&conversation.path, now).ok())
+                        .flatten();
+                    RecentConversation {
+                        account: accounts.get(&conversation.session_id).cloned(),
+                        last_activity: activity
+                            .as_ref()
+                            .and_then(|a| a.last_message)
+                            .unwrap_or(conversation.last_activity),
+                        activity: activity.map_or_else(|| vec![0; ACTIVITY_BUCKETS], |a| a.buckets),
+                        conversation,
+                    }
+                })
+                .collect();
+        recent.sort_by_key(|c| std::cmp::Reverse(c.last_activity));
+        Ok(recent)
+    }
+
+    /// The account a session last ran on, in a terminal or in the desktop app.
     pub fn account_of_session(&self, session_id: &str) -> Option<String> {
-        SessionAccounts::new(&self.layout.sessions_file()).account_of(session_id)
+        self.session_accounts().remove(session_id)
     }
 
     /// The newest reading for an account, from the status line or the desktop app.
@@ -384,5 +458,118 @@ mod tests {
         assert_eq!(relais.account_of_session("s-1").as_deref(), Some("work"));
         assert_eq!(relais.account_of_session("s-2").as_deref(), Some("main"));
         assert_eq!(relais.account_of_session("s-3"), None);
+    }
+
+    fn desktop_record(relais: &Relais, account_uuid: &str, cli_session: &str, written: i64) {
+        let folder = relais
+            .layout
+            .desktop_dir
+            .join("claude-code-sessions")
+            .join(account_uuid)
+            .join("org");
+        fs::create_dir_all(&folder).unwrap();
+        let path = folder.join(format!("local_{cli_session}.json"));
+        fs::write(&path, format!(r#"{{"cliSessionId":"{cli_session}"}}"#)).unwrap();
+        let written = std::time::UNIX_EPOCH + std::time::Duration::from_secs(written as u64);
+        fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(written)
+            .unwrap();
+    }
+
+    #[test]
+    fn a_desktop_session_belongs_to_the_account_whose_sidebar_lists_it() {
+        let (_root, relais) = fixture();
+        desktop_record(&relais, "acc-work", "cli-9", NOW);
+
+        assert_eq!(relais.account_of_session("cli-9").as_deref(), Some("work"));
+        assert_eq!(
+            relais.session_accounts().get("cli-9").map(String::as_str),
+            Some("work")
+        );
+    }
+
+    #[test]
+    fn the_latest_sighting_wins_between_status_line_and_desktop() {
+        let (_root, relais) = fixture();
+        relais
+            .record_statusline(None, &statusline_input(5.0), NOW)
+            .unwrap();
+        desktop_record(&relais, "acc-work", "s-1", NOW - 3600);
+        assert_eq!(relais.account_of_session("s-1").as_deref(), Some("main"));
+
+        desktop_record(&relais, "acc-work", "s-1", NOW + 60);
+        assert_eq!(relais.account_of_session("s-1").as_deref(), Some("work"));
+    }
+
+    #[test]
+    fn a_desktop_account_relais_does_not_know_is_ignored() {
+        let (_root, relais) = fixture();
+        desktop_record(&relais, "acc-stranger", "cli-9", NOW);
+        assert_eq!(relais.account_of_session("cli-9"), None);
+    }
+
+    fn transcript(relais: &Relais, session: &str, lines: &[Value], written: i64) {
+        let project = relais.layout.claude_dir.join("projects").join("-work");
+        fs::create_dir_all(&project).unwrap();
+        let path = project.join(format!("{session}.jsonl"));
+        let body: String = lines.iter().map(|l| format!("{l}\n")).collect();
+        fs::write(&path, body).unwrap();
+        let written = std::time::UNIX_EPOCH + std::time::Duration::from_secs(written as u64);
+        fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(written)
+            .unwrap();
+    }
+
+    fn at(secs: i64) -> String {
+        chrono::DateTime::from_timestamp(secs, 0)
+            .unwrap()
+            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+    }
+
+    #[test]
+    fn recent_conversations_carry_their_account_and_their_last_message() {
+        let (_root, relais) = fixture();
+        let user = |text: &str, when: i64| {
+            json!({"type": "user", "timestamp": at(when), "cwd": "/work", "entrypoint": "cli",
+                   "message": {"role": "user", "content": text}})
+        };
+        // s-1: last message 10 minutes ago, but Claude Code wrote a bookkeeping
+        // line 30 seconds ago. s-2: a message 2 minutes ago.
+        transcript(
+            &relais,
+            "s-1",
+            &[
+                user("first", NOW - 600),
+                json!({"type": "mode", "timestamp": at(NOW - 30)}),
+            ],
+            NOW - 30,
+        );
+        transcript(&relais, "s-2", &[user("second", NOW - 120)], NOW - 120);
+        relais
+            .record_statusline(
+                Some(&relais.layout.profile_dir("work")),
+                &serde_json::to_vec(&json!({"session_id": "s-1"})).unwrap(),
+                NOW,
+            )
+            .unwrap();
+
+        let recent = relais.recent_conversations(10, NOW).unwrap();
+
+        let ids: Vec<&str> = recent
+            .iter()
+            .map(|c| c.conversation.session_id.as_str())
+            .collect();
+        assert_eq!(ids, vec!["s-2", "s-1"]);
+        assert_eq!(recent[1].account.as_deref(), Some("work"));
+        assert_eq!(recent[1].last_activity, NOW - 600);
+        assert_eq!(recent[1].activity.iter().sum::<u32>(), 1);
+        assert_eq!(recent[0].account, None);
+        assert_eq!(recent[0].last_activity, NOW - 120);
     }
 }

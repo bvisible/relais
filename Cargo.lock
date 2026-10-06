@@ -2615,6 +2615,7 @@ name = "relais-app"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "objc2-app-kit",
  "relais-core",
  "serde",
  "serde_json",

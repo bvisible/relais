@@ -36,7 +36,7 @@ export type Conversation = {
   cwd: string | null;
   project: string | null;
   lastActivity: number;
-  /** The account the status line last saw this session on. */
+  /** The account that last ran this session, in a terminal or in the desktop app. */
   account: string | null;
   desktop: boolean;
   /** Messages per five minutes over the last hour, oldest first. */

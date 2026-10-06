@@ -6,7 +6,8 @@ mod tray;
 
 use tauri::{Manager, WindowEvent};
 
-/// Set to keep the panel open and centered, for screenshots and checks.
+/// Set to keep the panel open and centered, for screenshots and checks. The
+/// panel then does not take the keyboard from the app in front.
 const SHOW_WINDOW_ENV: &str = "RELAIS_SHOW_WINDOW";
 
 fn main() {
@@ -30,11 +31,12 @@ fn main() {
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
             tray::create(app.handle())?;
             tray::keep_title_fresh(app.handle().clone());
-            if pinned {
-                if let Some(window) = app.get_webview_window("main") {
+            if let Some(window) = app.get_webview_window("main") {
+                #[cfg(target_os = "macos")]
+                platform::open_on_every_space(&window);
+                if pinned {
                     let _ = window.center();
                     let _ = window.show();
-                    let _ = window.set_focus();
                 }
             }
             Ok(())

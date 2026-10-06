@@ -393,6 +393,32 @@ fn list_says_how_long_until_a_limited_account_is_back() {
 }
 
 #[test]
+fn conversations_name_the_account_that_ran_each_one() {
+    let env = Env::new();
+    env.sign_in_default("main@example.com");
+    assert_ok(&env.run(&["init"]));
+    let project = env.home().join(".claude/projects/-workdir");
+    fs::create_dir_all(&project).unwrap();
+    let line = json!({"type": "user", "cwd": "/workdir", "entrypoint": "cli", "message": {"role": "user", "content": "hello there"}});
+    fs::write(project.join("s-42.jsonl"), format!("{line}\n")).unwrap();
+    fs::write(
+        env.home().join(".relais/sessions.json"),
+        json!({"s-42": {"alias": "main", "seenAt": chrono_now()}}).to_string(),
+    )
+    .unwrap();
+
+    let output = env.run(&["conversations"]);
+
+    assert_ok(&output);
+    let listing = String::from_utf8_lossy(&output.stdout);
+    let row = listing
+        .lines()
+        .find(|l| l.contains("hello there"))
+        .unwrap_or_default();
+    assert!(row.contains("main"), "{listing}");
+}
+
+#[test]
 fn continue_resumes_a_conversation_from_its_directory() {
     let env = Env::new();
     env.sign_in_default("main@example.com");

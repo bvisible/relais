@@ -1,5 +1,6 @@
 //! What the app needs from macOS: finding the command-line tools, opening a
-//! Terminal, handing a conversation to Claude Desktop.
+//! Terminal, handing a conversation to Claude Desktop, and showing the panel
+//! on whichever Space is in front.
 
 use std::ffi::OsString;
 use std::os::unix::fs::PermissionsExt;
@@ -11,6 +12,26 @@ use std::time::{Duration, SystemTime};
 use relais_core::claude::cli as claude;
 use relais_core::service::Relais;
 use relais_core::Layout;
+
+/// Lets the panel open on the Space in front, including over an app in full
+/// screen. Tauri's `visibleOnAllWorkspaces` only sets `CanJoinAllSpaces`:
+/// without `FullScreenAuxiliary` the panel stayed on the desktop Space, out of
+/// sight, while a full-screen app was in front.
+#[cfg(target_os = "macos")]
+pub fn open_on_every_space(window: &tauri::WebviewWindow) {
+    use objc2_app_kit::{NSWindow, NSWindowCollectionBehavior};
+    let Ok(pointer) = window.ns_window() else {
+        return;
+    };
+    // SAFETY: the pointer is the live NSWindow Tauri owns for this window, and
+    // `setup` calls this on the main thread, where AppKit objects must be used.
+    let ns_window = unsafe { &*pointer.cast::<NSWindow>() };
+    ns_window.setCollectionBehavior(
+        ns_window.collectionBehavior()
+            | NSWindowCollectionBehavior::CanJoinAllSpaces
+            | NSWindowCollectionBehavior::FullScreenAuxiliary,
+    );
+}
 
 /// Apps opened from the Finder get a minimal `PATH`; add the usual install
 /// places of `claude`, `relais` and the tools Claude Code relies on.

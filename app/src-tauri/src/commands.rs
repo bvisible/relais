@@ -2,11 +2,10 @@
 
 use std::path::Path;
 
-use relais_core::claude::transcripts::{self, ACTIVITY_BUCKETS};
+use relais_core::claude::transcripts;
 use relais_core::integration;
 use relais_core::registry;
 use relais_core::service::Relais;
-use relais_core::sessions::SessionAccounts;
 use relais_core::usage::{Availability, UsageReading, Window};
 use relais_core::Layout;
 use serde::Serialize;
@@ -66,7 +65,7 @@ pub struct ConversationView {
     /// The last folder of `cwd`, shown as the conversation's project.
     project: Option<String>,
     last_activity: i64,
-    /// The account the status line last saw this session on.
+    /// The account that last ran this session, in a terminal or in the desktop app.
     account: Option<String>,
     /// Started in the Claude desktop app rather than in a terminal.
     desktop: bool,
@@ -176,30 +175,12 @@ pub fn set_color(alias: String, color: String) -> Result<Overview, String> {
 #[tauri::command]
 pub async fn conversations(limit: usize) -> Result<Vec<ConversationView>, String> {
     let relais = load()?;
-    let layout = &relais.layout;
-    let home = layout.home.display().to_string();
-    let now = now();
-    let sessions = SessionAccounts::new(&layout.sessions_file())
-        .load()
-        .unwrap_or_default();
-    let list = transcripts::list_conversations(&layout.claude_dir.join("projects"), limit)
-        .map_err(text)?;
-    let mut views: Vec<ConversationView> = list
+    let home = relais.layout.home.display().to_string();
+    let recent = relais.recent_conversations(limit, now()).map_err(text)?;
+    Ok(recent
         .into_iter()
-        .map(|c| {
-            // Activity only covers the last hour: older transcripts are not read again.
-            let activity = (now - c.last_activity < 3600)
-                .then(|| transcripts::activity(&c.path, now).ok())
-                .flatten();
-            let last_activity = activity
-                .as_ref()
-                .and_then(|a| a.last_message)
-                .unwrap_or(c.last_activity);
-            let activity = activity.map_or_else(|| vec![0; ACTIVITY_BUCKETS], |a| a.buckets);
-            let account = sessions
-                .get(&c.session_id)
-                .map(|s| s.alias.clone())
-                .filter(|alias| relais.registry.get(alias).is_some());
+        .map(|recent| {
+            let c = recent.conversation;
             let project = c.cwd.as_deref().and_then(|cwd| {
                 Path::new(cwd)
                     .file_name()
@@ -211,14 +192,12 @@ pub async fn conversations(limit: usize) -> Result<Vec<ConversationView>, String
                 title: c.title,
                 cwd: c.cwd.map(|cwd| cwd.replacen(&home, "~", 1)),
                 project,
-                last_activity,
-                account,
-                activity,
+                last_activity: recent.last_activity,
+                account: recent.account,
+                activity: recent.activity,
             }
         })
-        .collect();
-    views.sort_by_key(|view| std::cmp::Reverse(view.last_activity));
-    Ok(views)
+        .collect())
 }
 
 #[tauri::command]

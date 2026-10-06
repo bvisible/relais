@@ -604,24 +604,32 @@ fn resume_args(layout: &Layout, session_id: Option<&str>) -> Vec<OsString> {
 }
 
 pub fn conversations(limit: usize) -> Outcome {
-    let layout = Layout::from_env()?;
-    let list = transcripts::list_conversations(&layout.claude_dir.join("projects"), limit)?;
-    if list.is_empty() {
+    let relais = load()?;
+    let now = now();
+    let recent = relais.recent_conversations(limit, now)?;
+    if recent.is_empty() {
         println!("{}", t("conversations.empty", &[]));
         return Ok(0);
     }
-    let now = now();
-    let home = layout.home.display().to_string();
-    for conversation in list {
+    let home = relais.layout.home.display().to_string();
+    let width = recent
+        .iter()
+        .filter_map(|c| c.account.as_deref())
+        .map(|alias| alias.chars().count())
+        .max()
+        .unwrap_or(1);
+    for recent in recent {
+        let conversation = &recent.conversation;
         let cwd = conversation
             .cwd
             .as_deref()
             .unwrap_or("")
             .replacen(&home, "~", 1);
         println!(
-            "{}  {:<12}  {}  {}",
+            "{}  {:<12}  {:<width$}  {}  {}",
             conversation.session_id.chars().take(8).collect::<String>(),
-            format::age(conversation.last_activity, now),
+            format::age(recent.last_activity, now),
+            recent.account.as_deref().unwrap_or("—"),
             conversation.title.as_deref().unwrap_or("—"),
             cwd
         );
