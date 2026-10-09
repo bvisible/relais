@@ -650,12 +650,11 @@ fn offer_to_continue(
             ],
         )
     };
+    restore_terminal();
     eprint!("{prompt}");
     let _ = std::io::stderr().flush();
-    let mut answer = String::new();
-    let _ = std::io::stdin().read_line(&mut answer);
-    let answer = answer.trim().to_lowercase();
-    if !(answer.is_empty() || ["y", "yes", "o", "oui"].contains(&answer.as_str())) {
+    if !wants_to_continue(&read_answer(ANSWER_WAIT)) {
+        eprintln!();
         return Ok(None);
     }
 
@@ -671,6 +670,53 @@ fn offer_to_continue(
     let resume_args = resume_args(&relais.layout, session.as_deref());
     eprintln!("{}", t("exec.continuing", &[("alias", &best)]));
     run_claude(binary, next.config_dir.as_deref(), &resume_args, None).map(Some)
+}
+
+/// How long the question asked when Claude exits waits for an answer.
+const ANSWER_WAIT: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Only an explicit yes carries the conversation over. Anything else is a no:
+/// an empty line, no answer, and bytes that are not text, such as the escape
+/// sequences a terminal sends for keys while an enhanced keyboard mode Claude
+/// Code turned on is still active.
+fn wants_to_continue(answer: &[u8]) -> bool {
+    let answer = String::from_utf8_lossy(answer).trim().to_lowercase();
+    ["o", "oui", "y", "yes"].contains(&answer.as_str())
+}
+
+/// Reads one answer as raw bytes, up to the end of the line, giving up after
+/// `wait`: an answer that never comes must not hold the terminal.
+fn read_answer(wait: std::time::Duration) -> Vec<u8> {
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut answer = Vec::new();
+        let mut byte = [0u8; 1];
+        let mut stdin = std::io::stdin().lock();
+        while let Ok(1) = std::io::Read::read(&mut stdin, &mut byte) {
+            if byte[0] == b'\n' || byte[0] == b'\r' {
+                break;
+            }
+            answer.push(byte[0]);
+        }
+        let _ = sender.send(answer);
+    });
+    receiver.recv_timeout(wait).unwrap_or_default()
+}
+
+/// Puts the terminal back in its ordinary mode before asking anything: Claude
+/// Code may have left keys reported as escape sequences or the line discipline
+/// off, and then Enter never ends the answer.
+fn restore_terminal() {
+    // Kitty keyboard protocol, modifyOtherKeys, bracketed paste, focus events,
+    // mouse reporting off; cursor shown.
+    eprint!("\x1b[<u\x1b[>4;0m\x1b[?2004l\x1b[?1004l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?25h");
+    let _ = std::io::stderr().flush();
+    if let Ok(tty) = std::fs::File::open("/dev/tty") {
+        let _ = std::process::Command::new("stty")
+            .arg("sane")
+            .stdin(tty)
+            .status();
+    }
 }
 
 /// `--resume <id>` when the session belongs to this directory, else `--continue`.
@@ -1068,4 +1114,29 @@ pub fn desktop(alias: Option<&str>) -> Outcome {
     };
     println!("{message}");
     Ok(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_an_explicit_yes_carries_the_conversation_over() {
+        assert!(wants_to_continue(b"o\n"));
+        assert!(wants_to_continue(b"Oui\n"));
+        assert!(wants_to_continue(b"y\r\n"));
+        assert!(wants_to_continue(b"  yes  \n"));
+    }
+
+    #[test]
+    fn anything_else_is_a_no_even_bytes_a_terminal_mangled() {
+        assert!(!wants_to_continue(b"\n"));
+        assert!(!wants_to_continue(b""));
+        assert!(!wants_to_continue(b"n\n"));
+        assert!(!wants_to_continue(b"non\n"));
+        assert!(!wants_to_continue(b"\xff\n"));
+        assert!(!wants_to_continue("é\n".as_bytes()));
+        assert!(!wants_to_continue(b"\x1b[13u"));
+        assert!(!wants_to_continue(b"\x1b[110;1u\x1b[13u"));
+    }
 }

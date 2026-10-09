@@ -13,7 +13,8 @@ dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 if [ -n "$CLAUDE_CONFIG_DIR" ]; then global="$CLAUDE_CONFIG_DIR/.claude.json"; else global="$HOME/.claude.json"; fi
 case "$1 $2" in
   "-p /usage")
-    printf '{"type":"result","num_turns":0,"total_cost_usd":0,"result":"Current session: 3%% used\\nCurrent week (all models): 41%% used · resets Oct 8 at 10pm (Europe/Zurich)\\n"}'
+    reset=$(date -v+2d '+%b %-d' 2>/dev/null || date -d '+2 days' '+%b %-d')
+    printf '{"type":"result","num_turns":0,"total_cost_usd":0,"result":"Current session: 3%% used\\nCurrent week (all models): 41%% used · resets %s at 10pm (Europe/Zurich)\\n"}' "$reset"
     exit 0;;
   "auth status")
     if [ -f "$dir/fake-account" ]; then
