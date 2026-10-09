@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useState, type CSSProperties, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 
 import { api, type Account, type AccountSignIn, type AccountStats, type Conversation, type DesktopSwitch, type Overview, type PaletteColor, type ResumeTarget } from "./api";
-import { age, dayLabels, FIVE_HOURS_SECS, inTime, isLive, margin, mood, nextReturn, orderAccounts, pace, remaining, span, time, TIRING_FROM, WEEK_SECS } from "./format";
+import { age, dayLabels, FIVE_HOURS_SECS, inTime, isLive, margin, mood, newlySignedIn, nextReturn, orderAccounts, pace, remaining, span, time, TIRING_FROM, WEEK_SECS } from "./format";
 import { isMessageKey, t, type MessageKey } from "./i18n";
 
 type View = "home" | "settings" | "add" | "accounts";
@@ -17,6 +17,11 @@ const FOLLOW_THEME_KEY = "relais.followTheme";
 const SHOWN_CONVERSATIONS = 5;
 const FETCHED_CONVERSATIONS = 12;
 const SIGN_IN_CHECK_EVERY_MS = 10 * 60_000;
+/** A sign-in Relais opened is checked this often, for ten minutes at most. */
+const SIGN_IN_POLL_MS = 4_000;
+const SIGN_IN_WATCH_MS = 10 * 60_000;
+/** While an account is signed out, showing the panel checks again, at most this often. */
+const SIGN_IN_RECHECK_SECS = 15;
 const PALETTE_KEYS = ["sage", "ocean", "violet", "coral", "amber", "rose", "lime", "sky"];
 
 const nowSecs = () => Math.floor(Date.now() / 1000);
@@ -72,6 +77,13 @@ export function App() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [stats, setStats] = useState<AccountStats[]>([]);
   const [signIns, setSignIns] = useState<SignIns | null>(null);
+  const signInsRef = useRef<SignIns | null>(null);
+  // Sign-ins Relais opened and waits to see done, with when each started (ms).
+  const [waiting, setWaiting] = useState<Map<string, number>>(new Map());
+  const waitingRef = useRef(waiting);
+  waitingRef.current = waiting;
+  // Accounts whose limits are asked right after they were signed in again.
+  const [measuring, setMeasuring] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(nowSecs);
   const [followTheme, setFollowTheme] = useState(readFollowTheme);
@@ -88,17 +100,69 @@ export function App() {
     }
   }, []);
 
-  // Each check starts Claude Code once per account: done at launch, then
-  // every ten minutes, and when the accounts page opens on stale results.
-  const checkSignIns = useCallback(async () => {
-    setSignIns((previous) => (previous ? { ...previous, checking: true } : { checkedAt: null, list: [], checking: true }));
+  const keepSignIns = (next: SignIns | null) => {
+    signInsRef.current = next;
+    setSignIns(next);
+  };
+
+  // An account signed in again is measured at once: until then, its limits
+  // and reset times are the old ones, or unknown.
+  const measureAfterSignIn = useCallback(async (aliases: string[]) => {
+    setWaiting((current) => {
+      const next = new Map(current);
+      aliases.forEach((alias) => next.delete(alias));
+      return next;
+    });
+    setMeasuring((current) => new Set([...current, ...aliases]));
     try {
-      const list = await api.accountSignIns();
-      setSignIns({ checkedAt: nowSecs(), list, checking: false });
+      setOverview(await api.refreshUsage(false));
     } catch {
-      setSignIns((previous) => (previous ? { ...previous, checking: false } : null));
+      // The figures already shown stay; the next round asks again.
+    } finally {
+      setMeasuring((current) => new Set([...current].filter((alias) => !aliases.includes(alias))));
     }
   }, []);
+
+  // Each check starts Claude Code once per account, a quarter of a second
+  // each: at launch, every ten minutes, when the accounts page opens on stale
+  // results, when the panel shows while an account is signed out, and every
+  // few seconds for a sign-in Relais opened (`only` then checks that account).
+  const checkSignIns = useCallback(
+    async (only?: string) => {
+      const previous = signInsRef.current;
+      if (!only) keepSignIns({ checkedAt: previous?.checkedAt ?? null, list: previous?.list ?? [], checking: true });
+      try {
+        const list = await api.accountSignIns(only);
+        const merged = only ? [...(signInsRef.current?.list ?? []).filter((s) => s.alias !== only), ...list] : list;
+        keepSignIns({ checkedAt: only ? (signInsRef.current?.checkedAt ?? null) : nowSecs(), list: merged, checking: signInsRef.current?.checking === true && !!only });
+        const back = new Set([...newlySignedIn(previous?.list ?? [], merged), ...merged.filter((s) => s.signedIn === true && waitingRef.current.has(s.alias)).map((s) => s.alias)]);
+        if (back.size > 0) void measureAfterSignIn([...back]);
+      } catch {
+        if (!only) keepSignIns(previous ? { ...previous, checking: false } : null);
+      }
+    },
+    [measureAfterSignIn],
+  );
+
+  // A sign-in Relais opened is checked every few seconds until it is done.
+  useEffect(() => {
+    if (waiting.size === 0) return;
+    const timer = window.setInterval(() => {
+      const now = Date.now();
+      const expired = [...waitingRef.current].filter(([, started]) => now - started > SIGN_IN_WATCH_MS).map(([alias]) => alias);
+      if (expired.length > 0) {
+        setWaiting((current) => {
+          const next = new Map(current);
+          expired.forEach((alias) => next.delete(alias));
+          return next;
+        });
+      }
+      for (const [alias, started] of waitingRef.current) {
+        if (now - started <= SIGN_IN_WATCH_MS) void checkSignIns(alias);
+      }
+    }, SIGN_IN_POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [waiting.size, checkSignIns]);
 
   // Claude Code tells each account's limits and reset times; accounts the
   // status line measured lately are skipped on the Rust side.
@@ -133,7 +197,13 @@ export function App() {
       void refreshUsage();
     }, SIGN_IN_CHECK_EVERY_MS);
     const clock = window.setInterval(() => setNow(nowSecs()), 10_000);
-    const onFocus = () => void refresh();
+    const onFocus = () => {
+      void refresh();
+      const current = signInsRef.current;
+      const someoneOut = current?.list.some((s) => s.signedIn === false) ?? false;
+      const stale = current?.checkedAt == null || nowSecs() - current.checkedAt > SIGN_IN_RECHECK_SECS;
+      if ((someoneOut || waitingRef.current.size > 0) && stale && !current?.checking) void checkSignIns();
+    };
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") void api.hide();
     };
@@ -147,6 +217,17 @@ export function App() {
       window.removeEventListener("keydown", onKey);
     };
   }, [refresh, checkSignIns, refreshUsage]);
+
+  // Opens the sign-in in a terminal, then watches for it to be done.
+  const signInAndWatch = async (alias: string) => {
+    try {
+      await api.signInAgain(alias);
+      setError(null);
+      setWaiting((current) => new Map(current).set(alias, Date.now()));
+    } catch (e) {
+      setError(describeError(e));
+    }
+  };
 
   const run = async (action: () => Promise<Overview | void>) => {
     try {
@@ -196,7 +277,9 @@ export function App() {
           onSwitch={(alias) => run(() => api.switchAccount(alias))}
           onResume={(id, target) => run(() => api.resume(id, target))}
           onAccounts={openAccounts}
-          onSignIn={(alias) => run(() => api.signInAgain(alias))}
+          waiting={waiting}
+          measuring={measuring}
+          onSignIn={(alias) => void signInAndWatch(alias)}
           onSettings={() => setView("settings")}
           onSwitchDesktop={switchDesktop}
         />
@@ -212,7 +295,7 @@ export function App() {
           onSwitch={(alias) => run(() => api.switchAccount(alias))}
           onColor={(alias, hex) => run(() => api.setColor(alias, hex))}
           onOpenChrome={(alias) => run(() => api.openChrome(alias))}
-          onSignInAgain={(alias) => run(() => api.signInAgain(alias))}
+          onSignInAgain={(alias) => void signInAndWatch(alias)}
           onRemove={(alias) => run(() => api.removeAccount(alias)).then(() => loadStats())}
           onSwitchDesktop={switchDesktop}
           refreshing={refreshing}
@@ -263,6 +346,8 @@ function Home(props: {
   signIns: SignIns | null;
   now: number;
   refreshing: boolean;
+  waiting: Map<string, number>;
+  measuring: Set<string>;
   onRefresh: () => void;
   onSwitch: (alias: string) => void;
   onResume: (id: string, target: ResumeTarget) => void;
@@ -312,6 +397,8 @@ function Home(props: {
             account={account}
             plan={plans.get(account.alias) ?? null}
             signedOut={signedOut.has(account.alias)}
+            waiting={props.waiting.has(account.alias)}
+            measuring={props.measuring.has(account.alias)}
             desktop={desktopOwner === account.alias}
             now={now}
             onOpen={() => props.onAccounts(account.alias)}
@@ -370,7 +457,7 @@ function Summary({ accounts, signedOut, best, now, onSwitch }: { accounts: Accou
 }
 
 /** One account the way a usage panel shows it: a bar per limit, with what is used, what is left and the pace. */
-function AccountPanel(props: { account: Account; plan: string | null; signedOut: boolean; desktop: boolean; now: number; onOpen: () => void; onSignIn: () => void }) {
+function AccountPanel(props: { account: Account; plan: string | null; signedOut: boolean; waiting: boolean; measuring: boolean; desktop: boolean; now: number; onOpen: () => void; onSignIn: () => void }) {
   const { account, plan, signedOut, now } = props;
   const status = signedOut
     ? { kind: "off", label: t("statusSignedOut") }
@@ -385,7 +472,7 @@ function AccountPanel(props: { account: Account; plan: string | null; signedOut:
   const week = account.sevenDay;
   const showFive = five != null && (!account.limited || five.used >= 100);
   const stale = account.observedAt != null && now - account.observedAt > STALE_AFTER_SECS;
-  const sub = [account.email, plan ? planName(plan) : null, stale && account.observedAt != null ? t("measuredAgo", { age: age(account.observedAt, now) }) : null].filter(Boolean).join(" · ");
+  const sub = [account.email, plan ? planName(plan) : null, props.measuring ? t("measuringNow") : stale && account.observedAt != null ? t("measuredAgo", { age: age(account.observedAt, now) }) : null].filter(Boolean).join(" · ");
   return (
     <section className={`acct tinted is-${status.kind}`} style={tint(account.color)} aria-label={account.alias}>
       <button className="acct-head" title={t("openAccount")} onClick={props.onOpen}>
@@ -397,10 +484,10 @@ function AccountPanel(props: { account: Account; plan: string | null; signedOut:
       </button>
       {sub && <div className="acct-sub">{sub}</div>}
       {signedOut && (
-        <div className="acct-alert">
-          <span>{t("signedOutNote")}</span>
+        <div className="acct-alert" aria-live="polite">
+          <span>{props.waiting ? t("signInWaiting") : t("signedOutNote")}</span>
           <button className="button button-warn" onClick={props.onSignIn}>
-            {t("signIn")}
+            {props.waiting ? t("signInRetry") : t("signIn")}
           </button>
         </div>
       )}

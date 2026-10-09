@@ -129,3 +129,11 @@ export function orderAccounts<T extends Placed>(accounts: T[], signedOut: Set<st
 export function nextReturn<T extends { limited: boolean; limitedUntil: number | null }>(accounts: T[]): T | null {
   return accounts.filter((a) => a.limited && a.limitedUntil != null).sort((a, b) => (a.limitedUntil ?? 0) - (b.limitedUntil ?? 0))[0] ?? null;
 }
+
+type SignInState = { alias: string; signedIn: boolean | null };
+
+/** The accounts that were seen signed out and are signed in now. */
+export function newlySignedIn(before: SignInState[], after: SignInState[]): string[] {
+  const out = new Set(before.filter((s) => s.signedIn === false).map((s) => s.alias));
+  return after.filter((s) => s.signedIn === true && out.has(s.alias)).map((s) => s.alias);
+}

@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { dayLabels, FIVE_HOURS_SECS, inTime, isLive, margin, mood, nextReturn, orderAccounts, pace, remaining, span, WEEK_SECS } from "../src/format.ts";
+import { dayLabels, FIVE_HOURS_SECS, inTime, isLive, margin, mood, newlySignedIn, nextReturn, orderAccounts, pace, remaining, span, WEEK_SECS } from "../src/format.ts";
 
 const NOW = 1_791_270_000;
 
@@ -98,4 +98,21 @@ test("the next return is the limited account back first", () => {
   const accounts = [account("later", { limited: true, limitedUntil: NOW + 3 * 86400 }), account("sooner", { limited: true, limitedUntil: NOW + 86400 }), account("free", { week: 5 })];
   assert.equal(nextReturn(accounts)?.alias, "sooner");
   assert.equal(nextReturn([account("free", { week: 5 })]), null);
+});
+
+test("an account counts as signed in again only when it was seen signed out before", () => {
+  const before = [
+    { alias: "back", signedIn: false },
+    { alias: "still-out", signedIn: false },
+    { alias: "always-in", signedIn: true },
+    { alias: "unknown-before", signedIn: null },
+  ];
+  const after = [
+    { alias: "back", signedIn: true },
+    { alias: "still-out", signedIn: false },
+    { alias: "always-in", signedIn: true },
+    { alias: "unknown-before", signedIn: true },
+    { alias: "new", signedIn: true },
+  ];
+  assert.deepEqual(newlySignedIn(before, after), ["back"]);
 });

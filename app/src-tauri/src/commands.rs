@@ -370,16 +370,17 @@ pub async fn refresh_usage(force: bool) -> Result<Overview, String> {
     Ok(build_overview(&load()?))
 }
 
-/// Whether each account is still signed in, as Claude Code reports it. Each
-/// check starts Claude Code, so they run side by side.
+/// Whether each account is still signed in, as Claude Code reports it, or
+/// only `only`. Each check starts Claude Code, so they run side by side.
 #[tauri::command]
-pub async fn account_sign_ins() -> Result<Vec<AccountSignIn>, String> {
+pub async fn account_sign_ins(only: Option<String>) -> Result<Vec<AccountSignIn>, String> {
     let relais = load()?;
     let binary = platform::claude_binary();
     let checks: Vec<_> = relais
         .registry
         .accounts
         .iter()
+        .filter(|account| only.as_deref().is_none_or(|alias| alias == account.alias))
         .map(|account| {
             let alias = account.alias.clone();
             let config_dir = account.config_dir.clone();

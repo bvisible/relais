@@ -96,7 +96,8 @@ export const api = {
   switchAccount: (alias: string) => call<Overview>("switch_account", { alias }),
   setColor: (alias: string, color: string) => call<Overview>("set_color", { alias, color }),
   accountStats: () => call<AccountStats[]>("account_stats"),
-  accountSignIns: () => call<AccountSignIn[]>("account_sign_ins"),
+  /** Every account's sign-in, or only `only`'s. */
+  accountSignIns: (only?: string) => call<AccountSignIn[]>("account_sign_ins", { only: only ?? null }),
   openChrome: (alias: string) => call<void>("open_chrome", { alias }),
   signInAgain: (alias: string) => call<void>("sign_in_again", { alias }),
   removeAccount: (alias: string) => call<Overview>("remove_account", { alias }),
@@ -187,6 +188,9 @@ let previewState: Overview = {
   now: nowSecs(),
 };
 
+const previewSignedOut = new Set<string>();
+let previewSignInOpenedAt: number | null = null;
+
 const days = (used: (number | null)[], limited: number[]) => used.map((value, index) => ({ used: value, limited: limited.includes(index) }));
 
 async function preview<T>(command: string, args?: Record<string, unknown>): Promise<T> {
@@ -218,8 +222,14 @@ async function preview<T>(command: string, args?: Record<string, unknown>): Prom
   }
   if (command === "account_sign_ins") {
     await new Promise((resolve) => setTimeout(resolve, 900));
-    return previewState.accounts.map((a) => ({ alias: a.alias, signedIn: previewMode !== "signedOut" || a.alias !== "spare", email: a.email, plan: "max" })) as T;
+    // `?state=signedOut`: spare is signed out until its sign-in is opened, then back after 10 s.
+    if (command === "account_sign_ins" && previewSignInOpenedAt == null && previewMode === "signedOut") previewSignedOut.add("spare");
+    if (previewSignInOpenedAt != null && Date.now() - previewSignInOpenedAt > 10_000) previewSignedOut.delete("spare");
+    return previewState.accounts
+      .filter((a) => args?.only == null || a.alias === args.only)
+      .map((a) => ({ alias: a.alias, signedIn: !previewSignedOut.has(a.alias), email: a.email, plan: "max" })) as T;
   }
+  if (command === "sign_in_again") previewSignInOpenedAt = Date.now();
   if (command === "open_chrome" || command === "sign_in_again") return undefined as T;
   if (command === "refresh_usage") await new Promise((resolve) => setTimeout(resolve, args?.force ? 2500 : 300));
   if (command === "switch_desktop") {

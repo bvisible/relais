@@ -325,7 +325,7 @@ impl Relais {
     /// Asks Claude Code for `alias`'s limits (`claude -p /usage`, nothing billed,
     /// nothing saved) and stores the reading, reset times included. A Claude
     /// Code that answered `/usage` as a conversation is not asked again until
-    /// its binary changes.
+    /// its binary changes; a signed-out account is not asked at all.
     pub fn refresh_usage<Tz: chrono::TimeZone>(
         &self,
         alias: &str,
@@ -344,6 +344,14 @@ impl Relais {
         });
         if fsutil::read_json(&refused).ok().flatten().as_ref() == Some(&binary_stamp) {
             return Ok(None);
+        }
+        // A signed-out profile has no limits to tell: it is not asked, and no
+        // attempt holds it back once someone signs in again. The check takes a
+        // quarter of a second; when it fails, the question is asked anyway.
+        if let Ok(status) = claude::auth_status(binary, account.config_dir.as_deref()) {
+            if !status.logged_in {
+                return Ok(None);
+            }
         }
         fs::create_dir_all(&probe_dir).map_err(|e| Error::io(&probe_dir, e))?;
         let mut attempts = self.usage_attempts();
@@ -901,6 +909,7 @@ mod tests {
         let path = dir.join("claude");
         let script = format!(
             r#"#!/bin/sh
+if [ "$1 $2" = "auth status" ]; then printf '{{"loggedIn":true}}'; exit 0; fi
 printf 'run\n' >> "{runs}"
 printf '{{"type":"result","num_turns":{turns},"total_cost_usd":0,"result":"Current session: 4%% used\\nCurrent week (all models): 37%% used · resets Oct 8 at 10pm (Europe/Zurich)\\nCurrent week (Fable): 12%% used · resets Oct 8 at 10pm (Europe/Zurich)\\n"}}'
 "#,
@@ -946,6 +955,37 @@ printf '{{"type":"result","num_turns":{turns},"total_cost_usd":0,"result":"Curre
         assert_eq!(limits.windows.len(), 1);
         assert_eq!(limits.windows[0].model, "Fable");
         assert_eq!(limits.windows[0].used_percentage, 12.0);
+    }
+
+    /// A profile nobody is signed in to: the sign-in check says so, and a run
+    /// of `/usage` is written down in `runs`.
+    fn fake_signed_out(dir: &Path) -> PathBuf {
+        let path = dir.join("claude-signed-out-profile");
+        let script = format!(
+            r#"#!/bin/sh
+if [ "$1 $2" = "auth status" ]; then printf '{{"loggedIn":false}}'; exit 1; fi
+printf 'run\n' >> "{runs}"
+printf '{{"type":"result","num_turns":0,"result":"Not logged in"}}'
+"#,
+            runs = dir.join("runs").display()
+        );
+        fs::write(&path, script).unwrap();
+        fs::set_permissions(&path, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+        path
+    }
+
+    #[test]
+    fn a_signed_out_account_is_not_asked_and_not_held_back() {
+        let (root, relais) = fixture();
+        let binary = fake_signed_out(root.path());
+
+        assert!(relais
+            .refresh_usage("work", &binary, zurich(NOW))
+            .unwrap()
+            .is_none());
+
+        assert!(!root.path().join("runs").exists());
+        assert!(relais.needs_usage_refresh("work", NOW + 60));
     }
 
     #[test]
@@ -1013,7 +1053,7 @@ printf '{{"type":"result","num_turns":{turns},"total_cost_usd":0,"result":"Curre
         let path = dir.join("claude-no-reset");
         fs::write(
             &path,
-            "#!/bin/sh\nprintf '{\"type\":\"result\",\"num_turns\":0,\"result\":\"Current week (all models): 0%% used\\\\n\"}'\n",
+            "#!/bin/sh\nif [ \"$1 $2\" = \"auth status\" ]; then printf '{\"loggedIn\":true}'; exit 0; fi\nprintf '{\"type\":\"result\",\"num_turns\":0,\"result\":\"Current week (all models): 0%% used\\\\n\"}'\n",
         )
         .unwrap();
         fs::set_permissions(&path, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
