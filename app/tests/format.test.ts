@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { dayLabels, inTime, isLive, margin, mood, remaining } from "../src/format.ts";
+import { dayLabels, FIVE_HOURS_SECS, inTime, isLive, margin, mood, nextReturn, orderAccounts, pace, remaining, span, WEEK_SECS } from "../src/format.ts";
 
 const NOW = 1_791_270_000;
 
@@ -50,4 +50,52 @@ test("the last seven days are named by their weekday, ending with today", () => 
   // Tuesday 6 October 2026, 15:00 in Zurich.
   const tuesday = Date.UTC(2026, 9, 6, 13, 0, 0) / 1000;
   assert.deepEqual(dayLabels(tuesday, 7), ["mer.", "jeu.", "ven.", "sam.", "dim.", "lun.", "auj."]);
+});
+
+test("the pace compares what is used with the share of the window gone by", () => {
+  // 16 h of the week gone (9.5 %), 38 % used: 28.5 points ahead of an even pace.
+  assert.equal(Math.round(pace({ used: 38, resetsAt: NOW + 6 * 86400 + 8 * 3600 }, WEEK_SECS, NOW) ?? NaN), 28);
+  // 33 min of the 5 hours gone (11 %), 10 % used: 1 point in reserve.
+  assert.equal(Math.round(pace({ used: 10, resetsAt: NOW + 4 * 3600 + 27 * 60 }, FIVE_HOURS_SECS, NOW) ?? NaN), -1);
+});
+
+test("without a reset ahead, there is no pace", () => {
+  assert.equal(pace({ used: 38, resetsAt: null }, WEEK_SECS, NOW), null);
+  assert.equal(pace({ used: 38, resetsAt: NOW - 1 }, WEEK_SECS, NOW), null);
+});
+
+test("a time span reads like a countdown", () => {
+  assert.equal(span(NOW - (2 * 3600 + 12 * 60), NOW), "2 h 12");
+  assert.equal(span(NOW - 60, NOW), "1 min");
+});
+
+const account = (alias: string, fields: { active?: boolean; limited?: boolean; limitedUntil?: number | null; week?: number }) => ({
+  alias,
+  active: fields.active ?? false,
+  limited: fields.limited ?? false,
+  limitedUntil: fields.limitedUntil ?? null,
+  fiveHour: null,
+  sevenDay: fields.week == null ? null : { used: fields.week, resetsAt: NOW + 86400 },
+});
+
+test("accounts read from the one in use to the one back last, signed-out ones at the end", () => {
+  const accounts = [
+    account("signed-out", { limited: true }),
+    account("back-tuesday", { limited: true, limitedUntil: NOW + 3 * 86400 }),
+    account("spare", { week: 60 }),
+    account("in-use", { active: true, week: 38 }),
+    account("back-sunday", { limited: true, limitedUntil: NOW + 2 * 86400 }),
+    account("roomy", { week: 10 }),
+    account("back-unknown", { limited: true }),
+  ];
+
+  const order = orderAccounts(accounts, new Set(["signed-out"])).map((a) => a.alias);
+
+  assert.deepEqual(order, ["in-use", "roomy", "spare", "back-sunday", "back-tuesday", "back-unknown", "signed-out"]);
+});
+
+test("the next return is the limited account back first", () => {
+  const accounts = [account("later", { limited: true, limitedUntil: NOW + 3 * 86400 }), account("sooner", { limited: true, limitedUntil: NOW + 86400 }), account("free", { week: 5 })];
+  assert.equal(nextReturn(accounts)?.alias, "sooner");
+  assert.equal(nextReturn([account("free", { week: 5 })]), null);
 });

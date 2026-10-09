@@ -26,6 +26,16 @@ pub struct UsageWindowView {
     resets_at: Option<i64>,
 }
 
+/// A weekly limit on one model only (`Fable`), as `/usage` last reported it.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelWindowView {
+    model: String,
+    used: f64,
+    resets_at: Option<i64>,
+    observed_at: i64,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AccountView {
@@ -41,6 +51,8 @@ pub struct AccountView {
     active: bool,
     five_hour: Option<UsageWindowView>,
     seven_day: Option<UsageWindowView>,
+    /// Limits on single models, which `/usage` reports and the status line does not.
+    models: Vec<ModelWindowView>,
     observed_at: Option<i64>,
     limited: bool,
     limited_until: Option<i64>,
@@ -76,6 +88,8 @@ pub struct ConversationView {
     cwd: Option<String>,
     /// The last folder of `cwd`, shown as the conversation's project.
     project: Option<String>,
+    /// Unix seconds of the conversation's first message.
+    started_at: Option<i64>,
     last_activity: i64,
     /// The account that last ran this session, in a terminal or in the desktop app.
     account: Option<String>,
@@ -140,6 +154,21 @@ pub fn build_overview(relais: &Relais) -> Overview {
                 seven_day: reading
                     .as_ref()
                     .and_then(|r| window_view(r.seven_day.as_ref(), r.seven_day_now(now))),
+                models: relais
+                    .model_limits_of(&account.alias)
+                    .map(|limits| {
+                        limits
+                            .windows
+                            .iter()
+                            .map(|window| ModelWindowView {
+                                model: window.model.clone(),
+                                used: window.used_now(now),
+                                resets_at: window.resets_at,
+                                observed_at: limits.observed_at,
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
                 observed_at: reading.as_ref().map(|r| r.observed_at),
                 limited: limit.is_some(),
                 limited_until: limit.flatten(),
@@ -211,6 +240,7 @@ pub async fn conversations(limit: usize) -> Result<Vec<ConversationView>, String
                 title: c.title,
                 cwd: c.cwd.map(|cwd| cwd.replacen(&home, "~", 1)),
                 project,
+                started_at: c.started_at,
                 last_activity: recent.last_activity,
                 account: recent.account,
                 activity: recent.activity,

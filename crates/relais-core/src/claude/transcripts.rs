@@ -38,6 +38,8 @@ pub struct Conversation {
     pub git_branch: Option<String>,
     pub title: Option<String>,
     pub entrypoint: Option<String>,
+    /// Unix seconds of the transcript's first dated line.
+    pub started_at: Option<i64>,
     /// Unix seconds of the last write to the transcript.
     pub last_activity: i64,
 }
@@ -66,6 +68,7 @@ pub fn parse_transcript(path: &Path) -> Result<Conversation> {
         git_branch: None,
         title: None,
         entrypoint: None,
+        started_at: None,
         last_activity: fsutil::modified_secs(path),
     };
 
@@ -85,6 +88,13 @@ pub fn parse_transcript(path: &Path) -> Result<Conversation> {
         }
         if first_message.is_none() {
             first_message = user_text(&value);
+        }
+        if conversation.started_at.is_none() {
+            conversation.started_at = value
+                .get("timestamp")
+                .and_then(Value::as_str)
+                .and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok())
+                .map(|t| t.timestamp());
         }
     }
 
@@ -403,6 +413,30 @@ mod tests {
         assert_eq!(conversation.cwd.as_deref(), Some("/work/app"));
         assert_eq!(conversation.git_branch.as_deref(), Some("main"));
         assert_eq!(conversation.entrypoint.as_deref(), Some("cli"));
+    }
+
+    #[test]
+    fn a_conversation_starts_at_its_first_dated_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut first = user(json!("Fix the login form"), "cli");
+        first["timestamp"] = json!("2026-10-09T09:00:00.000Z");
+        let mut later = user(json!("And the signup form"), "cli");
+        later["timestamp"] = json!("2026-10-09T11:30:00.000Z");
+        let path = write_transcript(
+            dir.path(),
+            "-work-app",
+            "s1",
+            &[
+                json!({"type": "permission-mode", "permissionMode": "default", "sessionId": "s1"}),
+                first,
+                later,
+            ],
+        );
+
+        assert_eq!(
+            parse_transcript(&path).unwrap().started_at,
+            Some(1_791_536_400)
+        );
     }
 
     #[test]

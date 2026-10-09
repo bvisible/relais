@@ -30,6 +30,39 @@ pub struct Window {
     pub resets_at: Option<i64>,
 }
 
+/// A weekly limit that applies to one model only, as `/usage` reports it:
+/// `Current week (Fable): 0% used · resets Oct 13 at 7am`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelWindow {
+    /// The model as Claude Code names it: `Fable`, `Sonnet only`.
+    pub model: String,
+    pub used_percentage: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resets_at: Option<i64>,
+}
+
+impl ModelWindow {
+    /// Percent used now: a limit whose reset time has passed counts as empty.
+    pub fn used_now(&self, now: i64) -> f64 {
+        match self.resets_at {
+            Some(at) if now >= at => 0.0,
+            _ => self.used_percentage,
+        }
+    }
+}
+
+/// An account's per-model limits, from its last `/usage` report. Kept apart
+/// from the reading: the status line, which updates the reading, never
+/// carries them.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelLimits {
+    pub windows: Vec<ModelWindow>,
+    /// Unix seconds when Claude Code reported them.
+    pub observed_at: i64,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum UsageSource {
@@ -98,19 +131,10 @@ fn window_from_statusline(value: &Value) -> Option<Window> {
 pub fn parse_usage_report<Tz: TimeZone>(text: &str, now: DateTime<Tz>) -> Option<UsageReading> {
     let window = |label: &str| -> Option<Window> {
         let line = text.lines().find(|l| l.trim_start().starts_with(label))?;
-        let rest = line.trim_start().strip_prefix(label)?;
-        let used = rest.trim().split('%').next()?.trim().parse::<f64>().ok()?;
-        let resets_at = rest
-            .split("resets ")
-            .nth(1)
-            .and_then(|reset| parse_reset(reset, &now));
-        Some(Window {
-            used_percentage: used,
-            resets_at,
-        })
+        report_window(line.trim_start().strip_prefix(label)?, &now)
     };
     let five_hour = window("Current session:");
-    let seven_day = window("Current week (all models):");
+    let seven_day = window(ALL_MODELS_WEEK);
     if five_hour.is_none() && seven_day.is_none() {
         return None;
     }
@@ -120,6 +144,45 @@ pub fn parse_usage_report<Tz: TimeZone>(text: &str, now: DateTime<Tz>) -> Option
         observed_at: now.timestamp(),
         session_id: None,
         source: UsageSource::UsageCommand,
+    })
+}
+
+const ALL_MODELS_WEEK: &str = "Current week (all models):";
+
+/// The weekly limits `/usage` reports for single models (`Current week
+/// (Fable): 0% used · resets …`), in the order it lists them.
+pub fn parse_model_limits<Tz: TimeZone>(text: &str, now: DateTime<Tz>) -> ModelLimits {
+    let windows = text
+        .lines()
+        .map(str::trim_start)
+        .filter(|line| !line.starts_with(ALL_MODELS_WEEK))
+        .filter_map(|line| {
+            let (model, rest) = line.strip_prefix("Current week (")?.split_once("):")?;
+            let window = report_window(rest, &now)?;
+            Some(ModelWindow {
+                model: model.trim().to_string(),
+                used_percentage: window.used_percentage,
+                resets_at: window.resets_at,
+            })
+        })
+        .collect();
+    ModelLimits {
+        windows,
+        observed_at: now.timestamp(),
+    }
+}
+
+/// `12% used · resets Oct 7 at 2:20am (Europe/Zurich)`, the part of a
+/// `/usage` line after its label.
+fn report_window<Tz: TimeZone>(rest: &str, now: &DateTime<Tz>) -> Option<Window> {
+    let used = rest.trim().split('%').next()?.trim().parse::<f64>().ok()?;
+    let resets_at = rest
+        .split("resets ")
+        .nth(1)
+        .and_then(|reset| parse_reset(reset, now));
+    Some(Window {
+        used_percentage: used,
+        resets_at,
     })
 }
 
@@ -352,8 +415,31 @@ impl UsageStore {
         fsutil::write_json_atomic(&path, &value)
     }
 
+    pub fn load_models(&self, alias: &str) -> Result<Option<ModelLimits>> {
+        let path = self.models_path(alias);
+        match fsutil::read_json(&path)? {
+            None => Ok(None),
+            Some(value) => serde_json::from_value(value)
+                .map(Some)
+                .map_err(|e| Error::Json { path, source: e }),
+        }
+    }
+
+    pub fn save_models(&self, alias: &str, limits: &ModelLimits) -> Result<()> {
+        let path = self.models_path(alias);
+        let value = serde_json::to_value(limits).map_err(|e| Error::Json {
+            path: path.clone(),
+            source: e,
+        })?;
+        fsutil::write_json_atomic(&path, &value)
+    }
+
     fn path(&self, alias: &str) -> PathBuf {
         self.dir.join(format!("{alias}.json"))
+    }
+
+    fn models_path(&self, alias: &str) -> PathBuf {
+        self.dir.join(format!("{alias}.models.json"))
     }
 }
 
@@ -543,6 +629,37 @@ mod tests {
     }
 
     #[test]
+    fn a_model_limit_past_its_reset_counts_as_empty() {
+        let window = ModelWindow {
+            model: "Fable".into(),
+            used_percentage: 80.0,
+            resets_at: Some(NOW + 60),
+        };
+        assert_eq!(window.used_now(NOW), 80.0);
+        assert_eq!(window.used_now(NOW + 60), 0.0);
+    }
+
+    #[test]
+    fn model_limits_are_stored_beside_the_reading() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = UsageStore::new(dir.path());
+        let limits = ModelLimits {
+            windows: vec![ModelWindow {
+                model: "Fable".into(),
+                used_percentage: 12.0,
+                resets_at: Some(NOW + 3600),
+            }],
+            observed_at: NOW,
+        };
+        assert_eq!(store.load_models("a").unwrap(), None);
+
+        store.save_models("a", &limits).unwrap();
+
+        assert_eq!(store.load_models("a").unwrap(), Some(limits));
+        assert_eq!(store.load("a").unwrap(), None);
+    }
+
+    #[test]
     fn invalid_store_file_is_an_error_not_a_panic() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("a.json"), "{not json").unwrap();
@@ -610,6 +727,42 @@ What's contributing to your limits usage?";
             assert_eq!(week.resets_at, Some(local(10, 8, 22, 0)));
             assert_eq!(reading.source, UsageSource::UsageCommand);
             assert_eq!(reading.observed_at, zurich_now().timestamp());
+        }
+
+        #[test]
+        fn a_model_with_its_own_weekly_limit_is_read_apart() {
+            let limits = parse_model_limits(REPORT, zurich_now());
+
+            assert_eq!(
+                limits,
+                ModelLimits {
+                    windows: vec![ModelWindow {
+                        model: "Fable".into(),
+                        used_percentage: 0.0,
+                        resets_at: Some(local(10, 8, 22, 0)),
+                    }],
+                    observed_at: zurich_now().timestamp(),
+                }
+            );
+        }
+
+        #[test]
+        fn every_model_line_is_kept_in_order() {
+            let text = "Current week (all models): 40% used\nCurrent week (Sonnet only): 4% used · resets Oct 9 at 9am (Europe/Zurich)\nCurrent week (Fable): 75% used\n";
+
+            let models: Vec<(String, f64)> = parse_model_limits(text, zurich_now())
+                .windows
+                .into_iter()
+                .map(|w| (w.model, w.used_percentage))
+                .collect();
+
+            assert_eq!(
+                models,
+                vec![
+                    ("Sonnet only".to_string(), 4.0),
+                    ("Fable".to_string(), 75.0)
+                ]
+            );
         }
 
         #[test]

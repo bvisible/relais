@@ -88,3 +88,44 @@ export function mood(reading: Reading): Mood {
 export function isLive(lastActivity: number, now: number): boolean {
   return now - lastActivity < LIVE_FOR_SECS;
 }
+
+export const FIVE_HOURS_SECS = 5 * 3600;
+export const WEEK_SECS = 7 * 86400;
+
+/**
+ * How far a window runs ahead of an even pace, in points of percent: more
+ * used than the share of the window gone by is a deficit (positive), less is
+ * a reserve (negative). `null` without a reset ahead to measure from.
+ */
+export function pace(window: { used: number; resetsAt: number | null }, length: number, now: number): number | null {
+  if (window.resetsAt == null || window.resetsAt <= now) return null;
+  const gone = Math.min(length, Math.max(0, length - (window.resetsAt - now)));
+  return window.used - (100 * gone) / length;
+}
+
+/** How long since `since`, written like a countdown: `45 min`, `2 h 12`. */
+export function span(since: number, now: number): string {
+  return remaining(now + Math.max(0, now - since), now);
+}
+
+type Placed = Reading & { alias: string; active: boolean; limitedUntil: number | null };
+
+/**
+ * The account in use first, then the free ones with the most room left, the
+ * limited ones by when they come back, and the signed-out ones last.
+ */
+export function orderAccounts<T extends Placed>(accounts: T[], signedOut: Set<string>): T[] {
+  const rank = (a: T) => (signedOut.has(a.alias) ? 3 : a.limited ? 2 : a.active ? 0 : 1);
+  const back = (a: T) => a.limitedUntil ?? Number.MAX_SAFE_INTEGER;
+  return [...accounts].sort((a, b) => {
+    if (rank(a) !== rank(b)) return rank(a) - rank(b);
+    if (rank(a) === 1) return (margin(b) ?? -1) - (margin(a) ?? -1);
+    if (rank(a) === 2) return back(a) - back(b);
+    return 0;
+  });
+}
+
+/** The limited account that comes back first, among those whose return is known. */
+export function nextReturn<T extends { limited: boolean; limitedUntil: number | null }>(accounts: T[]): T | null {
+  return accounts.filter((a) => a.limited && a.limitedUntil != null).sort((a, b) => (a.limitedUntil ?? 0) - (b.limitedUntil ?? 0))[0] ?? null;
+}

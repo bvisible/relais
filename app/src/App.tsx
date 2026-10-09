@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, type CSSProperties, type ReactNode } from "react";
 
 import { api, type Account, type AccountSignIn, type AccountStats, type Conversation, type DesktopSwitch, type Overview, type PaletteColor, type ResumeTarget } from "./api";
-import { age, dayLabels, inTime, isLive, margin, mood, remaining, time, type Mood } from "./format";
+import { age, dayLabels, FIVE_HOURS_SECS, inTime, isLive, margin, mood, nextReturn, orderAccounts, pace, remaining, span, time, TIRING_FROM, WEEK_SECS } from "./format";
 import { isMessageKey, t, type MessageKey } from "./i18n";
 
 type View = "home" | "settings" | "add" | "accounts";
@@ -14,17 +14,10 @@ const DEFAULT_ACCENT = "#4CC38A";
 /** Conversations whose account is unknown (started before Relais measured them). */
 const NEUTRAL = "#93A29B";
 const FOLLOW_THEME_KEY = "relais.followTheme";
-const SHOWN_CONVERSATIONS = 3;
+const SHOWN_CONVERSATIONS = 5;
 const FETCHED_CONVERSATIONS = 12;
 const SIGN_IN_CHECK_EVERY_MS = 10 * 60_000;
 const PALETTE_KEYS = ["sage", "ocean", "violet", "coral", "amber", "rose", "lime", "sky"];
-const PROJECT_COLORS = ["#4C8DFF", "#F2B33D", "#A78BFA", "#38BDF8", "#F472B6", "#C3D94E", "#FF7A6B", "#4CC38A"];
-const MOOD_KEYS: Record<Mood, MessageKey> = {
-  running: "moodRunning",
-  tiring: "moodTiring",
-  resting: "moodResting",
-  unknown: "moodUnknown",
-};
 
 const nowSecs = () => Math.floor(Date.now() / 1000);
 
@@ -66,12 +59,6 @@ function emphasize(key: MessageKey, slot: string, value: string, args: Record<st
 function describeError(error: unknown): string {
   const text = String(error);
   return isMessageKey(text) ? t(text) : text;
-}
-
-function projectColor(name: string): string {
-  let hash = 0;
-  for (const char of name) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
-  return PROJECT_COLORS[hash % PROJECT_COLORS.length];
 }
 
 function paletteName(color: PaletteColor): string {
@@ -204,9 +191,12 @@ export function App() {
           conversations={conversations}
           signIns={signIns}
           now={now}
+          refreshing={refreshing}
+          onRefresh={() => void refreshUsage(true)}
           onSwitch={(alias) => run(() => api.switchAccount(alias))}
           onResume={(id, target) => run(() => api.resume(id, target))}
           onAccounts={openAccounts}
+          onSignIn={(alias) => run(() => api.signInAgain(alias))}
           onSettings={() => setView("settings")}
           onSwitchDesktop={switchDesktop}
         />
@@ -264,22 +254,29 @@ export function App() {
 
 // ---- Home ------------------------------------------------------------------
 
+/** A reading older than this shows its age. */
+const STALE_AFTER_SECS = 10 * 60;
+
 function Home(props: {
   overview: Overview | null;
   conversations: Conversation[];
   signIns: SignIns | null;
   now: number;
+  refreshing: boolean;
+  onRefresh: () => void;
   onSwitch: (alias: string) => void;
   onResume: (id: string, target: ResumeTarget) => void;
   onAccounts: (alias: string | null) => void;
+  onSignIn: (alias: string) => void;
   onSettings: () => void;
   onSwitchDesktop: (alias: string) => Promise<DesktopSwitch | null>;
 }) {
   const { overview, conversations, now } = props;
   const accounts = overview?.accounts ?? [];
   const active = accounts.find((a) => a.active) ?? null;
-  const best = accounts.find((a) => a.alias === overview?.best && !a.active) ?? null;
-  const handingOff = active?.limited && best && !best.limited ? best : null;
+  const signedOut = new Set((props.signIns?.list ?? []).filter((s) => s.signedIn === false).map((s) => s.alias));
+  const plans = new Map((props.signIns?.list ?? []).map((s) => [s.alias, s.plan]));
+  const desktopOwner = overview?.desktopOwner ?? null;
   const byAlias = new Map(accounts.map((a) => [a.alias, a]));
 
   return (
@@ -307,20 +304,30 @@ function Home(props: {
           </div>
         )}
 
-        {accounts.length > 0 && <AccountsStrip accounts={accounts} signIns={props.signIns} desktopOwner={overview?.desktopOwner ?? null} now={now} onOpen={props.onAccounts} />}
+        {accounts.length > 0 && <Summary accounts={accounts} signedOut={signedOut} best={overview?.best ?? null} now={now} onSwitch={props.onSwitch} />}
 
-        {accounts.length > 1 && <WhereBar accounts={accounts} desktopOwner={overview?.desktopOwner ?? null} onSwitch={props.onSwitch} onSwitchDesktop={props.onSwitchDesktop} />}
+        {orderAccounts(accounts, signedOut).map((account) => (
+          <AccountPanel
+            key={account.alias}
+            account={account}
+            plan={plans.get(account.alias) ?? null}
+            signedOut={signedOut.has(account.alias)}
+            desktop={desktopOwner === account.alias}
+            now={now}
+            onOpen={() => props.onAccounts(account.alias)}
+            onSignIn={() => props.onSignIn(account.alias)}
+          />
+        ))}
 
-        {active && (active.limited ? <RestingHero account={active} handoff={handingOff} now={now} onSwitch={props.onSwitch} /> : <Hero account={active} now={now} />)}
-
-        {active && mood(active) === "tiring" && best && <Nudge account={active} best={best} onSwitch={props.onSwitch} />}
-
-        {active && !handingOff && mood(active) !== "tiring" && accounts.length > 1 && <RelayLine accounts={accounts} best={best} now={now} onSwitch={props.onSwitch} />}
+        {accounts.length > 1 && <WhereBar accounts={accounts} desktopOwner={desktopOwner} onSwitch={props.onSwitch} onSwitchDesktop={props.onSwitchDesktop} />}
 
         <Sessions conversations={conversations} accounts={byAlias} now={now} onResume={props.onResume} />
       </div>
 
       <footer className="footer">
+        <button className="button" disabled={props.refreshing} title={t("refreshDetail")} onClick={props.onRefresh}>
+          {props.refreshing ? t("refreshing") : t("refresh")}
+        </button>
         <button className="button button-accent" onClick={() => props.onAccounts(null)}>
           {t("accountsButton", { n: accounts.length })}
         </button>
@@ -332,61 +339,119 @@ function Home(props: {
   );
 }
 
-/** The accounts side by side: who runs, who is ready, who rests. */
-function AccountsStrip({ accounts, signIns, desktopOwner, now, onOpen }: { accounts: Account[]; signIns: SignIns | null; desktopOwner: string | null; now: number; onOpen: (alias: string | null) => void }) {
-  const ready = accounts.filter((a) => !a.limited && !a.active).length;
-  const resting = accounts.filter((a) => a.limited).length;
-  const connected = signIns?.checkedAt ? signIns.list.filter((s) => s.signedIn).length : null;
-  const heading =
-    connected == null
-      ? accounts.length === 1
-        ? t("accountsCountOne")
-        : t("accountsCount", { n: accounts.length })
-      : connected === accounts.length
-        ? accounts.length === 1
-          ? t("accountsConnectedOne")
-          : t("accountsConnected", { n: accounts.length })
-        : t("accountsConnectedPartial", { n: connected, total: accounts.length });
-  const parts = [ready === 1 ? t("readyCountOne") : ready > 1 ? t("readyCount", { n: ready }) : null, resting > 0 ? t("restingCount", { n: resting }) : null].filter(Boolean);
+/** How many accounts can work right now, and what comes next. */
+function Summary({ accounts, signedOut, best, now, onSwitch }: { accounts: Account[]; signedOut: Set<string>; best: string | null; now: number; onSwitch: (alias: string) => void }) {
+  const total = accounts.length;
+  const free = accounts.filter((a) => !a.limited && !signedOut.has(a.alias)).length;
+  const active = accounts.find((a) => a.active) ?? null;
+  const relay = accounts.find((a) => a.alias === best && !a.active && !a.limited && !signedOut.has(a.alias)) ?? null;
+  const handoff = active && relay && (active.limited || mood(active) === "tiring") ? relay : null;
+  const back = nextReturn(accounts);
+  const out = accounts.filter((a) => signedOut.has(a.alias));
+  const heading = free === 0 ? t("availableNone", { total }) : free === 1 ? t("availableOne", { total }) : t("availableMany", { n: free, total });
   return (
-    <section className="strip" aria-label={heading}>
-      <div className="strip-head">
-        <span className="strip-title">{heading}</span>
-        {parts.length > 0 && <span className="muted tiny">{parts.join(" · ")}</span>}
-      </div>
-      <div className="strip-chips" style={{ gridTemplateColumns: `repeat(${Math.min(accounts.length, 3)}, minmax(0, 1fr))` }}>
-        {accounts.map((account) => {
-          const left = margin(account);
-          const signIn = signIns?.list.find((s) => s.alias === account.alias);
-          const state = account.limited
-            ? t("chipResting")
-            : left == null
-              ? t("chipUnknown")
-              : account.active
-                ? t("chipActive", { n: left })
-                : t("chipReady", { n: left });
-          return (
-            <button key={account.alias} className={`chip tinted ${account.active ? "is-active" : ""}`} style={tint(account.color)} onClick={() => onOpen(account.alias)}>
-              <span className="chip-rings">
-                <Rings size="chip" five={account.fiveHour?.used ?? 0} week={account.sevenDay?.used ?? 0} />
-                <span className="chip-initial">{initial(account.alias)}</span>
-                {signIn?.signedIn === false && <span className="chip-alert" title={t("signedOut")} />}
-              </span>
-              <span className="chip-alias">
-                {desktopOwner === account.alias && (
-                  <span className="chip-desktop" title={t("desktopOnAccount")} aria-label={t("desktopOnAccount")}>
-                    <MonitorIcon size={10} />
-                  </span>
-                )}
-                {account.alias}
-              </span>
-              <span className={`chip-state ${account.limited ? "muted" : "tinted-text"}`}>{state}</span>
-              <span className="chip-week">{weekReset(account, now) ?? t("weekResetUnknown")}</span>
-            </button>
-          );
-        })}
-      </div>
+    <section className="summary-card" aria-live="polite">
+      <div className="summary-title">{heading}</div>
+      {active && handoff ? (
+        <div className="summary-handoff">
+          <span className="small">{t(active.limited ? "handoffLimited" : "handoffTiring", { alias: active.alias, best: handoff.alias, n: margin(handoff) ?? "—" })}</span>
+          <button className="relay-button tinted" style={tint(handoff.color)} onClick={() => onSwitch(handoff.alias)}>
+            {t("passRelayTo", { alias: handoff.alias })}
+          </button>
+        </div>
+      ) : back?.limitedUntil != null ? (
+        <div className="small summary-line">{emphasize("nextReturn", "alias", back.alias, { time: time(back.limitedUntil, now), in: inTime(back.limitedUntil, now) })}</div>
+      ) : free === total ? (
+        <div className="small summary-line">{t("allAvailable")}</div>
+      ) : null}
+      {out.length > 0 && <div className="small summary-warn">{out.length === 1 ? t("signedOutOne", { alias: out[0].alias }) : t("signedOutMany", { n: out.length })}</div>}
     </section>
+  );
+}
+
+/** One account the way a usage panel shows it: a bar per limit, with what is used, what is left and the pace. */
+function AccountPanel(props: { account: Account; plan: string | null; signedOut: boolean; desktop: boolean; now: number; onOpen: () => void; onSignIn: () => void }) {
+  const { account, plan, signedOut, now } = props;
+  const status = signedOut
+    ? { kind: "off", label: t("statusSignedOut") }
+    : account.limited
+      ? { kind: "limited", label: account.limitedUntil != null ? t("statusLimitedUntil", { time: time(account.limitedUntil, now) }) : t("statusLimited") }
+      : account.observedAt == null
+        ? { kind: "unknown", label: t("statusUnmeasured") }
+        : { kind: "free", label: t("statusAvailable") };
+  // The weekly cap on Sonnet alone weighs little next to the others: it stays out of the way.
+  const models = account.models.filter((m) => !m.model.toLowerCase().startsWith("sonnet"));
+  const five = account.fiveHour;
+  const week = account.sevenDay;
+  const showFive = five != null && (!account.limited || five.used >= 100);
+  const stale = account.observedAt != null && now - account.observedAt > STALE_AFTER_SECS;
+  const sub = [account.email, plan ? planName(plan) : null, stale && account.observedAt != null ? t("measuredAgo", { age: age(account.observedAt, now) }) : null].filter(Boolean).join(" · ");
+  return (
+    <section className={`acct tinted is-${status.kind}`} style={tint(account.color)} aria-label={account.alias}>
+      <button className="acct-head" title={t("openAccount")} onClick={props.onOpen}>
+        <span className="acct-dot" />
+        <span className="acct-alias">{account.alias}</span>
+        {account.active && <span className="acct-chip">{t("whereTerminal")}</span>}
+        {props.desktop && <span className="acct-chip">{t("whereDesktop")}</span>}
+        <span className={`acct-status is-${status.kind}`}>{status.label}</span>
+      </button>
+      {sub && <div className="acct-sub">{sub}</div>}
+      {signedOut && (
+        <div className="acct-alert">
+          <span>{t("signedOutNote")}</span>
+          <button className="button button-warn" onClick={props.onSignIn}>
+            {t("signIn")}
+          </button>
+        </div>
+      )}
+      {showFive && five && <Meter label={t("barSession")} window={five} length={FIVE_HOURS_SECS} now={now} idle={t("noSessionWindow")} />}
+      {week && <Meter label={t("barWeek")} window={week} length={WEEK_SECS} now={now} />}
+      {models.map((model) => (
+        <Meter key={model.model} label={t("barModel", { model: model.model })} window={model} length={WEEK_SECS} now={now} note={(account.observedAt ?? now) - model.observedAt > STALE_AFTER_SECS ? t("measuredAgo", { age: age(model.observedAt, now) }) : undefined} />
+      ))}
+      {!five && !week && models.length === 0 && <p className="acct-empty">{t("noReadingYet")}</p>}
+    </section>
+  );
+}
+
+/** One limit: its name and reset, a bar, then what is used, what is left and the pace. */
+function Meter({ label, window, length, now, idle, note }: { label: string; window: { used: number; resetsAt: number | null }; length: number; now: number; idle?: string; note?: string }) {
+  const used = Math.min(100, Math.max(0, window.used));
+  const resetsAt = window.resetsAt != null && window.resetsAt > now ? window.resetsAt : null;
+  const ahead = pace(window, length, now);
+  const drift = ahead == null ? 0 : Math.round(ahead);
+  const level = used >= 100 ? "is-full" : used >= TIRING_FROM ? "is-high" : "";
+  return (
+    <div className="meter">
+      <div className="meter-head">
+        <span className="meter-label">{label}</span>
+        <span className="meter-reset">{resetsAt != null ? t("resetAt", { time: time(resetsAt, now), in: inTime(resetsAt, now) }) : used === 0 && idle ? idle : t("resetUnknown")}</span>
+      </div>
+      <div className="meter-track" role="meter" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(used)}>
+        <span className={`meter-fill ${level}`} style={{ width: `${used}%` }} />
+      </div>
+      <div className="meter-line">
+        {t("usedLeft", { used: Math.round(used), left: Math.round(100 - used) })}
+        {drift > 0 && (
+          <>
+            {" · "}
+            <span className="meter-deficit">{t("deficit", { n: drift })}</span>
+          </>
+        )}
+        {drift < 0 && (
+          <>
+            {" · "}
+            <span className="meter-reserve">{t("reserve", { n: -drift })}</span>
+          </>
+        )}
+        {note && (
+          <>
+            {" · "}
+            <span className="meter-note">{note}</span>
+          </>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -479,140 +544,17 @@ function WhereBar(props: { accounts: Account[]; desktopOwner: string | null; onS
   );
 }
 
-/** The account to hand over to next, in one line, or when the next one is back. */
-function RelayLine({ accounts, best, now, onSwitch }: { accounts: Account[]; best: Account | null; now: number; onSwitch: (alias: string) => void }) {
-  if (!best) {
-    const back = accounts
-      .filter((a) => !a.active && a.limitedUntil != null)
-      .sort((a, b) => (a.limitedUntil ?? 0) - (b.limitedUntil ?? 0))[0];
-    return <p className="muted small pad">{back?.limitedUntil != null ? t("noRelayBack", { alias: back.alias, in: inTime(back.limitedUntil, now) }) : t("noRelay")}</p>;
-  }
-  const left = margin(best);
-  return (
-    <div className="relay-line tinted" style={tint(best.color)}>
-      <Avatar color={best.color} label={initial(best.alias)} size={24} />
-      <div className="relay-text">
-        <div className="relay-title">{t("nextRelay", { alias: best.alias })}</div>
-        <div className="tinted-text tiny">
-          {left == null ? t("readyUnmeasured") : t("nextRelayMargin", { n: left })}
-          {weekReset(best, now) ? ` · ${weekReset(best, now)}` : ""}
-        </div>
-      </div>
-      <button className="relay-button" onClick={() => onSwitch(best.alias)}>
-        {t("passRelay")}
-      </button>
-    </div>
-  );
-}
-
-
-function Hero({ account, now }: { account: Account; now: number }) {
-  const state = mood(account);
-  const five = account.fiveHour;
-  const week = account.sevenDay;
-  const measured = five != null || week != null;
-  return (
-    <section className={`hero ${state === "tiring" ? "is-tiring" : ""}`} aria-label={account.alias}>
-      <div className="hero-rings">
-        <Rings size="hero" five={five?.used ?? 0} week={week?.used ?? 0} warn={state === "tiring"} />
-        <div className="hero-center">
-          <div className="hero-number">
-            {measured ? (
-              <>
-                {Math.round(five?.used ?? 0)}
-                <span className="hero-unit">%</span>
-              </>
-            ) : (
-              "—"
-            )}
-          </div>
-          <div className="muted tiny">{t("fiveHourWindow")}</div>
-        </div>
-      </div>
-      <div className="hero-side">
-        <div className="hero-name">
-          <Avatar color={account.color} label={initial(account.alias)} size={26} />
-          <span className="hero-alias">{account.alias}</span>
-        </div>
-        <span className={`mood mood-${state}`}>{t(MOOD_KEYS[state])}</span>
-        <div className="hero-lines">
-          <div>
-            <span className="key-dot key-outer" />
-            {five?.resetsAt != null && five.resetsAt > now ? emphasize("fiveResets", "in", inTime(five.resetsAt, now)) : t("fiveIdle")}
-          </div>
-          {week && (
-            <div>
-              <span className="key-dot key-inner" />
-              {week.resetsAt != null && week.resetsAt > now
-                ? emphasize("weekLine", "in", inTime(week.resetsAt, now), { pct: Math.round(week.used) })
-                : t("weekLineNoReset", { pct: Math.round(week.used) })}
-            </div>
-          )}
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function RestingHero({ account, handoff, now, onSwitch }: { account: Account; handoff: Account | null; now: number; onSwitch: (alias: string) => void }) {
-  const fiveFull = (account.fiveHour?.used ?? 0) >= 100;
-  const until = account.limitedUntil;
-  const handoffMargin = handoff ? margin(handoff) : null;
-  return (
-    <>
-      <section className="resting-card" aria-live="polite">
-        <div className="resting-title">
-          <Avatar color={account.color} label={initial(account.alias)} size={24} />
-          <strong>{t("restingTitle", { alias: account.alias })}</strong>
-        </div>
-        <div className="small resting-lead">
-          {fiveFull ? t("restingFiveFull") : t("restingWeekFull")} {until != null && t("backInLead")}
-        </div>
-        {until != null && <div className="countdown">{remaining(until, now)}</div>}
-        <div className="muted tiny">{until != null ? t("restingAt", { time: time(until, now), pct: Math.round(account.sevenDay?.used ?? 0) }) : t("restingUnknownTime")}</div>
-      </section>
-      {handoff && (
-        <section className="handoff tinted" style={tint(handoff.color)}>
-          <div className="handoff-head">
-            <Rings size="tile" five={handoff.fiveHour?.used ?? 0} week={handoff.sevenDay?.used ?? 0} />
-            <div>
-              <div className="strong">{t("readyTitle", { alias: handoff.alias })}</div>
-              <div className="tinted-text small">{handoffMargin == null ? t("readyUnmeasured") : t("readyMargin", { n: handoffMargin })}</div>
-            </div>
-          </div>
-          <p className="small handoff-text">{t("carryOn")}</p>
-          <button className="relay-button big" onClick={() => onSwitch(handoff.alias)}>
-            {t("passRelayTo", { alias: handoff.alias })}
-          </button>
-        </section>
-      )}
-    </>
-  );
-}
-
-function Nudge({ account, best, onSwitch }: { account: Account; best: Account; onSwitch: (alias: string) => void }) {
-  return (
-    <div className="nudge" role="status">
-      <span className="small">{t("nearLimit", { alias: account.alias, n: margin(account) ?? 0 })}</span>
-      <button className="relay-button tinted" style={tint(best.color)} onClick={() => onSwitch(best.alias)}>
-        {t("passRelayTo", { alias: best.alias })}
-      </button>
-    </div>
-  );
-}
-
 function Sessions({ conversations, accounts, now, onResume }: { conversations: Conversation[]; accounts: Map<string, Account>; now: number; onResume: (id: string, target: ResumeTarget) => void }) {
-  const shown = conversations.slice(0, SHOWN_CONVERSATIONS);
-  const today = new Date(now * 1000).toDateString();
-  const earlier = conversations.slice(SHOWN_CONVERSATIONS).filter((c) => new Date(c.lastActivity * 1000).toDateString() === today).length;
-  const anyLive = shown.some((c) => isLive(c.lastActivity, now));
+  const live = conversations.filter((c) => isLive(c.lastActivity, now)).length;
+  const shown = conversations.slice(0, Math.max(SHOWN_CONVERSATIONS, live));
   return (
     <section aria-labelledby="sessions-title">
       <div className="section-head">
         <h2 id="sessions-title" className="section-title">
-          {anyLive && <span className="dot live pulse" />}
-          {anyLive ? t("liveNow") : t("latest")}
+          {live > 0 && <span className="dot live pulse" />}
+          {live > 0 ? t("liveConversations") : t("latest")}
         </h2>
+        {live > 0 && <span className="muted small">{live === 1 ? t("liveCountOne") : t("liveCount", { n: live })}</span>}
       </div>
       {shown.length === 0 && <p className="muted small pad">{t("noConversation")}</p>}
       <ul className="sessions">
@@ -620,79 +562,41 @@ function Sessions({ conversations, accounts, now, onResume }: { conversations: C
           <SessionRow key={c.id} conversation={c} account={c.account ? (accounts.get(c.account) ?? null) : null} now={now} onResume={onResume} />
         ))}
       </ul>
-      {earlier > 0 && <p className="muted small pad">{earlier === 1 ? t("earlierTodayOne") : t("earlierToday", { n: earlier })}</p>}
     </section>
   );
 }
 
 function SessionRow({ conversation: c, account, now, onResume }: { conversation: Conversation; account: Account | null; now: number; onResume: (id: string, target: ResumeTarget) => void }) {
   const live = isLive(c.lastActivity, now);
+  const meta = [account?.alias ?? t("unknownAccount"), c.desktop ? t("whereDesktop") : t("whereTerminal"), c.project].filter(Boolean).join(" · ");
   return (
     <li className="session tinted" style={tint(account?.color ?? NEUTRAL)}>
-      <span className={`avatar avatar-small ${live ? "pulse" : ""}`} title={account?.alias ?? t("unknownAccount")}>
-        {account ? initial(account.alias) : c.desktop ? <MonitorIcon size={11} /> : <PromptIcon size={11} />}
-      </span>
-      <div className="session-text">
-        <div className="session-title">{c.title ?? c.id}</div>
-        <div className="session-meta">
-          {c.project && (
-            <span className="project tinted" style={tint(projectColor(c.project))}>
-              {c.project}
-            </span>
-          )}
-          <span className="muted tiny nowrap">{age(c.lastActivity, now)}</span>
-          <Pulse values={c.activity} />
+      <div className="session-main">
+        <div className="session-top">
+          <span className="session-title">{c.title ?? c.id}</span>
+          <span className={`session-state ${live ? "is-live" : ""}`}>{live ? t("statusRunning") : t("statusIdle")}</span>
+        </div>
+        <div className="session-bottom">
+          <span className="session-meta">
+            <span className="session-dot" />
+            {meta}
+          </span>
+          <span className="session-time">{live ? (c.startedAt != null ? span(c.startedAt, now) : "") : t("idleFor", { d: span(c.lastActivity, now) })}</span>
         </div>
       </div>
-      <button className="icon-button" aria-label={t("resumeDesktop")} title={t("resumeDesktop")} onClick={() => onResume(c.id, "desktop")}>
-        <MonitorIcon />
-      </button>
-      <button className="icon-button" aria-label={t("resumeTerminal")} title={t("resumeTerminal")} onClick={() => onResume(c.id, "terminal")}>
-        <PromptIcon />
-      </button>
+      <div className="session-actions">
+        <button className="icon-button" aria-label={t("resumeDesktop")} title={t("resumeDesktop")} onClick={() => onResume(c.id, "desktop")}>
+          <MonitorIcon />
+        </button>
+        <button className="icon-button" aria-label={t("resumeTerminal")} title={t("resumeTerminal")} onClick={() => onResume(c.id, "terminal")}>
+          <PromptIcon />
+        </button>
+      </div>
     </li>
   );
 }
 
-/** Messages per five minutes over the last hour, as small bars that brighten toward now. */
-function Pulse({ values }: { values: number[] }) {
-  if (values.length === 0 || values.every((v) => v === 0)) return null;
-  const max = Math.max(...values);
-  return (
-    <span className="pulse-bars" role="img" aria-label={t("activityLabel")}>
-      {values.map((value, index) => (
-        <span key={index} style={{ height: `${2 + Math.round((12 * value) / max)}px`, opacity: 0.35 + (0.65 * index) / Math.max(1, values.length - 1) }} />
-      ))}
-    </span>
-  );
-}
-
-// ---- Rings and small pieces ------------------------------------------------
-
-const RING_SIZES = {
-  hero: { box: 128, outer: { r: 56, width: 12 }, inner: { r: 40, width: 9 } },
-  tile: { box: 40, outer: { r: 16, width: 5 }, inner: { r: 9, width: 4 } },
-  chip: { box: 44, outer: { r: 19, width: 4 }, inner: { r: 12.5, width: 3 } },
-};
-
-/** The 5-hour window outside, the week inside. */
-function Rings({ size, five, week, warn = false }: { size: keyof typeof RING_SIZES; five: number; week: number; warn?: boolean }) {
-  const { box, outer, inner } = RING_SIZES[size];
-  const center = box / 2;
-  const arc = (radius: number, pct: number) => {
-    const length = 2 * Math.PI * radius;
-    return `${(length * Math.min(Math.max(pct, 0), 100)) / 100} ${length}`;
-  };
-  const rotate = `rotate(-90 ${center} ${center})`;
-  return (
-    <svg className="rings" width={box} height={box} viewBox={`0 0 ${box} ${box}`} aria-hidden="true">
-      <circle cx={center} cy={center} r={outer.r} className="ring-track" strokeWidth={outer.width} />
-      <circle cx={center} cy={center} r={outer.r} className={`ring-outer ${warn ? "is-warn" : ""}`} strokeWidth={outer.width} transform={rotate} style={{ strokeDasharray: arc(outer.r, five), opacity: five > 0 ? 1 : 0 }} />
-      <circle cx={center} cy={center} r={inner.r} className="ring-track ring-track-inner" strokeWidth={inner.width} />
-      <circle cx={center} cy={center} r={inner.r} className="ring-inner" strokeWidth={inner.width} transform={rotate} style={{ strokeDasharray: arc(inner.r, week), opacity: week > 0 ? 1 : 0 }} />
-    </svg>
-  );
-}
+// ---- Small pieces ----------------------------------------------------------
 
 function Avatar({ color, label, size }: { color: string; label: string; size: number }) {
   return (
@@ -716,14 +620,6 @@ function ChevronIcon() {
   return (
     <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M6 9l6 6 6-6" />
-    </svg>
-  );
-}
-
-function MoonIcon() {
-  return (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" />
     </svg>
   );
 }

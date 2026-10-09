@@ -17,7 +17,7 @@ use crate::history::{self, HistoryStore, Sample};
 use crate::layout::Layout;
 use crate::registry::{Account, Registry};
 use crate::sessions::SessionAccounts;
-use crate::usage::{self, UsageReading, UsageStore};
+use crate::usage::{self, ModelLimits, UsageReading, UsageStore};
 
 /// A conversation as the menu bar app and `relais conversations` show it.
 #[derive(Debug, Clone, PartialEq)]
@@ -356,13 +356,24 @@ impl Relais {
             }
             other => other?,
         };
-        let Some(reading) = usage::parse_usage_report(&text, now) else {
+        let Some(reading) = usage::parse_usage_report(&text, now.clone()) else {
             return Ok(None);
         };
-        UsageStore::new(&self.layout.usage_dir()).save(alias, &reading)?;
+        let store = UsageStore::new(&self.layout.usage_dir());
+        store.save(alias, &reading)?;
+        // Best effort: without them, the account shows its overall limits only.
+        let _ = store.save_models(alias, &usage::parse_model_limits(&text, now));
         let _ = HistoryStore::new(&self.layout.usage_dir())
             .record(alias, Sample::from_reading(&reading));
         Ok(Some(reading))
+    }
+
+    /// The limits on single models (`Fable`) Claude Code last reported for an account.
+    pub fn model_limits_of(&self, alias: &str) -> Option<ModelLimits> {
+        UsageStore::new(&self.layout.usage_dir())
+            .load_models(alias)
+            .ok()
+            .flatten()
     }
 
     /// The newest reading for an account, from the status line or the desktop app.
@@ -891,7 +902,7 @@ mod tests {
         let script = format!(
             r#"#!/bin/sh
 printf 'run\n' >> "{runs}"
-printf '{{"type":"result","num_turns":{turns},"total_cost_usd":0,"result":"Current session: 4%% used\\nCurrent week (all models): 37%% used · resets Oct 8 at 10pm (Europe/Zurich)\\n"}}'
+printf '{{"type":"result","num_turns":{turns},"total_cost_usd":0,"result":"Current session: 4%% used\\nCurrent week (all models): 37%% used · resets Oct 8 at 10pm (Europe/Zurich)\\nCurrent week (Fable): 12%% used · resets Oct 8 at 10pm (Europe/Zurich)\\n"}}'
 "#,
             runs = dir.join("runs").display()
         );
@@ -920,6 +931,46 @@ printf '{{"type":"result","num_turns":{turns},"total_cost_usd":0,"result":"Curre
         let stored = relais.usage_of("work").unwrap();
         assert!(stored.seven_day.unwrap().resets_at.is_some());
         assert!(relais.layout.relais_dir.join("probe").is_dir());
+    }
+
+    #[test]
+    fn the_usage_command_also_gives_the_limit_of_each_model() {
+        let (root, relais) = fixture();
+        let binary = fake_usage_command(root.path(), 0);
+        assert!(relais.model_limits_of("work").is_none());
+
+        relais.refresh_usage("work", &binary, zurich(NOW)).unwrap();
+
+        let limits = relais.model_limits_of("work").unwrap();
+        assert_eq!(limits.observed_at, NOW);
+        assert_eq!(limits.windows.len(), 1);
+        assert_eq!(limits.windows[0].model, "Fable");
+        assert_eq!(limits.windows[0].used_percentage, 12.0);
+    }
+
+    #[test]
+    fn a_report_without_limits_leaves_the_model_limits_alone() {
+        let (root, relais) = fixture();
+        relais
+            .refresh_usage("work", &fake_usage_command(root.path(), 0), zurich(NOW))
+            .unwrap();
+        let signed_out = root.path().join("claude-signed-out");
+        fs::write(
+            &signed_out,
+            "#!/bin/sh\nprintf '{\"type\":\"result\",\"num_turns\":0,\"result\":\"Not logged in\"}'\n",
+        )
+        .unwrap();
+        fs::set_permissions(
+            &signed_out,
+            std::os::unix::fs::PermissionsExt::from_mode(0o755),
+        )
+        .unwrap();
+
+        relais
+            .refresh_usage("work", &signed_out, zurich(NOW + 60))
+            .unwrap();
+
+        assert_eq!(relais.model_limits_of("work").unwrap().windows.len(), 1);
     }
 
     #[test]

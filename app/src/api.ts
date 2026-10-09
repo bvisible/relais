@@ -5,6 +5,9 @@ import { invoke } from "@tauri-apps/api/core";
 
 export type UsageWindow = { used: number; resetsAt: number | null };
 
+/** A weekly limit on one model only (`Fable`), as `/usage` last reported it. */
+export type ModelWindow = UsageWindow & { model: string; observedAt: number };
+
 export type Account = {
   alias: string;
   email: string | null;
@@ -17,6 +20,8 @@ export type Account = {
   active: boolean;
   fiveHour: UsageWindow | null;
   sevenDay: UsageWindow | null;
+  /** Limits on single models, which `/usage` reports and the status line does not. */
+  models: ModelWindow[];
   observedAt: number | null;
   limited: boolean;
   limitedUntil: number | null;
@@ -41,6 +46,8 @@ export type Conversation = {
   title: string | null;
   cwd: string | null;
   project: string | null;
+  /** When its first message was written; `null` when the transcript does not say. */
+  startedAt: number | null;
   lastActivity: number;
   /** The account that last ran this session, in a terminal or in the desktop app. */
   account: string | null;
@@ -120,7 +127,7 @@ const PREVIEW_PALETTE: PaletteColor[] = [
   { name: "sky", hex: "#38BDF8" },
 ];
 
-// `?state=limited` or `?state=tiring` in the address previews those screens.
+// `?state=limited`, `?state=tiring` or `?state=signedOut` in the address previews those screens.
 const previewMode = typeof location !== "undefined" ? new URLSearchParams(location.search).get("state") : null;
 
 let previewState: Overview = {
@@ -137,6 +144,7 @@ let previewState: Overview = {
           ? { used: 100, resetsAt: nowSecs() + 72 * 60 }
           : { used: previewMode === "tiring" ? 92 : 47, resetsAt: nowSecs() + 2 * 3600 + 14 * 60 },
       sevenDay: { used: previewMode === "limited" ? 72 : 38, resetsAt: nowSecs() + 4 * 86400 + 6 * 3600 },
+      models: [],
       observedAt: nowSecs() - 30,
       limited: previewMode === "limited",
       limitedUntil: previewMode === "limited" ? nowSecs() + 72 * 60 : null,
@@ -150,6 +158,7 @@ let previewState: Overview = {
       active: false,
       fiveHour: { used: 0, resetsAt: null },
       sevenDay: { used: 100, resetsAt: nowSecs() + 4 * 86400 + 22 * 3600 },
+      models: [{ model: "Fable", used: 0, resetsAt: nowSecs() + 4 * 86400 + 22 * 3600, observedAt: nowSecs() - 3600 }],
       observedAt: nowSecs() - 3600,
       limited: true,
       limitedUntil: nowSecs() + 4 * 86400 + 22 * 3600,
@@ -163,6 +172,7 @@ let previewState: Overview = {
       active: false,
       fiveHour: { used: 0, resetsAt: null },
       sevenDay: { used: 4, resetsAt: nowSecs() + 6 * 86400 },
+      models: [],
       observedAt: nowSecs() - 600,
       limited: false,
       limitedUntil: null,
@@ -208,7 +218,7 @@ async function preview<T>(command: string, args?: Record<string, unknown>): Prom
   }
   if (command === "account_sign_ins") {
     await new Promise((resolve) => setTimeout(resolve, 900));
-    return previewState.accounts.map((a) => ({ alias: a.alias, signedIn: true, email: a.email, plan: "max" })) as T;
+    return previewState.accounts.map((a) => ({ alias: a.alias, signedIn: previewMode !== "signedOut" || a.alias !== "spare", email: a.email, plan: "max" })) as T;
   }
   if (command === "open_chrome" || command === "sign_in_again") return undefined as T;
   if (command === "refresh_usage") await new Promise((resolve) => setTimeout(resolve, args?.force ? 2500 : 300));
@@ -233,11 +243,11 @@ async function preview<T>(command: string, args?: Record<string, unknown>): Prom
   if (command === "conversations") {
     const now = nowSecs();
     return [
-      { id: "s1", title: "Rings and colors in the menu bar app", cwd: "~/GitHub/relais", project: "relais", lastActivity: now - 12, account: "main", desktop: false, activity: [1, 2, 2, 4, 6, 5, 8, 9, 12, 11, 14, 13] },
-      { id: "s2", title: "Mobile notifications and widget", cwd: "~/GitHub/mobile", project: "mobile", lastActivity: now - 100, account: "spare", desktop: true, activity: [6, 9, 7, 10, 8, 5, 6, 4, 3, 2, 1, 1] },
-      { id: "s3", title: "Audit and framework migration", cwd: "~/GitHub/devops", project: "devops", lastActivity: now - 1500, account: null, desktop: false, activity: [0, 0, 3, 5, 2, 0, 0, 0, 0, 0, 0, 0] },
-      { id: "s4", title: "Translations for the archive app", cwd: "~/GitHub/archive", project: "archive", lastActivity: now - 5400, account: "studio", desktop: false, activity: new Array(12).fill(0) },
-      { id: "s5", title: "Nightly backup check", cwd: "~/GitHub/devops", project: "devops", lastActivity: now - 7200, account: "main", desktop: false, activity: new Array(12).fill(0) },
+      { id: "s1", title: "Rings and colors in the menu bar app", cwd: "~/GitHub/relais", project: "relais", startedAt: now - 2 * 3600 - 12 * 60, lastActivity: now - 12, account: "main", desktop: false, activity: [1, 2, 2, 4, 6, 5, 8, 9, 12, 11, 14, 13] },
+      { id: "s2", title: "Mobile notifications and widget", cwd: "~/GitHub/mobile", project: "mobile", startedAt: now - 53 * 60, lastActivity: now - 100, account: "spare", desktop: true, activity: [6, 9, 7, 10, 8, 5, 6, 4, 3, 2, 1, 1] },
+      { id: "s3", title: "Audit and framework migration", cwd: "~/GitHub/devops", project: "devops", startedAt: now - 3 * 3600, lastActivity: now - 1500, account: null, desktop: false, activity: [0, 0, 3, 5, 2, 0, 0, 0, 0, 0, 0, 0] },
+      { id: "s4", title: "Translations for the archive app", cwd: "~/GitHub/archive", project: "archive", startedAt: now - 6 * 3600, lastActivity: now - 5400, account: "studio", desktop: false, activity: new Array(12).fill(0) },
+      { id: "s5", title: "Nightly backup check", cwd: "~/GitHub/devops", project: "devops", startedAt: null, lastActivity: now - 7200, account: "main", desktop: false, activity: new Array(12).fill(0) },
     ] as T;
   }
   return { ...previewState, now: nowSecs() } as T;
