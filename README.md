@@ -4,8 +4,8 @@ Relais helps several Claude subscriptions on one Mac work as a relay team. When 
 runs out, one click moves Claude Desktop and new terminals to another account, and Desktop comes
 back exactly as you left it: the same conversations, pins, folders and open panes.
 
-> **Early development.** Used daily on one Mac. The Desktop switch is tested on copies of a real
-> workspace; see the [design](docs/superpowers/specs/2026-11-01-desktop-workspace-switch-design.md).
+> **Early development.** Used daily on one Mac, where a real switch between two accounts kept every
+> conversation, pin and folder. See the [design](docs/superpowers/specs/2026-11-01-desktop-workspace-switch-design.md).
 
 ## Why it is built this way
 
@@ -16,7 +16,10 @@ that tools copying tokens have to chase, and it follows Anthropic's rule that th
 must not collect or store Claude credentials.
 
 Relais never talks to Anthropic either. The usage it shows comes from what Claude Code already
-hands to its status line, and from the history the desktop app keeps.
+hands to its status line, from the history the desktop app keeps, and from Claude Code's own
+`/usage` panel: every quarter of an hour the app opens the official client in a private terminal,
+with nothing of yours loaded, reads the panel and closes it. No prompt is sent, nothing is billed
+and no conversation is saved.
 
 Switching is your decision. Relais warns you before a limit and suggests the account with the most
 room left; it never rotates accounts behind your back.
@@ -41,8 +44,8 @@ the parts of `.claude.json` not tied to an account are kept in sync.
 |---|---|
 | Shared config sync, account registry, usage readings, conversation index | done, tested |
 | Terminal: `relais` command (accounts, switch, exec, continue, status line, doctor) | done, tested, in daily use on one Mac |
-| Desktop switch that keeps the workspace (`relais desktop <account> [--dry-run]`) | done, tested, rehearsed on a copy of a real workspace |
-| Menu bar app (Tauri, React): one line per account with its two limits, one button to switch | done, tested |
+| Desktop switch that keeps the workspace (`relais desktop <account> [--dry-run]`) | done, tested, used for real |
+| Menu bar app (Tauri, React): a simple view, one line per account and one button to switch, and a full one | done, tested |
 | Claude in Chrome | out of scope: its sign-in lives in the browser |
 
 ```bash
@@ -54,6 +57,7 @@ eval "$(relais shell-init zsh)"     # make `claude` run with the active account
 relais list                         # every account, its usage and how long until each reset
 relais desktop work --dry-run       # what switching Claude Desktop to work would do
 relais desktop work                 # do it: Desktop closes, reopens on work, new terminals follow
+relais desktop --bring-back         # Desktop closed: put back the conversations a switch set aside
 relais switch next                  # move only the terminal: a name, next, prev or best
 relais continue                     # carry the latest conversation over to the active account
 ```

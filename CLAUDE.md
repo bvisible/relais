@@ -6,8 +6,8 @@
   a session cookie or a Keychain secret. Sign-in always goes through Anthropic's own flow
   (`claude auth login`, the desktop app, claude.ai in Chrome). Reading non-secret metadata is fine:
   account UUIDs, emails, the modification date of a Keychain entry.
-- **Never call Anthropic's servers.** Usage comes from the status line input and the desktop app's
-  own history file.
+- **Never call Anthropic's servers.** Usage comes from the status line input, the desktop app's
+  own history file and the official client's `/usage` panel, opened in a private terminal.
 - **Never switch silently.** Relais suggests; the user decides.
 - **Fail open.** A Relais failure must never stop Claude from starting or the user's status line from
   rendering.

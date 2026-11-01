@@ -260,6 +260,16 @@ pub fn carry_index(
     Ok(report)
 }
 
+/// Moves the records `set_aside` holds back into `list`, but for those `list`
+/// already has: they would show twice. Returns how many came back.
+pub fn bring_back(set_aside: &Path, list: &Path) -> Result<usize> {
+    let sorted = target_conversations(list, set_aside);
+    for name in &sorted.own {
+        set_aside_record(set_aside, name, list)?;
+    }
+    Ok(sorted.own.len())
+}
+
 /// Moves a record and everything named after it (its folder, its waiting
 /// input) from a list to `set_aside`.
 fn set_aside_record(list: &Path, record: &str, set_aside: &Path) -> Result<()> {

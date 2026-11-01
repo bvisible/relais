@@ -13,6 +13,7 @@ relais-core = { path = "../relais-core" }
 serde_json.workspace = true
 chrono.workspace = true
 clap = { version = "4", features = ["derive"] }
+libc = "0.2"
 
 [dev-dependencies]
 tempfile.workspace = true

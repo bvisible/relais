@@ -1,8 +1,9 @@
 //! Usage readings per account, and which account has the most room left.
 //!
 //! Readings come from what Claude Code hands to its status line
-//! (`rate_limits.five_hour` and `rate_limits.seven_day`) and from the history
-//! the desktop app keeps. Relais never asks Anthropic for them.
+//! (`rate_limits.five_hour` and `rate_limits.seven_day`), from the history the
+//! desktop app keeps and from the `/usage` panel of the official client. Relais
+//! never asks Anthropic for them itself.
 
 use std::cmp::Ordering;
 

@@ -168,6 +168,56 @@ fn sign_in_of(layout: &Layout, alias: &str, ids: &AccountIds) -> Result<SignIn> 
     }
 }
 
+/// What bringing conversations back did.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct BroughtBack {
+    pub conversations: usize,
+    /// Conversations left set aside: the list holds them already.
+    pub left: usize,
+}
+
+/// Puts the conversations switches set aside back in the app's list, under
+/// the account in place. The app must be closed: it keeps its list in memory.
+pub fn bring_back_set_aside(
+    layout: &Layout,
+    registry: &Registry,
+    desktop_running: bool,
+) -> Result<BroughtBack> {
+    if desktop_running {
+        return Err(Error::DesktopStillRunning);
+    }
+    let alias = source_alias(layout, registry)?;
+    let account = registry
+        .get(&alias)
+        .ok_or_else(|| Error::UnknownAccount(alias.clone()))?;
+    let ids = ids_of(account)?;
+    let mut brought = BroughtBack::default();
+    for stamp in subfolders(&layout.relais_dir.join("set-aside")) {
+        for root in INDEX_ROOTS {
+            let list = desktop_carry::index_dir(&layout.desktop_dir.join(root), &ids);
+            for account_dir in subfolders(&stamp.join(root)) {
+                for set_aside in subfolders(&account_dir) {
+                    brought.conversations += desktop_carry::bring_back(&set_aside, &list)?;
+                    brought.left += desktop_carry::conversation_count(&set_aside);
+                }
+            }
+        }
+    }
+    Ok(brought)
+}
+
+fn subfolders(dir: &Path) -> Vec<PathBuf> {
+    let mut folders: Vec<PathBuf> = fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.is_dir())
+        .collect();
+    folders.sort();
+    folders
+}
+
 /// Switches the app, closed, to `to`. `own` says what to do with the
 /// arriving account's own conversations, and is needed when it has some.
 pub fn apply(
@@ -1048,6 +1098,81 @@ mod tests {
             .set_aside_dir(&NOW.to_string())
             .join("claude-code-sessions/acc-b/org-b/local_own.json")
             .is_file());
+    }
+
+    #[test]
+    fn conversations_set_aside_come_back_in_the_list_in_place() {
+        let f = fixture();
+        let list = f
+            .layout
+            .desktop_dir
+            .join("claude-code-sessions/acc-b/org-b");
+        conversation(&list, "local_own", "cli-own");
+        apply(
+            &f.layout,
+            &f.registry,
+            "b",
+            Some(OwnConversations::PutAside),
+            false,
+            NOW,
+        )
+        .unwrap();
+        assert!(!list.join("local_own.json").exists());
+
+        let back = bring_back_set_aside(&f.layout, &f.registry, false).unwrap();
+
+        assert_eq!(
+            back,
+            BroughtBack {
+                conversations: 1,
+                left: 0
+            }
+        );
+        assert!(list.join("local_own.json").is_file());
+        assert_eq!(
+            bring_back_set_aside(&f.layout, &f.registry, false).unwrap(),
+            BroughtBack::default()
+        );
+    }
+
+    #[test]
+    fn a_conversation_the_list_already_holds_stays_set_aside() {
+        let f = fixture();
+        let list = f
+            .layout
+            .desktop_dir
+            .join("claude-code-sessions/acc-b/org-b");
+        conversation(&list, "local_twin", "cli-1");
+        apply(
+            &f.layout,
+            &f.registry,
+            "b",
+            Some(OwnConversations::Add),
+            false,
+            NOW,
+        )
+        .unwrap();
+
+        let back = bring_back_set_aside(&f.layout, &f.registry, false).unwrap();
+
+        assert_eq!(
+            back,
+            BroughtBack {
+                conversations: 0,
+                left: 1
+            }
+        );
+        assert!(!list.join("local_twin.json").exists());
+    }
+
+    #[test]
+    fn nothing_comes_back_while_the_app_runs() {
+        let f = fixture();
+
+        assert!(matches!(
+            bring_back_set_aside(&f.layout, &f.registry, true),
+            Err(Error::DesktopStillRunning)
+        ));
     }
 
     #[test]

@@ -1232,6 +1232,38 @@ fn conversation_count(count: usize) -> String {
     t(key, &[("count", &count.to_string())])
 }
 
+/// Puts what switches set aside back in the app's list. The app must be
+/// closed; a session running inside it would die with it, so it is not closed
+/// from here.
+pub fn desktop_bring_back() -> Outcome {
+    let relais = load()?;
+    let running = DesktopApp::from_env().is_running();
+    let brought = desktop_switch::bring_back_set_aside(&relais.layout, &relais.registry, running)
+        .map_err(desktop_failure)?;
+    if brought.conversations == 0 && brought.left == 0 {
+        println!("{}", t("desktop.brought_back_none", &[]));
+        return Ok(0);
+    }
+    if brought.conversations > 0 {
+        let conversations = conversation_count(brought.conversations);
+        println!(
+            "{}",
+            t("desktop.brought_back", &[("conversations", &conversations)])
+        );
+    }
+    if brought.left > 0 {
+        let conversations = conversation_count(brought.left);
+        println!(
+            "{}",
+            t(
+                "desktop.brought_back_left",
+                &[("conversations", &conversations)]
+            )
+        );
+    }
+    Ok(0)
+}
+
 fn describe_plan(plan: &SwitchPlan, email: &str) {
     let to = plan.to.as_str();
     println!(

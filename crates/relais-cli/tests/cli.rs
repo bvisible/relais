@@ -738,6 +738,50 @@ fn desktop_switch_asks_what_to_do_with_the_account_s_own_conversations() {
 }
 
 #[test]
+fn conversations_set_aside_come_back_with_one_command_once_the_app_is_closed() {
+    let env = Env::new();
+    desktop_workspace(&env);
+    let own = desktop_folder(&env).join(format!("claude-code-sessions/{WORK_ACCOUNT}/{WORK_ORG}"));
+    fs::create_dir_all(&own).unwrap();
+    fs::write(
+        own.join("local_own.json"),
+        json!({"sessionId": "local_own", "cliSessionId": "cli-own"}).to_string(),
+    )
+    .unwrap();
+    assert_ok(&env.run(&["desktop", "work", "--own", "aside"]));
+    assert!(!own.join("local_own.json").exists());
+
+    // The switch leaves the app open, and it keeps its list in memory.
+    let refused = env.run(&["desktop", "--bring-back"]);
+    assert!(!refused.status.success(), "{}", text(&refused));
+    assert!(!own.join("local_own.json").exists());
+
+    fs::remove_file(env.home().join("desktop-running")).unwrap();
+    let back = env.run(&["desktop", "--bring-back"]);
+
+    assert_ok(&back);
+    assert!(text(&back).contains("Back in your list"), "{}", text(&back));
+    assert!(own.join("local_own.json").is_file());
+}
+
+#[test]
+fn a_closed_pipe_ends_a_command_quietly() {
+    let env = Env::new();
+    env.sign_in_default("main@example.com");
+    assert_ok(&env.run(&["init"]));
+    let (reader, writer) = std::io::pipe().unwrap();
+    drop(reader);
+
+    let output = env.relais().arg("list").stdout(writer).output().unwrap();
+
+    assert!(
+        !String::from_utf8_lossy(&output.stderr).contains("panicked"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn desktop_switch_from_inside_the_desktop_app_only_previews() {
     let env = Env::new();
     desktop_workspace(&env);

@@ -76,6 +76,8 @@ enum Commands {
         dry_run: bool,
         #[arg(long, value_enum)]
         own: Option<Own>,
+        #[arg(long, conflicts_with_all = ["alias", "dry_run", "own"])]
+        bring_back: bool,
     },
 }
 
@@ -133,6 +135,9 @@ fn localized_command() -> clap::Command {
         desktop
             .mut_arg("dry_run", |arg| arg.help(t("help.desktop.dry_run", &[])))
             .mut_arg("own", |arg| arg.help(t("help.desktop.own", &[])))
+            .mut_arg("bring_back", |arg| {
+                arg.help(t("help.desktop.bring_back", &[]))
+            })
     });
     command.mut_subcommand("account", |account| {
         account
@@ -144,6 +149,11 @@ fn localized_command() -> clap::Command {
 }
 
 fn main() -> ExitCode {
+    // `relais list | head` ends like any command line tool, not with a panic.
+    // SAFETY: restoring a signal's default action, before any thread starts.
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
     let matches = localized_command().get_matches();
     let cli = match Cli::from_arg_matches(&matches) {
         Ok(cli) => cli,
@@ -181,9 +191,13 @@ fn main() -> ExitCode {
         Commands::ShellUninstall => commands::shell_uninstall(),
         Commands::Doctor => commands::doctor(),
         Commands::Desktop {
+            bring_back: true, ..
+        } => commands::desktop_bring_back(),
+        Commands::Desktop {
             alias,
             dry_run,
             own,
+            ..
         } => commands::desktop(
             alias.as_deref(),
             dry_run,

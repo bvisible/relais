@@ -90,8 +90,6 @@ export function App() {
   const [waiting, setWaiting] = useState<Map<string, number>>(new Map());
   const waitingRef = useRef(waiting);
   waitingRef.current = waiting;
-  // Accounts whose limits are asked right after they were signed in again.
-  const [measuring, setMeasuring] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(nowSecs);
   const [followTheme, setFollowTheme] = useState(readFollowTheme);
@@ -121,13 +119,10 @@ export function App() {
       aliases.forEach((alias) => next.delete(alias));
       return next;
     });
-    setMeasuring((current) => new Set([...current, ...aliases]));
     try {
       setOverview(await api.refreshUsage(false));
     } catch {
       // The figures already shown stay; the next round asks again.
-    } finally {
-      setMeasuring((current) => new Set([...current].filter((alias) => !aliases.includes(alias))));
     }
   }, []);
 
