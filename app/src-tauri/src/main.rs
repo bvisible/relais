@@ -28,7 +28,6 @@ fn main() {
             commands::set_color,
             commands::account_stats,
             commands::account_sign_ins,
-            commands::open_chrome,
             commands::sign_in_again,
             commands::remove_account,
             commands::switch_desktop,

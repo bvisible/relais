@@ -1159,6 +1159,16 @@ pub fn desktop(alias: Option<&str>, dry_run: bool, own: Option<OwnConversations>
         return Ok(0);
     }
     describe_plan(&plan, &email);
+    let live = relais.live_desktop_conversations(now());
+    if live > 0 {
+        println!(
+            "{}",
+            t(
+                "desktop.plan_live",
+                &[("conversations", &conversation_count(live))]
+            )
+        );
+    }
     if dry_run {
         println!("{}", t("desktop.dry_run", &[]));
         return Ok(0);

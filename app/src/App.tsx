@@ -3,9 +3,9 @@ import { useCallback, useEffect, useRef, useState, type CSSProperties } from "re
 import { api, type Account, type AccountSignIn, type AccountStats, type Conversation, type Overview, type PaletteColor, type ResumeTarget } from "./api";
 import { age, dayLabels, inTime, isLive, margin, newlySignedIn, remaining, span, time } from "./format";
 import { isMessageKey, t, type MessageKey } from "./i18n";
-import { RelayHome, TabBar, type Tab } from "./RelayHome";
+import { RelayHome, TabBar } from "./RelayHome";
 
-type View = "home" | "settings" | "add" | "accounts" | "conversations";
+type View = "accounts" | "settings" | "add" | "conversations";
 
 /** What Claude Code last said about each account's sign-in. */
 type SignIns = { checkedAt: number | null; list: AccountSignIn[]; checking: boolean };
@@ -15,6 +15,7 @@ const DEFAULT_ACCENT = "#F55D1A";
 /** Conversations whose account is unknown (started before Relais measured them). */
 const NEUTRAL = "#93A29B";
 const FOLLOW_THEME_KEY = "relais.followTheme";
+const FULL_VIEW_KEY = "relais.fullView";
 const SHOWN_CONVERSATIONS = 5;
 const FETCHED_CONVERSATIONS = 12;
 const SIGN_IN_CHECK_EVERY_MS = 10 * 60_000;
@@ -48,7 +49,22 @@ function writeFollowTheme(on: boolean) {
   }
 }
 
-/** A translated sentence with its `{slot}` value set in bold. */
+function readFullView(): boolean {
+  try {
+    return localStorage.getItem(FULL_VIEW_KEY) === "on";
+  } catch {
+    return false;
+  }
+}
+
+function writeFullView(on: boolean) {
+  try {
+    localStorage.setItem(FULL_VIEW_KEY, on ? "on" : "off");
+  } catch {
+    // Storage refused: the choice holds until Relais quits.
+  }
+}
+
 /** A command's error, translated when it comes as a message code. */
 function describeError(error: unknown): string {
   const text = String(error);
@@ -60,8 +76,9 @@ function paletteName(color: PaletteColor): string {
 }
 
 export function App() {
-  const [view, setView] = useState<View>("home");
-  // An account whose switch was asked from the accounts page: home confirms it.
+  const [view, setView] = useState<View>("accounts");
+  const [full, setFull] = useState(readFullView);
+  // An account whose switch was asked from the full view: the sheet confirms it.
   const [pending, setPending] = useState<string | null>(null);
   const [focus, setFocus] = useState<string | null>(null);
   const [overview, setOverview] = useState<Overview | null>(null);
@@ -155,8 +172,7 @@ export function App() {
     return () => window.clearInterval(timer);
   }, [waiting.size, checkSignIns]);
 
-  // Claude Code tells each account's limits and reset times; accounts the
-  // status line measured lately are skipped on the Rust side.
+  // The Rust side measures the accounts in the background; this asks it now.
   const [refreshing, setRefreshing] = useState(false);
   const refreshUsage = useCallback(async (force = false) => {
     if (force) setRefreshing(true);
@@ -181,12 +197,8 @@ export function App() {
   useEffect(() => {
     void refresh();
     void checkSignIns();
-    void refreshUsage();
     const timer = window.setInterval(() => void refresh(), 15_000);
-    const signInTimer = window.setInterval(() => {
-      void checkSignIns();
-      void refreshUsage();
-    }, SIGN_IN_CHECK_EVERY_MS);
+    const signInTimer = window.setInterval(() => void checkSignIns(), SIGN_IN_CHECK_EVERY_MS);
     const clock = window.setInterval(() => setNow(nowSecs()), 10_000);
     const onFocus = () => {
       void refresh();
@@ -207,7 +219,7 @@ export function App() {
       window.removeEventListener("focus", onFocus);
       window.removeEventListener("keydown", onKey);
     };
-  }, [refresh, checkSignIns, refreshUsage]);
+  }, [refresh, checkSignIns]);
 
   // Opens the sign-in in a terminal, then watches for it to be done.
   const signInAndWatch = async (alias: string) => {
@@ -231,43 +243,30 @@ export function App() {
     }
   };
 
-  const switchDesktopFromPage = (alias: string) => {
-    setPending(alias);
-    setView("home");
+  const showFull = (on: boolean) => {
+    setFull(on);
+    writeFullView(on);
   };
 
-  const tab: Tab = view === "conversations" ? "conversations" : view === "settings" ? "settings" : "accounts";
-  const selectTab = (next: Tab) => setView(next === "accounts" ? "home" : next);
-
-  const openAccounts = (alias: string | null) => {
+  const openAccount = (alias: string) => {
     setFocus(alias);
-    setView("accounts");
-    void loadStats();
-    void refreshUsage();
-    const stale = !signIns?.checkedAt || nowSecs() - signIns.checkedAt > 120;
-    if (stale && !signIns?.checking) void checkSignIns();
+    showFull(true);
   };
+
+  // The full view shows each account's history and sign-ins.
+  useEffect(() => {
+    if (view !== "accounts" || !full) return;
+    void loadStats();
+    const current = signInsRef.current;
+    const stale = !current?.checkedAt || nowSecs() - current.checkedAt > 120;
+    if (stale && !current?.checking) void checkSignIns();
+  }, [view, full, loadStats, checkSignIns]);
 
   const active = overview?.accounts.find((a) => a.active) ?? null;
   const accent = followTheme && active ? active.color : DEFAULT_ACCENT;
 
   return (
     <main className="panel" style={{ "--accent": accent } as CSSProperties}>
-      {view === "home" && (
-        <RelayHome
-          overview={overview}
-          signIns={signIns?.checkedAt != null ? signIns.list : null}
-          now={now}
-          pending={pending}
-          onPendingSeen={() => setPending(null)}
-          onOverview={setOverview}
-          refreshing={refreshing}
-          onRefresh={() => void refreshUsage(true)}
-          onOpenAccount={(alias) => openAccounts(alias)}
-          onSignIn={(alias) => void signInAndWatch(alias)}
-          describeError={describeError}
-        />
-      )}
       {view === "conversations" && (
         <div className="page">
           <div className="page-head">
@@ -276,24 +275,38 @@ export function App() {
           <Sessions conversations={conversations} accounts={new Map((overview?.accounts ?? []).map((a) => [a.alias, a]))} now={now} onResume={(id, target) => run(() => api.resume(id, target))} />
         </div>
       )}
-      {view === "accounts" && overview && (
-        <AccountsPage
+      {view === "accounts" && (
+        <RelayHome
           overview={overview}
-          stats={stats}
-          signIns={signIns}
-          focus={focus}
+          signIns={signIns?.checkedAt != null ? signIns.list : null}
           now={now}
-          onBack={() => setView("home")}
-          onSwitch={(alias) => run(() => api.switchAccount(alias))}
-          onColor={(alias, hex) => run(() => api.setColor(alias, hex))}
-          onOpenChrome={(alias) => run(() => api.openChrome(alias))}
-          onSignInAgain={(alias) => void signInAndWatch(alias)}
-          onRemove={(alias) => run(() => api.removeAccount(alias)).then(() => loadStats())}
-          onSwitchDesktop={switchDesktopFromPage}
+          full={full}
+          onFull={showFull}
+          pending={pending}
+          onPendingSeen={() => setPending(null)}
+          onOverview={setOverview}
           refreshing={refreshing}
           onRefresh={() => void refreshUsage(true)}
-          onAdd={() => setView("add")}
-        />
+          onOpenAccount={openAccount}
+          onSignIn={(alias) => void signInAndWatch(alias)}
+          describeError={describeError}
+        >
+          {overview && (
+            <AccountsPage
+              overview={overview}
+              stats={stats}
+              signIns={signIns}
+              focus={focus}
+              now={now}
+              onSwitch={(alias) => run(() => api.switchAccount(alias))}
+              onColor={(alias, hex) => run(() => api.setColor(alias, hex))}
+              onSignInAgain={(alias) => void signInAndWatch(alias)}
+              onRemove={(alias) => run(() => api.removeAccount(alias)).then(() => loadStats())}
+              onSwitchDesktop={setPending}
+              onAdd={() => setView("add")}
+            />
+          )}
+        </RelayHome>
       )}
       {view === "settings" && overview && (
         <Settings
@@ -322,7 +335,7 @@ export function App() {
           {t("error", { message: error })}
         </p>
       )}
-      {view !== "add" && <TabBar tab={tab} onSelect={selectTab} />}
+      {view !== "add" && <TabBar tab={view} onSelect={setView} />}
     </main>
   );
 }
@@ -418,15 +431,11 @@ function AccountsPage(props: {
   signIns: SignIns | null;
   focus: string | null;
   now: number;
-  onBack: () => void;
   onSwitch: (alias: string) => void;
   onColor: (alias: string, hex: string) => void;
-  onOpenChrome: (alias: string) => void;
   onSignInAgain: (alias: string) => void;
   onRemove: (alias: string) => void;
   onSwitchDesktop: (alias: string) => void;
-  refreshing: boolean;
-  onRefresh: () => void;
   onAdd: () => void;
 }) {
   const { overview, signIns, now } = props;
@@ -448,14 +457,7 @@ function AccountsPage(props: {
   }, [props.focus]);
 
   return (
-    <div className="page">
-      <div className="page-head">
-        <h1 className="page-title">{t("accountsTitle")}</h1>
-        <button className="button" onClick={props.onBack}>
-          {t("back")}
-        </button>
-      </div>
-
+    <div className="page page-full">
       <section className="card summary">
         <div className="summary-head">
           <span className="strong">{heading}</span>
@@ -463,12 +465,7 @@ function AccountsPage(props: {
             {signIns?.checking ? t("checking") : signIns?.checkedAt ? [plans.length === 1 ? t("plan", { plan: planName(plans[0]) }) : null, t("checkedAgo", { age: age(signIns.checkedAt, now) })].filter(Boolean).join(" · ") : ""}
           </span>
         </div>
-        <div className="summary-refresh">
-          <span className="muted tiny">{t("reserveTitle")}</span>
-          <button className="button where-button" disabled={props.refreshing} onClick={props.onRefresh} title={t("refreshDetail")}>
-            {props.refreshing ? t("refreshing") : t("refresh")}
-          </button>
-        </div>
+        <span className="muted tiny">{t("reserveTitle")}</span>
         <div className="reserve" aria-hidden="true">
           {accounts.map((a) => (
             <span key={a.alias} className="tinted" style={{ ...tint(a.color), flexGrow: Math.max(margin(a) ?? 0, 2) }} />
@@ -495,7 +492,6 @@ function AccountsPage(props: {
           now={now}
           onSwitch={props.onSwitch}
           onColor={props.onColor}
-          onOpenChrome={props.onOpenChrome}
           onSignInAgain={props.onSignInAgain}
           onRemove={props.onRemove}
           desktopOwner={overview.desktopOwner}
@@ -519,7 +515,6 @@ function AccountCard(props: {
   now: number;
   onSwitch: (alias: string) => void;
   onColor: (alias: string, hex: string) => void;
-  onOpenChrome: (alias: string) => void;
   onSignInAgain: (alias: string) => void;
   onRemove: (alias: string) => void;
   desktopOwner: string | null;
@@ -546,6 +541,7 @@ function AccountCard(props: {
           <div className="account-alias">{account.alias}</div>
           <div className="muted tiny ellipsis">{account.email ?? signIn?.email ?? ""}</div>
         </div>
+        {account.observedAt != null && <span className="muted tiny account-measured">{t("relayMeasured", { age: age(account.observedAt, now) })}</span>}
       </div>
 
       <div className="where">
@@ -595,15 +591,16 @@ function AccountCard(props: {
           </span>
         )}
         {signIn?.plan && <span className="badge">{planName(signIn.plan)}</span>}
-        <span className="badge">{account.chromeProfile ? t("chromeProfile", { profile: account.chromeProfile }) : t("chromeUsual")}</span>
       </div>
 
       <div className="windows">
-        <div className="window-box">
-          <div className="muted tiny">{t("fiveHourLabel")}</div>
-          <div className="window-value">{five ? `${Math.round(five.used)} %` : "—"}</div>
-          <div className="tiny window-note">{five?.resetsAt != null && five.resetsAt > now ? t("resetsIn", { in: inTime(five.resetsAt, now) }) : t("nothingUsed")}</div>
-        </div>
+        {five && (
+          <div className="window-box">
+            <div className="muted tiny">{t("fiveHourLabel")}</div>
+            <div className="window-value">{Math.round(five.used)} %</div>
+            <div className="tiny window-note">{five.resetsAt != null && five.resetsAt > now ? t("resetsIn", { in: inTime(five.resetsAt, now) }) : t("nothingUsed")}</div>
+          </div>
+        )}
         <div className="window-box">
           <div className="muted tiny">{t("weekLabel")}</div>
           <div className="window-value">{week ? `${Math.round(week.used)} %` : "—"}</div>
@@ -700,9 +697,6 @@ function AccountCard(props: {
         </div>
       ) : (
         <div className="actions">
-          <button className="button" onClick={() => props.onOpenChrome(account.alias)}>
-            {t("openChrome")}
-          </button>
           <button className={`button ${signedOut ? "button-accent" : ""}`} onClick={() => props.onSignInAgain(account.alias)}>
             {t("signInAgain")}
           </button>

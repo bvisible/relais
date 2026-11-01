@@ -5,7 +5,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { api, type Account, type AccountSignIn, type Overview } from "./api";
 import { t, type MessageKey } from "./i18n";
-import { advisedOf, confirmLines, connectionOf, connectionSummary, relayOrder, resultLine, ringsOf, usageLine, type DesktopPlan, type Ring } from "./relay.ts";
+import { advisedOf, confirmLines, connectionOf, connectionSummary, relayOrder, resultLine, ringsOf, staleLine, usageLine, type DesktopPlan, type Ring } from "./relay.ts";
 
 /** The panel's tabs, at its foot. */
 export type Tab = "accounts" | "conversations" | "settings";
@@ -20,6 +20,11 @@ export function RelayHome(props: {
   /** Who each terminal profile is signed in with; `null` until checked. */
   signIns: AccountSignIn[] | null;
   now: number;
+  /** Every detail of every account, instead of one line each. */
+  full: boolean;
+  onFull: (full: boolean) => void;
+  /** The full view: below the same head, under the same switch sheet. */
+  children: ReactNode;
   /** An account whose switch was asked from another page. */
   pending: string | null;
   onPendingSeen: () => void;
@@ -36,7 +41,7 @@ export function RelayHome(props: {
   const connections = new Map(accounts.map((account) => [account.alias, connectionOf(account, props.signIns?.find((s) => s.alias === account.alias), here)]));
   const signedOut = new Set(accounts.filter((a) => connections.get(a.alias)?.terminal === "signedOut").map((a) => a.alias));
   const summary = connectionSummary(accounts, props.signIns, here);
-  const advised = advisedOf(accounts, props.signIns, here, overview?.best ?? null);
+  const advised = advisedOf(accounts, props.signIns, here, overview?.best ?? null, now);
   const [target, setTarget] = useState<Account | null>(null);
   const [plan, setPlan] = useState<DesktopPlan | null>(null);
   const [own, setOwn] = useState<Own | null>(null);
@@ -98,12 +103,15 @@ export function RelayHome(props: {
     <div className={`relay ${target ? "has-sheet" : ""}`}>
       <header className="relay-head">
         <h1 className="relay-title">Relais</h1>
-        <button className={`relay-icon-button ${props.refreshing ? "is-busy" : ""}`} aria-label={t("relayRefresh")} title={t("relayRefresh")} disabled={props.refreshing} onClick={props.onRefresh}>
-          <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" />
-            <path d="M21 3v5h-5" />
-          </svg>
-        </button>
+        <div className="relay-head-end">
+          <ViewSwitch full={props.full} onChange={props.onFull} />
+          <button className={`relay-icon-button ${props.refreshing ? "is-busy" : ""}`} aria-label={t("relayRefresh")} title={t("relayRefresh")} disabled={props.refreshing} onClick={props.onRefresh}>
+            <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" />
+              <path d="M21 3v5h-5" />
+            </svg>
+          </button>
+        </div>
       </header>
 
       {summary && accounts.length > 0 && (
@@ -124,7 +132,9 @@ export function RelayHome(props: {
         </p>
       )}
 
-      <ul className="relay-list">
+      {props.full && accounts.length > 0 && props.children}
+
+      {!props.full && <ul className="relay-list">
         {relayOrder(accounts, here, signedOut).map((account) => {
           const isHere = account.alias === here;
           const connection = connections.get(account.alias);
@@ -140,7 +150,7 @@ export function RelayHome(props: {
                   </button>
                   {isHere && <span className="relay-chip">{t("relayHere")}</span>}
                 </div>
-                <div className="relay-usage">{usageLine(account, now)}</div>
+                <div className="relay-usage">{[usageLine(account, now), staleLine(account, now)].filter(Boolean).join(" · ")}</div>
                 {connection?.terminal === "otherAccount" && (
                   <div className="relay-todo">
                     {t("relayTerminalOther", { email: connection.otherEmail ?? "?" })} ·{" "}
@@ -175,9 +185,9 @@ export function RelayHome(props: {
             </li>
           );
         })}
-      </ul>
+      </ul>}
 
-      {accounts.some((account) => ringsOf(account, now).rings.length === 2) && <p className="relay-legend">{t("relayRingsLegend")}</p>}
+      {!props.full && accounts.some((account) => ringsOf(account, now).rings.length === 2) && <p className="relay-legend">{t("relayRingsLegend")}</p>}
 
       {target && (
         <div className="relay-scrim" onClick={close}>
@@ -217,6 +227,20 @@ export function RelayHome(props: {
           </section>
         </div>
       )}
+    </div>
+  );
+}
+
+/** Simple or full: one line per account, or everything about each. */
+function ViewSwitch({ full, onChange }: { full: boolean; onChange: (full: boolean) => void }) {
+  return (
+    <div className="view-switch" role="group" aria-label={t("viewSwitch")}>
+      <button className={full ? "" : "is-on"} aria-pressed={!full} onClick={() => onChange(false)}>
+        {t("viewSimple")}
+      </button>
+      <button className={full ? "is-on" : ""} aria-pressed={full} onClick={() => onChange(true)}>
+        {t("viewFull")}
+      </button>
     </div>
   );
 }

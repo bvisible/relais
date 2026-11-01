@@ -95,7 +95,6 @@ export const api = {
   accountStats: () => call<AccountStats[]>("account_stats"),
   /** Every account's sign-in, or only `only`'s. */
   accountSignIns: (only?: string) => call<AccountSignIn[]>("account_sign_ins", { only: only ?? null }),
-  openChrome: (alias: string) => call<void>("open_chrome", { alias }),
   signInAgain: (alias: string) => call<void>("sign_in_again", { alias }),
   removeAccount: (alias: string) => call<Overview>("remove_account", { alias }),
   /** What switching Claude to `alias` would do; changes nothing. */
@@ -246,13 +245,13 @@ async function preview<T>(command: string, args?: Record<string, unknown>): Prom
       .map((a) => ({ alias: a.alias, signedIn: !previewSignedOut.has(a.alias), email: previewMode === "connections" && a.alias === "work" ? "spare@example.com" : a.email, plan: "max" })) as T;
   }
   if (command === "sign_in_again") previewSignInOpenedAt = Date.now();
-  if (command === "open_chrome" || command === "sign_in_again") return undefined as T;
+  if (command === "sign_in_again") return undefined as T;
   if (command === "refresh_usage") await new Promise((resolve) => setTimeout(resolve, args?.force ? 2500 : 300));
   if (command === "desktop_plan") {
     await new Promise((resolve) => setTimeout(resolve, 150));
     const alias = String(args?.alias);
     const target = previewState.accounts.find((a) => a.alias === alias);
-    return { from: previewState.desktopOwner ?? "", conversations: 139, own: alias === "work" ? 4 : 0, signIn: target?.desktopFolder ? "parked" : "none" } as T;
+    return { from: previewState.desktopOwner ?? "", conversations: 139, own: alias === "work" ? 4 : 0, live: 1, signIn: target?.desktopFolder ? "parked" : "none" } as T;
   }
   if (command === "switch_desktop") {
     await new Promise((resolve) => setTimeout(resolve, 1600));

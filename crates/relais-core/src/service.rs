@@ -71,6 +71,11 @@ pub const USAGE_EVERY: i64 = 15 * 60;
 /// How long Claude Code gets to show an account's limits.
 const USAGE_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(45);
 
+/// How long after its last message a conversation counts as working.
+const LIVE_FOR: i64 = 120;
+/// More conversations than can be working at once.
+const LIVE_LOOKUP: usize = 64;
+
 /// How long a sync waits for Claude Code to release a config file.
 pub const SYNC_LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
 
@@ -341,6 +346,20 @@ impl Relais {
         samples.sort_by_key(|s| s.t);
         samples.dedup_by_key(|s| s.t);
         samples
+    }
+
+    /// The desktop app's conversations working right now: closing the app
+    /// stops them.
+    pub fn live_desktop_conversations(&self, now: i64) -> usize {
+        self.recent_conversations(LIVE_LOOKUP, now)
+            .map(|recent| {
+                recent
+                    .iter()
+                    .filter(|c| now - c.last_activity < LIVE_FOR)
+                    .filter(|c| c.conversation.entrypoint.as_deref() == Some("claude-desktop"))
+                    .count()
+            })
+            .unwrap_or(0)
     }
 
     /// The latest conversations started by a person, most recent message first,
@@ -852,6 +871,21 @@ mod tests {
         chrono::DateTime::from_timestamp(secs, 0)
             .unwrap()
             .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+    }
+
+    #[test]
+    fn only_the_desktop_conversations_writing_right_now_count_as_live() {
+        let (_root, relais) = fixture();
+        let line = |entrypoint: &str, when: i64| {
+            json!({"type": "user", "timestamp": at(when), "cwd": "/work", "entrypoint": entrypoint,
+                   "message": {"role": "user", "content": "go"}})
+        };
+        let desktop = "claude-desktop";
+        transcript(&relais, "live", &[line(desktop, NOW - 30)], NOW - 30);
+        transcript(&relais, "over", &[line(desktop, NOW - 600)], NOW - 600);
+        transcript(&relais, "terminal", &[line("cli", NOW - 30)], NOW - 30);
+
+        assert_eq!(relais.live_desktop_conversations(NOW), 1);
     }
 
     #[test]

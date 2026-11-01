@@ -115,6 +115,7 @@
   "desktop.plan_sign_in.parked": "{to}'s sign-in is ready.",
   "desktop.plan_sign_in.old_folder": "{to}'s sign-in comes from its former Desktop folder, kept aside as an archive.",
   "desktop.plan_sign_in.none": "{to} is not signed in yet: Claude Desktop will open on its sign-in page, sign in with {email}.",
+  "desktop.plan_live": "Still working: {conversations}. Closing Claude Desktop stops them.",
   "desktop.plan_own": "{to} has {conversations} of its own: --own add keeps them in your list, --own aside puts them aside (recoverable).",
   "desktop.plan_duplicates": "{conversations} of {to} already in your list under another name will be put aside, so nothing shows twice.",
   "desktop.dry_run": "Nothing was changed (--dry-run).",

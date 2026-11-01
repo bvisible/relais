@@ -1748,3 +1748,12 @@ input:focus-visible {
     animation: none;
   }
 }
+
+/* The switch between one line per account and everything about each. */
+.relay-head-end { display: flex; align-items: center; gap: 8px; }
+.view-switch { display: inline-flex; padding: 3px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+.view-switch button { min-height: 28px; padding: 0 10px; border: 0; border-radius: 7px; background: transparent; color: var(--muted); font: inherit; font-size: 12.5px; font-weight: 500; cursor: pointer; transition: background-color 120ms var(--ease-standard), color 120ms var(--ease-standard); }
+.view-switch button:hover { color: var(--ink); }
+.view-switch button.is-on { background: var(--signal-tint); color: var(--ink); font-weight: 600; }
+.page-full { padding-top: 6px; }
+.account-measured { flex: none; margin-left: auto; }

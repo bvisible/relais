@@ -3,7 +3,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { advisedOf, confirmLines, connectionOf, connectionSummary, relayOrder, resultLine, ringsOf, usageLine } from "../src/relay.ts";
+import { advisedOf, confirmLines, connectionOf, connectionSummary, relayOrder, resultLine, ringsOf, staleLine, usageLine } from "../src/relay.ts";
+
+const plan = (extra: Partial<{ conversations: number; own: number; live: number; signIn: "parked" | "oldFolder" | "none" }> = {}) => ({ from: "main", conversations: 3, own: 0, live: 0, signIn: "parked" as const, ...extra });
 
 const NOW = 1_791_270_000;
 
@@ -20,24 +22,30 @@ const account = (alias: string, five: number | null, week: number | null, extra:
 });
 
 test("the confirmation says what happens and what stays, in two lines", () => {
-  const lines = confirmLines({ from: "main", conversations: 139, own: 0, signIn: "parked" }, "work", "work@example.com");
+  const lines = confirmLines(plan({ conversations: 139 }), "work", "work@example.com");
   assert.deepEqual(lines, ["Claude se ferme et se rouvre sur work.", "Tes 139 discussions, tes favoris et tes dossiers restent tels quels."]);
 });
 
 test("one conversation is singular", () => {
-  const lines = confirmLines({ from: "main", conversations: 1, own: 0, signIn: "parked" }, "work", "work@example.com");
+  const lines = confirmLines(plan({ conversations: 1 }), "work", "work@example.com");
   assert.equal(lines[1], "Ta discussion, tes favoris et tes dossiers restent tels quels.");
 });
 
 test("an account never signed in to Claude says it will ask once", () => {
-  const lines = confirmLines({ from: "main", conversations: 3, own: 0, signIn: "none" }, "work", "work@example.com");
+  const lines = confirmLines(plan({ signIn: "none" }), "work", "work@example.com");
   assert.equal(lines.length, 3);
   assert.equal(lines[2], "Claude te demandera une fois de te connecter avec work@example.com.");
 });
 
 test("an account with conversations of its own asks what to do with them", () => {
-  const lines = confirmLines({ from: "main", conversations: 3, own: 12, signIn: "parked" }, "work", "work@example.com");
+  const lines = confirmLines(plan({ own: 12 }), "work", "work@example.com");
   assert.equal(lines[2], "work a aussi 12 discussions à lui :");
+});
+
+test("sessions still working are named before the switch stops them", () => {
+  assert.equal(confirmLines(plan({ live: 1 }), "work", "work@example.com")[1], "Une session est en cours : elle s’arrêtera avec Claude.");
+  assert.equal(confirmLines(plan({ live: 3 }), "work", "work@example.com")[1], "3 sessions sont en cours : elles s’arrêteront avec Claude.");
+  assert.equal(confirmLines(plan(), "work", "work@example.com").length, 2);
 });
 
 test("the result line says where Claude is", () => {
@@ -61,6 +69,12 @@ test("a usage line names the limits the plan has, and when the only one starts o
 test("a usage line only breaks between its parts, never inside a share or a duration", () => {
   const line = usageLine({ ...account("a", null, 40), sevenDay: { used: 40, resetsAt: NOW + 6 * 86400 + 5 * 3600 } }, NOW);
   assert.deepEqual(line.split(" "), ["semaine\u00a040\u00a0%", "·", "repart\u00a0dans\u00a06\u00a0j\u00a05\u00a0h"]);
+});
+
+test("an old reading says how old it is, a fresh one says nothing", () => {
+  assert.equal(staleLine(account("a", 12, 40, { observedAt: NOW - 20 * 60 }), NOW), null);
+  assert.equal(plain(staleLine(account("a", 12, 40, { observedAt: NOW - 3 * 3600 }), NOW) ?? ""), "mesuré il y a 3 h");
+  assert.equal(staleLine(account("a", null, null, { observedAt: null }), NOW), null);
 });
 
 test("a paused account says when it is back", () => {
@@ -119,9 +133,19 @@ test("the summary counts the accounts whose connections are to redo, once the te
 test("the advice goes to the best account Claude can trust, else the next free one with the most room", () => {
   const accounts = [ready("here"), ready("best"), { ...ready("next"), sevenDay: { used: 10, resetsAt: NOW + 86400 } }, { ...account("paused", 100, 50, { limited: true, limitedUntil: NOW + 600 }), desktopFolder: true }];
   const fine = accounts.map((a) => signIn(a.alias, true, a.email));
-  assert.equal(advisedOf(accounts, fine, "here", "best"), "best");
+  assert.equal(advisedOf(accounts, fine, "here", "best", NOW), "best");
   const wrong = fine.map((s) => (s.alias === "best" ? { ...s, email: "other@example.com" } : s));
-  assert.equal(advisedOf(accounts, wrong, "here", "best"), "next");
-  assert.equal(advisedOf(accounts, fine, "here", "here"), null);
-  assert.equal(advisedOf(accounts, fine, "here", null), null);
+  assert.equal(advisedOf(accounts, wrong, "here", "best", NOW), "next");
+  assert.equal(advisedOf(accounts, fine, "here", "here", NOW), null);
+  assert.equal(advisedOf(accounts, fine, "here", null, NOW), null);
+});
+
+test("the advice never rests on a reading too old, or on none", () => {
+  const old = { ...ready("best"), observedAt: NOW - 7 * 3600 };
+  const never = { ...ready("best"), fiveHour: null, sevenDay: null, observedAt: null };
+  const next = { ...ready("next"), sevenDay: { used: 10, resetsAt: NOW + 86400 } };
+  const fine = [ready("here"), old, next].map((a) => signIn(a.alias, true, a.email));
+  assert.equal(advisedOf([ready("here"), old, next], fine, "here", "best", NOW), "next");
+  assert.equal(advisedOf([ready("here"), never, next], fine, "here", "best", NOW), "next");
+  assert.equal(advisedOf([ready("here"), old], fine, "here", "best", NOW), null);
 });

@@ -115,6 +115,7 @@
   "desktop.plan_sign_in.parked": "La connexion de {to} est prête.",
   "desktop.plan_sign_in.old_folder": "La connexion de {to} vient de son ancien dossier Desktop, gardé de côté comme archive.",
   "desktop.plan_sign_in.none": "{to} n'est pas encore connecté : Claude Desktop s'ouvrira sur sa page de connexion, connecte-toi avec {email}.",
+  "desktop.plan_live": "Encore en cours : {conversations}. La fermeture de Claude Desktop les arrêtera.",
   "desktop.plan_own": "{to} a {conversations} à lui : --own add les garde dans ta liste, --own aside les met de côté (récupérables).",
   "desktop.plan_duplicates": "{conversations} de {to} déjà dans ta liste sous un autre nom seront mises de côté, pour que rien n'apparaisse deux fois.",
   "desktop.dry_run": "Rien n'a été changé (--dry-run).",

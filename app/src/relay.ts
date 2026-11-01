@@ -1,7 +1,7 @@
 // The one screen of the panel: every account on a line, and one button that
 // moves Claude, with its whole workspace, to another account.
 
-import { inTime, margin, time } from "./format.ts";
+import { age, inTime, margin, time } from "./format.ts";
 import { t } from "./i18n.ts";
 
 type WindowReading = { used: number; resetsAt: number | null } | null;
@@ -21,6 +21,8 @@ export type DesktopPlan = {
   conversations: number;
   /** The arriving account's conversations of its own. */
   own: number;
+  /** Claude Desktop sessions working right now: closing it stops them. */
+  live: number;
   signIn: "parked" | "oldFolder" | "none";
 };
 
@@ -34,10 +36,9 @@ export type SwitchResult = {
 
 /** What the confirmation says: what happens, what stays, and what to know. */
 export function confirmLines(plan: DesktopPlan, alias: string, email: string): string[] {
-  const lines = [
-    t("relayConfirmCloses", { alias }),
-    plan.conversations === 1 ? t("relayConfirmKeepsOne") : t("relayConfirmKeepsMany", { n: plan.conversations }),
-  ];
+  const lines = [t("relayConfirmCloses", { alias })];
+  if (plan.live > 0) lines.push(plan.live === 1 ? t("relayConfirmLiveOne") : t("relayConfirmLiveMany", { n: plan.live }));
+  lines.push(plan.conversations === 1 ? t("relayConfirmKeepsOne") : t("relayConfirmKeepsMany", { n: plan.conversations }));
   if (plan.signIn === "none") lines.push(t("relayConfirmSignIn", { email }));
   if (plan.own > 0) lines.push(t("relayConfirmOwn", { alias, n: plan.own }));
   return lines;
@@ -69,6 +70,15 @@ function parts(account: Line, now: number): string[] {
   }
   return [five ?? week ?? t("relayUnmeasured")];
 }
+
+/** How old an account's figures are, once it matters: each account is
+ * measured every quarter of an hour, so a reading this old says one failed. */
+export function staleLine(account: Line, now: number): string | null {
+  if (account.observedAt == null || now - account.observedAt < STALE_AFTER) return null;
+  return unbreakable(t("relayMeasured", { age: age(account.observedAt, now) }));
+}
+
+const STALE_AFTER = 45 * 60;
 
 /** Keeps a share or a duration on one line: `6 j 5 h` never splits. */
 function unbreakable(part: string): string {
@@ -118,6 +128,9 @@ export function relayOrder<T extends Line>(accounts: T[], desktopOwner: string |
   });
 }
 
+/** Figures older than this say nothing about an account's room left. */
+const ADVICE_MAX_AGE = 6 * 3600;
+
 type SignedIn = { alias: string; signedIn: boolean | null; email: string | null };
 
 /** Where an account can work: its terminal profile signed in with it, and
@@ -151,13 +164,15 @@ export function connectionSummary(accounts: { alias: string; email: string | nul
 /**
  * The account to advise: the best one as Relais measured it, unless its
  * terminal holds another account or none (its figures would be someone
- * else's); then the next free account with the most room left.
+ * else's) or its figures are too old to go by; then the next free account
+ * with the most room left.
  */
-export function advisedOf<T extends Line & { email: string | null; desktopFolder: boolean }>(accounts: T[], signIns: SignedIn[] | null, here: string | null, best: string | null): string | null {
+export function advisedOf<T extends Line & { email: string | null; desktopFolder: boolean }>(accounts: T[], signIns: SignedIn[] | null, here: string | null, best: string | null, now: number): string | null {
   if (best == null || best === here) return null;
   const trusted = (account: T) => {
     const terminal = connectionOf(account, signIns?.find((s) => s.alias === account.alias), here).terminal;
-    return terminal !== "otherAccount" && terminal !== "signedOut";
+    const measured = account.observedAt != null && now - account.observedAt < ADVICE_MAX_AGE;
+    return measured && terminal !== "otherAccount" && terminal !== "signedOut";
   };
   const bestAccount = accounts.find((a) => a.alias === best);
   if (bestAccount && trusted(bestAccount)) return best;

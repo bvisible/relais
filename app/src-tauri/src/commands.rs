@@ -391,13 +391,6 @@ pub async fn account_sign_ins(only: Option<String>) -> Result<Vec<AccountSignIn>
         .collect())
 }
 
-#[tauri::command]
-pub fn open_chrome(alias: String) -> Result<(), String> {
-    let relais = load()?;
-    let account = relais.registry.get(&alias).ok_or("unknown account")?;
-    platform::open_chrome(account.chrome_profile.as_deref())
-}
-
 /// Opens Terminal on `relais account login <alias>`: the sign-in page opens in
 /// the account's own Chrome profile.
 #[tauri::command]
@@ -418,6 +411,8 @@ pub struct DesktopPlanView {
     conversations: usize,
     /// The arriving account's conversations of its own: the user chooses.
     own: usize,
+    /// Sessions of the app working right now: closing it stops them.
+    live: usize,
     /// `parked`, `oldFolder` or `none` (the app will ask to sign in).
     sign_in: SignIn,
 }
@@ -432,6 +427,7 @@ pub fn desktop_plan(alias: String) -> Result<DesktopPlanView, String> {
         from: plan.from,
         conversations: plan.conversations,
         own: plan.own.len(),
+        live: relais.live_desktop_conversations(now()),
         sign_in: plan.sign_in,
     })
 }
