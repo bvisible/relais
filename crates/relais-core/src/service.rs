@@ -496,12 +496,19 @@ impl Relais {
         self.usage_failures().remove(alias)
     }
 
-    /// Claude Code asks whether to trust the folder Relais measures from. The
-    /// measure never answers for the user: `relais allow-measure` lets them.
-    pub fn measure_needs_trust(&self) -> bool {
-        self.usage_failures()
-            .values()
-            .any(|reason| reason == usage_probe::TRUST_NEEDED)
+    /// The accounts whose last measure stopped on a screen only the user can
+    /// answer: `relais allow-measure` opens Claude Code for them to do it.
+    pub fn accounts_awaiting_setup(&self) -> Vec<&Account> {
+        let failures = self.usage_failures();
+        self.registry
+            .accounts
+            .iter()
+            .filter(|account| {
+                failures
+                    .get(&account.alias)
+                    .is_some_and(|reason| usage_probe::awaits_the_user(reason))
+            })
+            .collect()
     }
 
     /// The empty folder of Relais's own that Claude Code is opened in to
@@ -1278,14 +1285,36 @@ printf '{{"type":"result","num_turns":0,"result":"Not logged in"}}'
         assert!(relais.refresh_usage("work", &wary, zurich(NOW)).is_err());
 
         assert_eq!(relais.usage_failure("work").as_deref(), Some("setup-trust"));
-        assert!(relais.measure_needs_trust());
+        assert_eq!(aliases(relais.accounts_awaiting_setup()), ["work"]);
 
         relais
             .refresh_usage("work", &fake_usage_command(root.path()), zurich(NOW))
             .unwrap();
 
         assert_eq!(relais.usage_failure("work"), None);
-        assert!(!relais.measure_needs_trust());
+        assert!(relais.accounts_awaiting_setup().is_empty());
+    }
+
+    fn aliases(accounts: Vec<&Account>) -> Vec<&str> {
+        accounts.iter().map(|a| a.alias.as_str()).collect()
+    }
+
+    #[test]
+    fn a_first_run_screen_waits_for_the_user_and_a_sign_in_does_not() {
+        let (_root, relais) = fixture();
+        fs::create_dir_all(relais.layout.relais_dir.join("probe")).unwrap();
+        let note = |alias: &str, reason: &str| {
+            note_for_account(&relais.usage_failures_file(), alias, Some(json!(reason)))
+        };
+
+        note("main", "setup-theme");
+        note("work", "setup-login");
+
+        assert_eq!(aliases(relais.accounts_awaiting_setup()), ["main"]);
+
+        note("main", "usage-timeout");
+
+        assert!(relais.accounts_awaiting_setup().is_empty());
     }
 
     #[test]

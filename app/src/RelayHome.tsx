@@ -121,7 +121,7 @@ export function RelayHome(props: {
         </p>
       )}
 
-      {overview?.measureNeedsTrust && (
+      {overview?.measureWaits && (
         <p className="relay-summary is-todo">
           {t("relayMeasureTrust")} ·{" "}
           <button className="relay-link" onClick={props.onAllowMeasure}>

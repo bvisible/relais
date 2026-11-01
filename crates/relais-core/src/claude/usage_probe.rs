@@ -21,12 +21,15 @@ use crate::layout::Layout;
 
 const REFUSED: &str = "usage-probe:";
 
-/// Claude Code asks whether to trust the folder: the probe stops there, the
-/// answer is the user's.
-pub const TRUST_NEEDED: &str = "setup-trust";
-
 fn refused(code: &str) -> Error {
     Error::Command(format!("{REFUSED}{code}"))
+}
+
+/// Whether a measure stopped on a screen the user answers once: the first-run
+/// questions, the folder's trust. The probe never answers for them, and a
+/// missing sign-in is a matter of its own.
+pub fn awaits_the_user(reason: &str) -> bool {
+    reason.starts_with("setup-") && reason != "setup-login"
 }
 
 /// What stopped a measure: a code of the probe, or the error as it reads.
@@ -186,7 +189,7 @@ fn setup_reason(text: &str) -> Option<&'static str> {
     let text = text.to_ascii_lowercase();
     let reasons: &[(&str, &[&str])] = &[
         (
-            TRUST_NEEDED,
+            "setup-trust",
             &[
                 "do you trust",
                 "accessing workspace",

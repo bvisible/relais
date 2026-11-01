@@ -1032,22 +1032,29 @@ pub fn doctor() -> Outcome {
     Ok(0)
 }
 
-/// Opens Claude Code in the folder Relais measures from, so the user can
-/// approve it. Once is enough: the sync shares the answer with every profile.
+/// Opens Claude Code in the folder Relais measures from, once per account
+/// waiting (the active one when none is), so the user can answer what it asks.
+/// The sync then shares the answers with every profile.
 pub fn allow_measure() -> Outcome {
     let relais = load()?;
     let binary = claude_binary()?;
     let workspace = relais.measure_workspace()?;
-    let profile = relais
-        .registry
-        .active()
-        .and_then(|account| account.config_dir.as_deref());
+    let mut accounts = relais.accounts_awaiting_setup();
+    if accounts.is_empty() {
+        accounts.extend(relais.registry.active());
+    }
     println!("{}", t("measure.allow", &[]));
-    claude::command_for_profile(&binary, profile)
-        .arg("--safe-mode")
-        .current_dir(&workspace)
-        .status()
-        .map_err(|e| Error::Command(e.to_string()))?;
+    for account in accounts {
+        println!(
+            "{}",
+            t("measure.allow_account", &[("alias", &account.alias)])
+        );
+        claude::command_for_profile(&binary, account.config_dir.as_deref())
+            .arg("--safe-mode")
+            .current_dir(&workspace)
+            .status()
+            .map_err(|e| Error::Command(e.to_string()))?;
+    }
     let _ = relais.sync_shared_config(now());
     refresh_usage(&load()?);
     Ok(0)
@@ -1058,8 +1065,8 @@ fn doctor_measure(relais: &Relais, account: &Account) {
         return;
     };
     let alias = account.alias.as_str();
-    let line = if reason == usage_probe::TRUST_NEEDED {
-        t("doctor.measure_trust", &[("alias", alias)])
+    let line = if usage_probe::awaits_the_user(&reason) {
+        t("doctor.measure_setup", &[("alias", alias)])
     } else {
         t(
             "doctor.measure_failed",

@@ -40,8 +40,8 @@ export type Overview = {
   statusline: boolean;
   shell: boolean;
   cliFound: boolean;
-  /** Claude Code waits for the user to approve the folder Relais measures from. */
-  measureNeedsTrust: boolean;
+  /** Claude Code waits for an answer of the user before it can measure. */
+  measureWaits: boolean;
   now: number;
 };
 
@@ -202,7 +202,7 @@ let previewState: Overview = {
   statusline: true,
   shell: false,
   cliFound: true,
-  measureNeedsTrust: previewMode === "trust",
+  measureWaits: previewMode === "trust",
   now: nowSecs(),
 };
 

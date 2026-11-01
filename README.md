@@ -58,7 +58,7 @@ relais list                         # every account, its usage and how long unti
 relais desktop work --dry-run       # what switching Claude Desktop to work would do
 relais desktop work                 # do it: Desktop closes, reopens on work, new terminals follow
 relais desktop --bring-back         # Desktop closed: put back the conversations a switch set aside
-relais allow-measure                # approve, once, the empty folder Relais measures from
+relais allow-measure                # answer, once, what Claude Code asks before Relais can measure
 relais switch next                  # move only the terminal: a name, next, prev or best
 relais continue                     # carry the latest conversation over to the active account
 ```
