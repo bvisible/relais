@@ -19,8 +19,23 @@ use std::time::{Duration, Instant};
 use crate::error::{Error, Result};
 use crate::layout::Layout;
 
+const REFUSED: &str = "usage-probe:";
+
+/// Claude Code asks whether to trust the folder: the probe stops there, the
+/// answer is the user's.
+pub const TRUST_NEEDED: &str = "setup-trust";
+
 fn refused(code: &str) -> Error {
-    Error::Command(format!("usage-probe:{code}"))
+    Error::Command(format!("{REFUSED}{code}"))
+}
+
+/// What stopped a measure: a code of the probe, or the error as it reads.
+pub fn reason(error: &Error) -> String {
+    let text = error.to_string();
+    match text.split_once(REFUSED) {
+        Some((_, code)) => code.to_string(),
+        None => text,
+    }
 }
 
 /// Never inherit provider credentials, nested-session state or startup injection.
@@ -171,7 +186,7 @@ fn setup_reason(text: &str) -> Option<&'static str> {
     let text = text.to_ascii_lowercase();
     let reasons: &[(&str, &[&str])] = &[
         (
-            "setup-trust",
+            TRUST_NEEDED,
             &[
                 "do you trust",
                 "accessing workspace",

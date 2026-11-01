@@ -2,12 +2,10 @@
    and a panel that takes the tint of the active account (`--accent`, set on
    `.panel`). Elements marked `.tinted` take theirs from `--c`, set inline. */
 
-/* Colors, type, radii and motion follow the Neoservice design system
-   (`bvisible/neoffice-design-system`, tokens/colors.css, radius.css,
-   typography.css, 2026-11-01): warm paper, ink for every action, the signal
-   as the single accent, Forum for titles and big numbers, Karla for the rest.
-   Relais is a public repository, so the values are copied here rather than
-   imported; the account colors stay, as data. */
+/* Colors, type, radii and motion follow the Neoservice design system: warm
+   paper, ink for every action, the signal as the single accent, Forum for
+   titles and big numbers, Karla for the rest. The values are copied here
+   rather than imported; the account colors stay, as data. */
 
 :root {
   --display: "Forum", Georgia, serif;

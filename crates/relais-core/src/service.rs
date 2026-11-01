@@ -76,6 +76,23 @@ const LIVE_FOR: i64 = 120;
 /// More conversations than can be working at once.
 const LIVE_LOOKUP: usize = 64;
 
+/// Sets or clears an account's entry in one of the measure's notes. Measures
+/// started together must not erase each other's.
+fn note_for_account(file: &Path, alias: &str, value: Option<Value>) {
+    static ONE_WRITER: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _writing = ONE_WRITER.lock();
+    let mut notes: HashMap<String, Value> = fsutil::read_json(file)
+        .ok()
+        .flatten()
+        .and_then(|value| serde_json::from_value(value).ok())
+        .unwrap_or_default();
+    match value {
+        Some(value) => notes.insert(alias.to_string(), value),
+        None => notes.remove(alias),
+    };
+    let _ = fsutil::write_json_atomic(file, &json!(notes));
+}
+
 /// How long a sync waits for Claude Code to release a config file.
 pub const SYNC_LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
 
@@ -457,13 +474,42 @@ impl Relais {
             .unwrap_or_default()
     }
 
-    /// Measures started together must not erase each other's attempt.
     fn note_usage_attempt(&self, alias: &str, at: i64) {
-        static ONE_WRITER: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        let _writing = ONE_WRITER.lock();
-        let mut attempts = self.usage_attempts();
-        attempts.insert(alias.to_string(), at);
-        let _ = fsutil::write_json_atomic(&self.usage_attempts_file(), &json!(attempts));
+        note_for_account(&self.usage_attempts_file(), alias, Some(json!(at)));
+    }
+
+    fn usage_failures_file(&self) -> PathBuf {
+        self.layout.relais_dir.join("probe").join("failures.json")
+    }
+
+    fn usage_failures(&self) -> HashMap<String, String> {
+        fsutil::read_json(&self.usage_failures_file())
+            .ok()
+            .flatten()
+            .and_then(|value| serde_json::from_value(value).ok())
+            .unwrap_or_default()
+    }
+
+    /// Why the last measure of `alias` failed: a code of the probe, like
+    /// `setup-trust`. Nothing once one succeeded.
+    pub fn usage_failure(&self, alias: &str) -> Option<String> {
+        self.usage_failures().remove(alias)
+    }
+
+    /// Claude Code asks whether to trust the folder Relais measures from. The
+    /// measure never answers for the user: `relais allow-measure` lets them.
+    pub fn measure_needs_trust(&self) -> bool {
+        self.usage_failures()
+            .values()
+            .any(|reason| reason == usage_probe::TRUST_NEEDED)
+    }
+
+    /// The empty folder of Relais's own that Claude Code is opened in to
+    /// measure an account.
+    pub fn measure_workspace(&self) -> Result<PathBuf> {
+        let workspace = self.layout.relais_dir.join("probe").join("workspace");
+        fs::create_dir_all(&workspace).map_err(|e| Error::io(&workspace, e))?;
+        Ok(workspace)
     }
 
     /// Asks Claude Code for `alias`'s limits and stores the reading, reset
@@ -491,17 +537,17 @@ impl Relais {
                 return Ok(None);
             }
         }
-        let probe_dir = self.layout.relais_dir.join("probe");
-        let workspace = probe_dir.join("workspace");
-        fs::create_dir_all(&workspace).map_err(|e| Error::io(&workspace, e))?;
+        let workspace = self.measure_workspace()?;
         self.note_usage_attempt(alias, now.timestamp());
-        usage_probe::audit_policy(&self.layout, account.config_dir.as_deref())?;
-        let text = usage_probe::report(
-            binary,
-            account.config_dir.as_deref(),
-            &workspace,
-            USAGE_PROBE_TIMEOUT,
-        )?;
+        let profile = account.config_dir.as_deref();
+        let text = usage_probe::audit_policy(&self.layout, profile)
+            .and_then(|()| usage_probe::report(binary, profile, &workspace, USAGE_PROBE_TIMEOUT));
+        note_for_account(
+            &self.usage_failures_file(),
+            alias,
+            text.as_ref().err().map(|e| json!(usage_probe::reason(e))),
+        );
+        let text = text?;
         let Some(reading) = usage::parse_usage_report(&text, now.clone()) else {
             return Ok(None);
         };
@@ -1216,6 +1262,30 @@ printf '{{"type":"result","num_turns":0,"result":"Not logged in"}}'
         assert!(relais.refresh_usage("work", &quiet, zurich(NOW)).is_err());
 
         assert!(!relais.needs_usage_refresh("work", NOW + 60));
+    }
+
+    #[test]
+    fn a_refused_measure_says_why_until_one_succeeds() {
+        let (root, relais) = fixture();
+        let wary = root.path().join("claude-wary");
+        fs::write(
+            &wary,
+            "#!/bin/sh\nif [ \"$1 $2\" = \"auth status\" ]; then printf '{\"loggedIn\":true}'; exit 0; fi\nprintf 'Do you trust the files in this folder?\\r\\n'\nsleep 20\n",
+        )
+        .unwrap();
+        fs::set_permissions(&wary, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+
+        assert!(relais.refresh_usage("work", &wary, zurich(NOW)).is_err());
+
+        assert_eq!(relais.usage_failure("work").as_deref(), Some("setup-trust"));
+        assert!(relais.measure_needs_trust());
+
+        relais
+            .refresh_usage("work", &fake_usage_command(root.path()), zurich(NOW))
+            .unwrap();
+
+        assert_eq!(relais.usage_failure("work"), None);
+        assert!(!relais.measure_needs_trust());
     }
 
     #[test]

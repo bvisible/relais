@@ -40,6 +40,8 @@ export type Overview = {
   statusline: boolean;
   shell: boolean;
   cliFound: boolean;
+  /** Claude Code waits for the user to approve the folder Relais measures from. */
+  measureNeedsTrust: boolean;
   now: number;
 };
 
@@ -95,6 +97,7 @@ export const api = {
   accountStats: () => call<AccountStats[]>("account_stats"),
   /** Every account's sign-in, or only `only`'s. */
   accountSignIns: (only?: string) => call<AccountSignIn[]>("account_sign_ins", { only: only ?? null }),
+  allowMeasure: () => call<void>("allow_measure"),
   signInAgain: (alias: string) => call<void>("sign_in_again", { alias }),
   removeAccount: (alias: string) => call<Overview>("remove_account", { alias }),
   /** What switching Claude to `alias` would do; changes nothing. */
@@ -127,7 +130,7 @@ const PREVIEW_PALETTE: PaletteColor[] = [
   { name: "sky", hex: "#38BDF8" },
 ];
 
-// `?state=limited`, `?state=tiring`, `?state=signedOut` or `?state=connections` in the address previews those screens.
+// `?state=limited`, `?state=tiring`, `?state=signedOut`, `?state=connections` or `?state=trust` in the address previews those screens.
 const previewMode = typeof location !== "undefined" ? new URLSearchParams(location.search).get("state") : null;
 
 let previewState: Overview = {
@@ -199,6 +202,7 @@ let previewState: Overview = {
   statusline: true,
   shell: false,
   cliFound: true,
+  measureNeedsTrust: previewMode === "trust",
   now: nowSecs(),
 };
 
@@ -245,7 +249,7 @@ async function preview<T>(command: string, args?: Record<string, unknown>): Prom
       .map((a) => ({ alias: a.alias, signedIn: !previewSignedOut.has(a.alias), email: previewMode === "connections" && a.alias === "work" ? "spare@example.com" : a.email, plan: "max" })) as T;
   }
   if (command === "sign_in_again") previewSignInOpenedAt = Date.now();
-  if (command === "sign_in_again") return undefined as T;
+  if (command === "sign_in_again" || command === "allow_measure") return undefined as T;
   if (command === "refresh_usage") await new Promise((resolve) => setTimeout(resolve, args?.force ? 2500 : 300));
   if (command === "desktop_plan") {
     await new Promise((resolve) => setTimeout(resolve, 150));

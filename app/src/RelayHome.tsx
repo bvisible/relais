@@ -33,6 +33,7 @@ export function RelayHome(props: {
   onRefresh: () => void;
   onOpenAccount: (alias: string) => void;
   onSignIn: (alias: string) => void;
+  onAllowMeasure: () => void;
   describeError: (error: unknown) => string;
 }) {
   const { overview, now } = props;
@@ -117,6 +118,15 @@ export function RelayHome(props: {
       {summary && accounts.length > 0 && (
         <p className={`relay-summary ${summary.toFix > 0 ? "is-todo" : ""}`}>
           {summary.toFix === 0 ? t("relayAllConnected") : summary.toFix === 1 ? t("relayToFixOne") : t("relayToFixMany", { n: summary.toFix })}
+        </p>
+      )}
+
+      {overview?.measureNeedsTrust && (
+        <p className="relay-summary is-todo">
+          {t("relayMeasureTrust")} ·{" "}
+          <button className="relay-link" onClick={props.onAllowMeasure}>
+            {t("relayMeasureAllow")}
+          </button>
         </p>
       )}
 

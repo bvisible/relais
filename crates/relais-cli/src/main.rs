@@ -70,6 +70,7 @@ enum Commands {
     ShellInstall,
     ShellUninstall,
     Doctor,
+    AllowMeasure,
     Desktop {
         alias: Option<String>,
         #[arg(long)]
@@ -127,6 +128,7 @@ fn localized_command() -> clap::Command {
         "shell-install",
         "shell-uninstall",
         "doctor",
+        "allow-measure",
     ] {
         let key = format!("help.{name}");
         command = command.mut_subcommand(name, |sub| sub.about(t(&key, &[])));
@@ -190,6 +192,7 @@ fn main() -> ExitCode {
         Commands::ShellInstall => commands::shell_install(),
         Commands::ShellUninstall => commands::shell_uninstall(),
         Commands::Doctor => commands::doctor(),
+        Commands::AllowMeasure => commands::allow_measure(),
         Commands::Desktop {
             bring_back: true, ..
         } => commands::desktop_bring_back(),

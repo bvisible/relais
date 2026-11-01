@@ -36,6 +36,8 @@ case "$1 $2" in
     exit 0;;
 esac
 if [ "$1" = "--safe-mode" ]; then
+  printf 'CONFIG_DIR=%s PWD=%s ARGS=%s\n' "${CLAUDE_CONFIG_DIR:-unset}" "$(pwd)" "$*" >> "$FAKE_LOG"
+  [ -t 0 ] || exit 0
   reset=$(date -v+2d '+%b %-d' 2>/dev/null || date -d '+2 days' '+%b %-d')
   stty raw -echo
   printf 'Claude Code\r\n\342\235\257\r\n'
@@ -762,6 +764,21 @@ fn conversations_set_aside_come_back_with_one_command_once_the_app_is_closed() {
     assert_ok(&back);
     assert!(text(&back).contains("Back in your list"), "{}", text(&back));
     assert!(own.join("local_own.json").is_file());
+}
+
+#[test]
+fn allowing_the_measure_opens_the_client_in_the_folder_it_measures_from() {
+    let env = Env::new();
+    env.sign_in_default("main@example.com");
+    assert_ok(&env.run(&["init"]));
+
+    let output = env.run(&["allow-measure"]);
+
+    assert_ok(&output);
+    assert!(text(&output).contains("Yes"), "{}", text(&output));
+    let log = fs::read_to_string(env.root.path().join("claude.log")).unwrap();
+    assert!(log.contains("probe/workspace"), "{log}");
+    assert!(log.contains("--safe-mode"), "{log}");
 }
 
 #[test]

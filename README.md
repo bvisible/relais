@@ -5,7 +5,7 @@ runs out, one click moves Claude Desktop and new terminals to another account, a
 back exactly as you left it: the same conversations, pins, folders and open panes.
 
 > **Early development.** Used daily on one Mac, where a real switch between two accounts kept every
-> conversation, pin and folder. See the [design](docs/superpowers/specs/2026-11-01-desktop-workspace-switch-design.md).
+> conversation, pin and folder. See the [design](docs/design.md).
 
 ## Why it is built this way
 
@@ -58,6 +58,7 @@ relais list                         # every account, its usage and how long unti
 relais desktop work --dry-run       # what switching Claude Desktop to work would do
 relais desktop work                 # do it: Desktop closes, reopens on work, new terminals follow
 relais desktop --bring-back         # Desktop closed: put back the conversations a switch set aside
+relais allow-measure                # approve, once, the empty folder Relais measures from
 relais switch next                  # move only the terminal: a name, next, prev or best
 relais continue                     # carry the latest conversation over to the active account
 ```

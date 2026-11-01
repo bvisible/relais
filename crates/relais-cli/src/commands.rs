@@ -10,7 +10,7 @@ use relais_core::claude::cli as claude;
 use relais_core::claude::desktop_app::{DesktopApp, DESKTOP_QUIT_WAIT, DESKTOP_SIGN_IN_WAIT};
 use relais_core::claude::desktop_carry::OwnConversations;
 use relais_core::claude::desktop_switch::{self, SignIn, Started, SwitchPlan};
-use relais_core::claude::{desktop_identity, transcripts};
+use relais_core::claude::{desktop_identity, transcripts, usage_probe};
 use relais_core::registry::{self, Account};
 use relais_core::service::{Relais, SignedIn};
 use relais_core::usage::Availability;
@@ -1032,7 +1032,45 @@ pub fn doctor() -> Outcome {
     Ok(0)
 }
 
+/// Opens Claude Code in the folder Relais measures from, so the user can
+/// approve it. Once is enough: the sync shares the answer with every profile.
+pub fn allow_measure() -> Outcome {
+    let relais = load()?;
+    let binary = claude_binary()?;
+    let workspace = relais.measure_workspace()?;
+    let profile = relais
+        .registry
+        .active()
+        .and_then(|account| account.config_dir.as_deref());
+    println!("{}", t("measure.allow", &[]));
+    claude::command_for_profile(&binary, profile)
+        .arg("--safe-mode")
+        .current_dir(&workspace)
+        .status()
+        .map_err(|e| Error::Command(e.to_string()))?;
+    let _ = relais.sync_shared_config(now());
+    refresh_usage(&load()?);
+    Ok(0)
+}
+
+fn doctor_measure(relais: &Relais, account: &Account) {
+    let Some(reason) = relais.usage_failure(&account.alias) else {
+        return;
+    };
+    let alias = account.alias.as_str();
+    let line = if reason == usage_probe::TRUST_NEEDED {
+        t("doctor.measure_trust", &[("alias", alias)])
+    } else {
+        t(
+            "doctor.measure_failed",
+            &[("alias", alias), ("reason", &reason)],
+        )
+    };
+    println!("✗ {line}");
+}
+
 fn doctor_account(relais: &Relais, account: &Account, binary: &Path) {
+    doctor_measure(relais, account);
     match claude::auth_status(binary, account.config_dir.as_deref()) {
         Ok(status) if status.logged_in => {
             let actual = status.email.unwrap_or_default();

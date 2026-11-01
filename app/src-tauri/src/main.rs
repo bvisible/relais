@@ -30,6 +30,7 @@ fn main() {
             commands::account_stats,
             commands::account_sign_ins,
             commands::sign_in_again,
+            commands::allow_measure,
             commands::remove_account,
             commands::switch_desktop,
             commands::desktop_plan,

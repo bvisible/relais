@@ -284,6 +284,7 @@ export function App() {
           onRefresh={() => void refreshUsage(true)}
           onOpenAccount={openAccount}
           onSignIn={(alias) => void signInAndWatch(alias)}
+          onAllowMeasure={() => run(() => api.allowMeasure())}
           describeError={describeError}
         >
           {overview && (

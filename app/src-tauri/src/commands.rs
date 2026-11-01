@@ -78,6 +78,8 @@ pub struct Overview {
     statusline: bool,
     shell: bool,
     cli_found: bool,
+    /// Claude Code waits for the user to approve the folder Relais measures from.
+    measure_needs_trust: bool,
     now: i64,
 }
 
@@ -186,6 +188,7 @@ pub fn build_overview(relais: &Relais) -> Overview {
             .ok()
             .or_else(|| desktop_profile::owner(&relais.layout, &relais.registry)),
         best: relais.best_other_account(now),
+        measure_needs_trust: relais.measure_needs_trust(),
         statusline: integration::statusline_installed(&relais.layout),
         shell: integration::shell_installed(&relais.layout),
         cli_found: platform::relais_cli().is_some(),
@@ -398,6 +401,17 @@ pub fn sign_in_again(window: WebviewWindow, alias: String) -> Result<(), String>
     let layout = layout()?;
     let home = layout.home.display().to_string();
     platform::open_terminal_with(&layout, &home, &["account", "login", &alias])?;
+    let _ = window.hide();
+    Ok(())
+}
+
+/// Opens Terminal on `relais allow-measure`: Claude Code asks to trust the
+/// folder Relais measures from, and the answer is the user's.
+#[tauri::command]
+pub fn allow_measure(window: WebviewWindow) -> Result<(), String> {
+    let layout = layout()?;
+    let home = layout.home.display().to_string();
+    platform::open_terminal_with(&layout, &home, &["allow-measure"])?;
     let _ = window.hide();
     Ok(())
 }

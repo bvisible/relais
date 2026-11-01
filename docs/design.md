@@ -1,6 +1,6 @@
 # One workspace, many accounts: switching Claude Desktop without losing anything
 
-Date: 2026-11-01. Status: approved direction ("one workspace"), details below.
+Status: built, and checked by a real switch between two accounts on 2026-11-01.
 
 ## Intent
 
@@ -160,31 +160,26 @@ system.
 - Goal: after a switch, the sidebar and the window look the same as before, in one click, on this Mac.
 - Goal: a switch can always be undone by switching back, and an interrupted switch can be finished.
 - Non-goals: the Chat tab (server side, per account), cloud Code sessions (server side, per account), keeping
-  running processes alive, Claude in Chrome (removed from scope by the user), the Mac mini (later), publishing.
+  running processes alive, Claude in Chrome (its sign-in lives in the browser).
 - Anti-goals: driving Claude's interface, reading or copying a credential, calling Anthropic's servers,
   switching on its own, deleting or archiving a conversation, any "ready" message that was not checked.
 
 ## Code
 
-- Built on `main`. The `codex/relais-session-continuity` branch stays untouched as an archive.
-- New core module for the workspace switch (identity parking, the carry rules, journal, backup, migration),
-  tested on temporary folders with made-up ids and `example.com` addresses, test first.
-- The CLI gets `relais desktop switch <account> [--dry-run]` and `relais desktop migrate [--dry-run]`.
+- The core holds the workspace switch (identity parking, the carry rules, journal, backup), tested on
+  temporary folders with made-up ids and `example.com` addresses.
+- The CLI has `relais desktop <account> [--dry-run]` and `relais desktop --bring-back`.
 - The Tauri app calls the same core.
 
-## Builder's calls
+## Decisions
 
 - The terminal follows the Desktop switch (step 10).
 - Merge rule for an entry on both sides: later `lastActivityAt` wins.
 - Sessions of the source account under another organization than the recorded one are left where they are.
 - Importing conversations found only in an archive is not built until needed.
 
-## Order of the work
+## Checked by a real switch
 
-The first real switch is done with the CLI, right after the core, before the panel is reworked: the whole
-design rests on Desktop accepting another account in the same folder, so that is checked first.
-
-## Checked only by a real switch
-
-- That Desktop does not reset anything when it starts on another account in the same folder.
-- That the sidebar shows the same thing (screenshot before and after).
+- Desktop resets nothing when it starts on another account in the same folder.
+- The sidebar shows the same thing before and after: conversations, pins, folder order, permissions and
+  settings were compared one by one.
