@@ -1,0 +1,118 @@
+<!doctype html>
+<!-- The README's banner and the social preview. app/scripts/capture.mjs fills in the panel. -->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Relais banner</title>
+    <script type="module">
+      import "@fontsource/forum";
+      import "@fontsource-variable/karla";
+      import "../src/styles.css";
+    </script>
+    <style>
+      html,
+      body {
+        margin: 0;
+        width: 1280px;
+        height: 640px;
+        overflow: hidden;
+      }
+      .scene {
+        position: relative;
+        width: 1280px;
+        height: 640px;
+        overflow: hidden;
+        background:
+          radial-gradient(ellipse 760px 360px at 88% -8%, rgba(245, 93, 26, 0.18), transparent 68%),
+          radial-gradient(ellipse 620px 420px at 6% 108%, rgba(245, 93, 26, 0.07), transparent 70%),
+          linear-gradient(150deg, #faf3ea 0%, #fffdf8 58%);
+        color: #141414;
+        font-family: "Karla Variable", "Karla", system-ui, sans-serif;
+      }
+      .scene::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background-image: radial-gradient(rgba(20, 20, 20, 0.05) 1px, transparent 1px);
+        background-size: 22px 22px;
+      }
+      .words {
+        position: absolute;
+        left: 72px;
+        top: 148px;
+        width: 620px;
+      }
+      .name {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 26px;
+        font-family: "Forum", Georgia, serif;
+        font-size: 30px;
+      }
+      .name img {
+        width: 40px;
+        height: 40px;
+      }
+      h1 {
+        margin: 0;
+        font-family: "Forum", Georgia, serif;
+        font-size: 72px;
+        font-weight: 400;
+        line-height: 1.04;
+        letter-spacing: -0.01em;
+      }
+      p {
+        margin: 24px 0 0;
+        max-width: 560px;
+        color: #3a342c;
+        font-size: 23px;
+        line-height: 1.4;
+      }
+      .menu-bar {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 30px;
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 7px;
+        padding-right: 128px;
+        background: rgba(255, 253, 248, 0.72);
+        border-bottom: 1px solid #ece7de;
+        font-size: 14px;
+        font-weight: 600;
+      }
+      .menu-bar img {
+        width: 18px;
+        height: 18px;
+      }
+      #panel {
+        position: absolute;
+        top: 38px;
+        right: 56px;
+        width: 400px;
+        border-radius: 22px;
+        box-shadow:
+          0 6px 12px rgba(40, 28, 18, 0.08),
+          0 24px 60px rgba(40, 28, 18, 0.18);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="scene">
+      <div class="menu-bar">
+        <img src="../assets/tray-template.svg" alt="" />
+        <span>main · 5h 92% · 7d 38%</span>
+      </div>
+      <div class="words">
+        <div class="name"><img src="../assets/app-icon.svg" alt="" />Relais</div>
+        <h1>Hit a Claude limit. Keep working.</h1>
+        <p>Move Claude Desktop and Claude Code to another account in one click. Every conversation stays where it is.</p>
+      </div>
+      <img id="panel" alt="" />
+    </div>
+  </body>
+</html>

@@ -22,6 +22,8 @@
   (temporary file and rename), never in place.
 - The repository is public: no client names, no real account data in tests or fixtures
   (use `example.com` addresses and made-up UUIDs).
+- Images in the repository come from `app/scripts/capture.mjs`, on the preview's made-up accounts,
+  never from the installed app, which shows real ones.
 - Commits and pull requests carry no AI signature or co-author line.
 
 ## Running

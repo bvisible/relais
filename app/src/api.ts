@@ -130,7 +130,7 @@ const PREVIEW_PALETTE: PaletteColor[] = [
   { name: "sky", hex: "#38BDF8" },
 ];
 
-// `?state=limited`, `?state=tiring`, `?state=signedOut`, `?state=connections` or `?state=trust` in the address previews those screens.
+// `?state=limited`, `?state=tiring`, `?state=signedOut`, `?state=connections`, `?state=trust` or `?state=showcase` (the README's screenshots) in the address previews those screens.
 const previewMode = typeof location !== "undefined" ? new URLSearchParams(location.search).get("state") : null;
 
 let previewState: Overview = {
@@ -145,7 +145,7 @@ let previewState: Overview = {
       fiveHour:
         previewMode === "limited"
           ? { used: 100, resetsAt: nowSecs() + 72 * 60 }
-          : { used: previewMode === "tiring" ? 92 : 47, resetsAt: nowSecs() + 2 * 3600 + 14 * 60 },
+          : { used: previewMode === "tiring" || previewMode === "showcase" ? 92 : 47, resetsAt: nowSecs() + 2 * 3600 + 14 * 60 },
       sevenDay: { used: previewMode === "limited" ? 72 : 38, resetsAt: nowSecs() + 4 * 86400 + 6 * 3600 },
       models: [],
       observedAt: nowSecs() - 30,
@@ -169,7 +169,7 @@ let previewState: Overview = {
     {
       alias: "spare",
       email: "spare@example.com",
-      desktopFolder: false,
+      desktopFolder: previewMode === "showcase",
       chromeProfile: "Relais-spare",
       color: "#4C8DFF",
       active: false,

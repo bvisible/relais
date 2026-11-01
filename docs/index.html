@@ -1,0 +1,482 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Relais: Claude account switcher for Mac, free and open source</title>
+    <meta name="description" content="Switch Claude accounts on your Mac in one click. Relais moves Claude Desktop and Claude Code to another account and keeps every conversation and folder." />
+    <link rel="canonical" href="https://bvisible.github.io/relais/" />
+    <link rel="icon" href="assets/icon.svg" type="image/svg+xml" />
+    <meta name="theme-color" content="#faf3ea" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Relais" />
+    <meta property="og:title" content="Relais: Claude account switcher for Mac" />
+    <meta property="og:description" content="Hit a Claude limit, keep working. One click moves Claude Desktop and Claude Code to another account, every conversation kept." />
+    <meta property="og:url" content="https://bvisible.github.io/relais/" />
+    <meta property="og:image" content="https://bvisible.github.io/relais/assets/social-preview.png" />
+    <meta property="og:image:width" content="1280" />
+    <meta property="og:image:height" content="640" />
+    <meta property="og:image:alt" content="Relais, a menu bar panel listing four Claude accounts with their usage limits" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Relais: Claude account switcher for Mac" />
+    <meta name="twitter:description" content="Hit a Claude limit, keep working. One click moves Claude Desktop and Claude Code to another account, every conversation kept." />
+    <meta name="twitter:image" content="https://bvisible.github.io/relais/assets/social-preview.png" />
+
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "SoftwareApplication",
+            "name": "Relais",
+            "description": "A free, open-source Claude account switcher for macOS. One click moves Claude Desktop and Claude Code to another account and keeps every conversation, pin and folder.",
+            "url": "https://bvisible.github.io/relais/",
+            "sameAs": "https://github.com/bvisible/relais",
+            "image": "https://bvisible.github.io/relais/assets/social-preview.png",
+            "applicationCategory": "DeveloperApplication",
+            "operatingSystem": "macOS",
+            "license": "https://opensource.org/licenses/MIT",
+            "isAccessibleForFree": true,
+            "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+            "author": { "@type": "Organization", "name": "Neoservice AI", "url": "https://neoservice.ai" }
+          },
+          {
+            "@type": "FAQPage",
+            "mainEntity": [
+              {
+                "@type": "Question",
+                "name": "How do I switch between Claude accounts on a Mac?",
+                "acceptedAnswer": { "@type": "Answer", "text": "Open the Relais panel in the menu bar and click Switch here next to the account you want. Claude Desktop closes and reopens on that account, and new terminals follow." }
+              },
+              {
+                "@type": "Question",
+                "name": "Will I lose my conversations when I change Claude account?",
+                "acceptedAnswer": { "@type": "Answer", "text": "No. Your local Claude Code and Cowork sessions, pins and folders stay in the same workspace. The Chat tab and cloud sessions live on Anthropic's servers under each account, so they do not move." }
+              },
+              {
+                "@type": "Question",
+                "name": "Does Relais see my Claude password or token?",
+                "acceptedAnswer": { "@type": "Answer", "text": "No. Relais never reads, copies or stores a token, a cookie or a password. It moves Claude Desktop's sign-in files by renaming them, without opening them." }
+              },
+              {
+                "@type": "Question",
+                "name": "Can Relais switch accounts without closing Claude Desktop?",
+                "acceptedAnswer": { "@type": "Answer", "text": "No. Claude Desktop has to restart on the other sign-in, so sessions working inside it stop, and the confirmation tells you how many. Sessions in terminals you already opened keep running on their account." }
+              },
+              {
+                "@type": "Question",
+                "name": "Is Relais made by Anthropic?",
+                "acceptedAnswer": { "@type": "Answer", "text": "No. Relais is an independent project, not affiliated with or endorsed by Anthropic." }
+              }
+            ]
+          }
+        ]
+      }
+    </script>
+
+    <style>
+      /* Tokens of the Neoservice design system, as in the app's stylesheet. */
+      @font-face {
+        font-family: "Forum";
+        src: url("assets/fonts/forum.woff2") format("woff2");
+        font-display: swap;
+      }
+      @font-face {
+        font-family: "Karla";
+        src: url("assets/fonts/karla.woff2") format("woff2");
+        font-weight: 200 800;
+        font-display: swap;
+      }
+      :root {
+        color-scheme: light;
+        --ground: #faf3ea;
+        --surface: #ffffff;
+        --line: #ece7de;
+        --ink: #141414;
+        --ink-2: #3a342c;
+        --muted: #524b41;
+        --signal-text: #aa3700;
+        --action: #141414;
+        --action-hover: #232020;
+        --on-action: #fffdf8;
+        --hero:
+          radial-gradient(ellipse 760px 360px at 88% -8%, rgba(245, 93, 26, 0.18), transparent 68%),
+          radial-gradient(ellipse 620px 420px at 6% 108%, rgba(245, 93, 26, 0.07), transparent 70%),
+          linear-gradient(150deg, #faf3ea 0%, #fffdf8 58%);
+        --dots: rgba(20, 20, 20, 0.05);
+        --shadow: 0 6px 12px rgba(40, 28, 18, 0.08), 0 24px 60px rgba(40, 28, 18, 0.16);
+        --espresso:
+          radial-gradient(ellipse 620px 300px at 84% -6%, rgba(245, 93, 26, 0.24), transparent 64%),
+          radial-gradient(ellipse 540px 360px at 8% 110%, rgba(245, 93, 26, 0.12), transparent 70%),
+          linear-gradient(155deg, #1f1c1a 0%, #141414 60%);
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          color-scheme: dark;
+          --ground: #100e0d;
+          --surface: #1b1611;
+          --line: rgba(255, 251, 245, 0.08);
+          --ink: #fffdf8;
+          --ink-2: #dcd4c7;
+          --muted: #bfb5a4;
+          --signal-text: #ff8d64;
+          --action: #fffdf8;
+          --action-hover: #ece7de;
+          --on-action: #141414;
+          --hero: var(--espresso);
+          --dots: rgba(255, 251, 245, 0.04);
+          --shadow: 0 6px 12px rgba(0, 0, 0, 0.3), 0 24px 60px rgba(0, 0, 0, 0.45);
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html {
+        -webkit-text-size-adjust: 100%;
+      }
+      body {
+        margin: 0;
+        background: var(--ground);
+        color: var(--ink);
+        font-family: "Karla", system-ui, sans-serif;
+        font-size: 18px;
+        line-height: 1.55;
+      }
+      img {
+        display: block;
+        max-width: 100%;
+        height: auto;
+      }
+      a {
+        color: inherit;
+      }
+      h2,
+      h3,
+      .display {
+        font-family: "Forum", Georgia, serif;
+        font-weight: 400;
+        letter-spacing: -0.01em;
+      }
+      h2 {
+        margin: 0 0 14px;
+        font-size: clamp(32px, 5vw, 44px);
+        line-height: 1.1;
+      }
+      h3 {
+        margin: 0 0 8px;
+        font-size: 24px;
+        line-height: 1.2;
+      }
+      p {
+        margin: 0;
+      }
+      code,
+      pre {
+        font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      }
+      .wrap {
+        width: min(1120px, 100%);
+        margin: 0 auto;
+        padding: 0 24px;
+      }
+      section {
+        padding: 72px 0;
+      }
+      .lead {
+        color: var(--muted);
+      }
+
+      .top {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding-top: 20px;
+        padding-bottom: 20px;
+      }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-family: "Forum", Georgia, serif;
+        font-size: 24px;
+        text-decoration: none;
+      }
+      .brand img {
+        width: 30px;
+        height: 30px;
+      }
+
+      .hero {
+        position: relative;
+        padding: 0 0 72px;
+        background: var(--hero);
+      }
+      .hero::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background-image: radial-gradient(var(--dots) 1px, transparent 1px);
+        background-size: 22px 22px;
+        pointer-events: none;
+      }
+      .hero > * {
+        position: relative;
+      }
+      .hero-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 400px;
+        gap: 56px;
+        align-items: center;
+        padding-top: 32px;
+      }
+      h1 {
+        margin: 0 0 14px;
+        color: var(--signal-text);
+        font-size: 17px;
+        font-weight: 600;
+      }
+      .display {
+        font-size: clamp(46px, 7vw, 76px);
+        line-height: 1.04;
+      }
+      .hero .lead {
+        margin-top: 20px;
+        max-width: 560px;
+        color: var(--ink-2);
+        font-size: 21px;
+      }
+      .button {
+        display: inline-block;
+        margin-top: 30px;
+        padding: 13px 22px;
+        border-radius: 12px;
+        background: var(--action);
+        color: var(--on-action);
+        font-weight: 700;
+        text-decoration: none;
+      }
+      .button:hover {
+        background: var(--action-hover);
+      }
+      .assurance {
+        margin-top: 16px;
+        color: var(--muted);
+        font-size: 15px;
+      }
+      .shot {
+        border-radius: 22px;
+        box-shadow: var(--shadow);
+      }
+
+      .split {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        gap: 56px;
+        align-items: center;
+      }
+      .steps {
+        margin: 20px 0 0;
+        padding: 0;
+        list-style: none;
+      }
+      .steps li {
+        padding: 12px 0;
+        border-top: 1px solid var(--line);
+      }
+      .steps strong {
+        display: block;
+      }
+      .steps span {
+        color: var(--muted);
+      }
+
+      .cards {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 20px;
+        margin-top: 32px;
+      }
+      .cards img {
+        margin-bottom: 20px;
+      }
+      .cards p {
+        color: var(--muted);
+      }
+
+      .trust {
+        background: var(--espresso);
+        color: #fffdf8;
+      }
+      .trust p {
+        max-width: 720px;
+        color: #dcd4c7;
+      }
+      .trust p + p {
+        margin-top: 14px;
+      }
+
+      pre {
+        margin: 20px 0 0;
+        padding: 18px 20px;
+        overflow-x: auto;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: var(--surface);
+        font-size: 15px;
+        line-height: 1.6;
+      }
+
+      details {
+        padding: 16px 0;
+        border-top: 1px solid var(--line);
+      }
+      summary {
+        font-weight: 700;
+        cursor: pointer;
+      }
+      details p {
+        margin-top: 8px;
+        color: var(--muted);
+      }
+
+      footer {
+        padding: 28px 0 40px;
+        border-top: 1px solid var(--line);
+        color: var(--muted);
+        font-size: 15px;
+      }
+
+      @media (max-width: 860px) {
+        .hero-grid,
+        .split,
+        .cards {
+          grid-template-columns: minmax(0, 1fr);
+          gap: 32px;
+        }
+        .hero-grid .shot {
+          max-width: min(400px, 100%);
+        }
+        section {
+          padding: 52px 0;
+        }
+        .wrap {
+          padding: 0 16px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="hero">
+      <header class="wrap top">
+        <a class="brand" href="https://bvisible.github.io/relais/"><img src="assets/icon.svg" alt="" width="30" height="30" />Relais</a>
+        <a href="https://github.com/bvisible/relais">GitHub</a>
+      </header>
+      <div class="wrap hero-grid">
+        <div>
+          <h1>Claude account switcher for Mac</h1>
+          <p class="display">Hit a Claude limit. Keep working.</p>
+          <p class="lead">When one subscription runs out, one click moves Claude Desktop and Claude Code to another account. Your conversations, pins and folders stay exactly where they are.</p>
+          <a class="button" href="https://github.com/bvisible/relais#install">Get Relais on GitHub</a>
+          <p class="assurance">Free and open source · macOS · No credential touched</p>
+        </div>
+        <picture>
+          <source srcset="assets/panel-dark.png" media="(prefers-color-scheme: dark)" />
+          <img class="shot" src="assets/panel.png" width="400" height="563" alt="Relais menu bar panel: four Claude accounts with their 5-hour and weekly usage limits, and a Switch here button" />
+        </picture>
+      </div>
+    </div>
+
+    <main>
+      <section>
+        <div class="wrap split">
+          <div>
+            <h2>One workspace, several Claude accounts</h2>
+            <p class="lead">Claude Desktop files your list under the signed-in account, so changing account normally changes everything you see. Relais keeps one workspace and changes only the sign-in.</p>
+            <ol class="steps">
+              <li><strong>See which account has room</strong><span>Every account shows its 5-hour and weekly usage, and when it comes back.</span></li>
+              <li><strong>Click Switch here</strong><span>Relais says what will happen and which sessions are still working.</span></li>
+              <li><strong>Pick up where you stopped</strong><span>Desktop reopens on the new account, new terminals follow.</span></li>
+            </ol>
+          </div>
+          <img class="shot" src="assets/demo.gif" width="440" height="650" loading="lazy" alt="Demo: Relais suggests the Claude account with the most room left, asks for confirmation, then switches Claude Desktop to it" />
+        </div>
+      </section>
+
+      <section>
+        <div class="wrap">
+          <h2>Simple when you switch, complete when you look</h2>
+          <p class="lead">One toggle goes from a line per account to everything about each.</p>
+          <div class="cards">
+            <div>
+              <img class="shot" src="assets/panel-full.png" width="400" height="720" loading="lazy" alt="Relais full view: where each Claude account works, its limits and its usage day by day" />
+              <h3>Claude usage limits at a glance</h3>
+              <p>Five-hour and weekly limits, day by day, for every account, measured on its own every quarter of an hour.</p>
+            </div>
+            <div>
+              <img class="shot" src="assets/confirm.png" width="400" height="563" loading="lazy" alt="Relais confirmation before switching Claude accounts" />
+              <h3>You decide, always</h3>
+              <p>Relais marks the account with the most room left. It never switches on its own, and every switch can be undone by switching back.</p>
+            </div>
+            <div>
+              <img class="shot" src="assets/panel-dark.png" width="400" height="563" loading="lazy" alt="Relais in dark mode on macOS" />
+              <h3>Made for the menu bar</h3>
+              <p>Your current account and its limits stay in the menu bar, in light and dark, in English and French.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="trust">
+        <div class="wrap">
+          <h2>Your credentials stay with Anthropic</h2>
+          <p>Relais never reads, copies, refreshes or stores a token, a cookie or a password. You sign in through Anthropic's own apps, and Relais only moves Claude Desktop's sign-in files aside and back, by renaming them, without opening them.</p>
+          <p>It makes no call to Anthropic either: usage comes from what Claude Code and Claude Desktop already show. The code is open, so you can check.</p>
+        </div>
+      </section>
+
+      <section id="install">
+        <div class="wrap">
+          <h2>Install Relais</h2>
+          <p class="lead">Built from source for now. You need macOS, Rust, Node.js, pnpm and Xcode's command line tools.</p>
+          <pre><code>git clone https://github.com/bvisible/relais.git
+cd relais
+pnpm --dir app install
+./app/scripts/build-macos.sh
+cp -R target/release/bundle/macos/Relais.app /Applications/</code></pre>
+          <a class="button" href="https://github.com/bvisible/relais#install">Read the full guide</a>
+        </div>
+      </section>
+
+      <section>
+        <div class="wrap">
+          <h2>Questions</h2>
+          <details open>
+            <summary>How do I switch between Claude accounts on a Mac?</summary>
+            <p>Open the Relais panel in the menu bar and click Switch here next to the account you want. Claude Desktop closes and reopens on that account, and new terminals follow.</p>
+          </details>
+          <details>
+            <summary>Will I lose my conversations when I change Claude account?</summary>
+            <p>No. Your local Claude Code and Cowork sessions, pins and folders stay in the same workspace. The Chat tab and cloud sessions live on Anthropic's servers under each account, so they do not move.</p>
+          </details>
+          <details>
+            <summary>Does Relais see my Claude password or token?</summary>
+            <p>No. Relais never reads, copies or stores a token, a cookie or a password. It moves Claude Desktop's sign-in files by renaming them, without opening them.</p>
+          </details>
+          <details>
+            <summary>Can Relais switch accounts without closing Claude Desktop?</summary>
+            <p>No. Claude Desktop has to restart on the other sign-in, so sessions working inside it stop, and the confirmation tells you how many. Sessions in terminals you already opened keep running on their account.</p>
+          </details>
+          <details>
+            <summary>Is Relais made by Anthropic?</summary>
+            <p>No. Relais is an independent project, not affiliated with or endorsed by Anthropic. You remain responsible for using your subscriptions within Anthropic's terms.</p>
+          </details>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <div class="wrap">MIT license · by <a href="https://neoservice.ai">Neoservice AI</a> · <a href="https://github.com/bvisible/relais">Source on GitHub</a> · Not affiliated with Anthropic. Claude and Claude Code are trademarks of Anthropic.</div>
+    </footer>
+  </body>
+</html>
