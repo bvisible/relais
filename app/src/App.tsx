@@ -265,9 +265,9 @@ export function App() {
     setUpdate({ ...update, installing: true });
     try {
       await api.installUpdate();
-    } catch {
+    } catch (e) {
       setUpdate({ ...update, installing: false });
-      setError(t("updateFailed"));
+      setError(`${t("updateFailed")} (${String(e)})`);
     }
   };
 
@@ -885,7 +885,8 @@ function Settings(props: { overview: Overview; followTheme: boolean; onFollowThe
         <div className="list-row">
           <div className="list-text">
             <div className="strong">{t("versionTitle", { version: overview.version })}</div>
-            {props.upToDate && <div className="muted small">{t("updateNone")}</div>}
+            {props.upToDate === true && <div className="muted small">{t("updateNone")}</div>}
+            {props.upToDate === false && <div className="muted small">{t("updateSeeAccounts")}</div>}
           </div>
           <button className="button" disabled={checking} onClick={() => void check()}>
             {checking ? t("updateChecking") : t("updateCheck")}

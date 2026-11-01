@@ -66,7 +66,14 @@ xcrun stapler staple "$dmg"
 # What the app downloads to update itself: the notarized app, signed with the
 # updater's own key. Without that key, an app already installed refuses it.
 archive="$out/Relais.app.tar.gz"
-tar -czf "$archive" -C "$(dirname "$bundle")" Relais.app
+# macOS's tar slips `._` files in, hides them when listing, and the updater then
+# fails on them: the only proof they are gone is a reader other than tar.
+COPYFILE_DISABLE=1 tar --no-xattrs --no-mac-metadata -czf "$archive" -C "$(dirname "$bundle")" Relais.app
+python3 -c '
+import sys, tarfile
+names = tarfile.open(sys.argv[1]).getnames()
+sys.exit("macOS metadata in the update archive" if any(n.split("/")[-1].startswith("._") for n in names) else 0)
+' "$archive"
 (cd "$root/app" && pnpm tauri signer sign -f "${RELAIS_UPDATER_KEY_FILE:-$HOME/.config/relais-updater.key}" -p "" "$archive")
 VERSION="$version" SIGNATURE="$(cat "$archive.sig")" node -e '
 const { VERSION: version, SIGNATURE: signature } = process.env;

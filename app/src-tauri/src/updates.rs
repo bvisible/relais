@@ -30,9 +30,9 @@ pub async fn install_update(app: AppHandle) -> Result<(), String> {
     let Some(update) = app.updater().map_err(text)?.check().await.map_err(text)? else {
         return Ok(());
     };
-    update
-        .download_and_install(|_, _| {}, || {})
-        .await
-        .map_err(text)?;
+    if let Err(error) = update.download_and_install(|_, _| {}, || {}).await {
+        eprintln!("Relais: the update failed: {error}");
+        return Err(error.to_string());
+    }
     app.restart();
 }
