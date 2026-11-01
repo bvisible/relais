@@ -256,7 +256,7 @@ export function App() {
       {view === "home" && (
         <RelayHome
           overview={overview}
-          signedOut={new Set((signIns?.list ?? []).filter((s) => s.signedIn === false).map((s) => s.alias))}
+          signIns={signIns?.checkedAt != null ? signIns.list : null}
           now={now}
           pending={pending}
           onPendingSeen={() => setPending(null)}

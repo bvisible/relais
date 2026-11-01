@@ -3,9 +3,9 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
-import { api, type Account, type Overview } from "./api";
+import { api, type Account, type AccountSignIn, type Overview } from "./api";
 import { t, type MessageKey } from "./i18n";
-import { confirmLines, relayOrder, resultLine, ringsOf, usageLine, type DesktopPlan, type Ring } from "./relay.ts";
+import { advisedOf, confirmLines, connectionOf, connectionSummary, relayOrder, resultLine, ringsOf, usageLine, type DesktopPlan, type Ring } from "./relay.ts";
 
 /** The panel's tabs, at its foot. */
 export type Tab = "accounts" | "conversations" | "settings";
@@ -17,7 +17,8 @@ const RESULT_FOR_MS = 8_000;
 
 export function RelayHome(props: {
   overview: Overview | null;
-  signedOut: Set<string>;
+  /** Who each terminal profile is signed in with; `null` until checked. */
+  signIns: AccountSignIn[] | null;
   now: number;
   /** An account whose switch was asked from another page. */
   pending: string | null;
@@ -32,7 +33,10 @@ export function RelayHome(props: {
   const { overview, now } = props;
   const accounts = overview?.accounts ?? [];
   const here = overview?.desktopOwner ?? null;
-  const advised = overview?.best && overview.best !== here ? overview.best : null;
+  const connections = new Map(accounts.map((account) => [account.alias, connectionOf(account, props.signIns?.find((s) => s.alias === account.alias), here)]));
+  const signedOut = new Set(accounts.filter((a) => connections.get(a.alias)?.terminal === "signedOut").map((a) => a.alias));
+  const summary = connectionSummary(accounts, props.signIns, here);
+  const advised = advisedOf(accounts, props.signIns, here, overview?.best ?? null);
   const [target, setTarget] = useState<Account | null>(null);
   const [plan, setPlan] = useState<DesktopPlan | null>(null);
   const [own, setOwn] = useState<Own | null>(null);
@@ -102,6 +106,12 @@ export function RelayHome(props: {
         </button>
       </header>
 
+      {summary && accounts.length > 0 && (
+        <p className={`relay-summary ${summary.toFix > 0 ? "is-todo" : ""}`}>
+          {summary.toFix === 0 ? t("relayAllConnected") : summary.toFix === 1 ? t("relayToFixOne") : t("relayToFixMany", { n: summary.toFix })}
+        </p>
+      )}
+
       {result && (
         <p className="relay-result" role="status">
           {result}
@@ -115,9 +125,9 @@ export function RelayHome(props: {
       )}
 
       <ul className="relay-list">
-        {relayOrder(accounts, here, props.signedOut).map((account) => {
+        {relayOrder(accounts, here, signedOut).map((account) => {
           const isHere = account.alias === here;
-          const out = props.signedOut.has(account.alias);
+          const connection = connections.get(account.alias);
           const shown = ringsOf(account, now);
           return (
             <li key={account.alias} className={`relay-row ${isHere ? "is-here" : ""} ${account.limited ? "is-paused" : ""}`}>
@@ -130,18 +140,31 @@ export function RelayHome(props: {
                   </button>
                   {isHere && <span className="relay-chip">{t("relayHere")}</span>}
                 </div>
-                <div className="relay-usage">
-                  {out ? (
-                    <>
-                      {t("relaySignedOut")} ·{" "}
-                      <button className="relay-link" onClick={() => props.onSignIn(account.alias)}>
-                        {t("signIn")}
-                      </button>
-                    </>
-                  ) : (
-                    usageLine(account, now)
-                  )}
-                </div>
+                <div className="relay-usage">{usageLine(account, now)}</div>
+                {connection?.terminal === "otherAccount" && (
+                  <div className="relay-todo">
+                    {t("relayTerminalOther", { email: connection.otherEmail ?? "?" })} ·{" "}
+                    <button className="relay-link" onClick={() => props.onSignIn(account.alias)}>
+                      {t("relayReconnect")}
+                    </button>
+                  </div>
+                )}
+                {connection?.terminal === "signedOut" && (
+                  <div className="relay-todo">
+                    {t("relayTerminalOut")} ·{" "}
+                    <button className="relay-link" onClick={() => props.onSignIn(account.alias)}>
+                      {t("relayConnect")}
+                    </button>
+                  </div>
+                )}
+                {connection?.desktop === "missing" && (
+                  <div className="relay-todo">
+                    {t("relayDesktopMissing")} ·{" "}
+                    <button className="relay-link" disabled={busy} onClick={() => void open(account)}>
+                      {t("relayConnect")}
+                    </button>
+                  </div>
+                )}
                 {account.alias === advised && <div className="relay-advised">{t("relayAdvised")}</div>}
               </div>
               {!isHere && !account.limited && (

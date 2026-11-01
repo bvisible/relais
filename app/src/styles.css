@@ -1356,6 +1356,28 @@ input:focus-visible {
   line-height: 1.4;
 }
 
+.relay-summary {
+  margin: -2px 20px 8px;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.relay-summary.is-todo {
+  color: var(--signal-text);
+  font-weight: 600;
+}
+
+.relay-todo {
+  color: var(--signal-text);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.relay-todo .relay-link {
+  color: var(--signal-text);
+  font-weight: 600;
+}
+
 .relay-empty {
   margin: 12px 20px;
   color: var(--muted);

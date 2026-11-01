@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { confirmLines, relayOrder, resultLine, ringsOf, usageLine } from "../src/relay.ts";
+import { advisedOf, confirmLines, connectionOf, connectionSummary, relayOrder, resultLine, ringsOf, usageLine } from "../src/relay.ts";
 
 const NOW = 1_791_270_000;
 
@@ -87,4 +87,41 @@ test("Claude's account comes first, then the most room left, paused and signed o
     relayOrder(accounts, "here", new Set(["out"])).map((a) => a.alias),
     ["here", "roomy", "busy", "paused", "out"],
   );
+});
+
+const signIn = (alias: string, signedIn: boolean | null, email: string | null) => ({ alias, signedIn, email, plan: null });
+const ready = (alias: string, desktopFolder = true) => ({ ...account(alias, 0, 0), desktopFolder });
+
+test("an account is connected when its terminal holds it and Claude Desktop has its sign-in", () => {
+  assert.deepEqual(connectionOf(ready("work"), signIn("work", true, "work@example.com"), "main"), { terminal: "ready", desktop: "ready" });
+  assert.deepEqual(connectionOf(ready("work"), signIn("work", true, "WORK@Example.com"), "main"), { terminal: "ready", desktop: "ready" });
+});
+
+test("a terminal signed in with another account, or signed out, is to redo", () => {
+  assert.deepEqual(connectionOf(ready("work"), signIn("work", true, "other@example.com"), "main"), { terminal: "otherAccount", otherEmail: "other@example.com", desktop: "ready" });
+  assert.deepEqual(connectionOf(ready("work"), signIn("work", false, null), "main"), { terminal: "signedOut", desktop: "ready" });
+  assert.deepEqual(connectionOf(ready("work"), undefined, "main"), { terminal: "unknown", desktop: "ready" });
+});
+
+test("an account Claude Desktop never signed in to has its Desktop connection to make, unless it is the one in place", () => {
+  assert.equal(connectionOf(ready("work", false), signIn("work", true, "work@example.com"), "main").desktop, "missing");
+  assert.equal(connectionOf(ready("work", false), signIn("work", true, "work@example.com"), "work").desktop, "ready");
+});
+
+test("the summary counts the accounts whose connections are to redo, once the terminals were checked", () => {
+  const accounts = [ready("a"), ready("b"), ready("c", false), ready("d")];
+  const checked = [signIn("a", true, "a@example.com"), signIn("b", true, "x@example.com"), signIn("c", true, "c@example.com")];
+  assert.deepEqual(connectionSummary(accounts, checked, "a"), { toFix: 2 });
+  assert.deepEqual(connectionSummary(accounts.slice(0, 1), checked, "a"), { toFix: 0 });
+  assert.equal(connectionSummary(accounts, null, "a"), null);
+});
+
+test("the advice goes to the best account Claude can trust, else the next free one with the most room", () => {
+  const accounts = [ready("here"), ready("best"), { ...ready("next"), sevenDay: { used: 10, resetsAt: NOW + 86400 } }, { ...account("paused", 100, 50, { limited: true, limitedUntil: NOW + 600 }), desktopFolder: true }];
+  const fine = accounts.map((a) => signIn(a.alias, true, a.email));
+  assert.equal(advisedOf(accounts, fine, "here", "best"), "best");
+  const wrong = fine.map((s) => (s.alias === "best" ? { ...s, email: "other@example.com" } : s));
+  assert.equal(advisedOf(accounts, wrong, "here", "best"), "next");
+  assert.equal(advisedOf(accounts, fine, "here", "here"), null);
+  assert.equal(advisedOf(accounts, fine, "here", null), null);
 });

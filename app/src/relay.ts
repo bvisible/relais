@@ -117,3 +117,49 @@ export function relayOrder<T extends Line>(accounts: T[], desktopOwner: string |
     return 0;
   });
 }
+
+type SignedIn = { alias: string; signedIn: boolean | null; email: string | null };
+
+/** Where an account can work: its terminal profile signed in with it, and
+ * Claude Desktop holding its sign-in (in place, or kept for a switch). */
+export type Connection = {
+  terminal: "ready" | "signedOut" | "otherAccount" | "unknown";
+  /** The account the terminal profile is signed in with instead. */
+  otherEmail?: string;
+  desktop: "ready" | "missing";
+};
+
+export function connectionOf(account: { alias: string; email: string | null; desktopFolder: boolean }, signIn: SignedIn | undefined, desktopOwner: string | null): Connection {
+  const desktop = account.desktopFolder || account.alias === desktopOwner ? "ready" : "missing";
+  if (!signIn || signIn.signedIn === null) return { terminal: "unknown", desktop };
+  if (!signIn.signedIn) return { terminal: "signedOut", desktop };
+  const same = !signIn.email || !account.email || signIn.email.toLowerCase() === account.email.toLowerCase();
+  return same ? { terminal: "ready", desktop } : { terminal: "otherAccount", otherEmail: signIn.email ?? undefined, desktop };
+}
+
+/** How many accounts have a connection to make or redo; `null` until the
+ * terminals were checked. */
+export function connectionSummary(accounts: { alias: string; email: string | null; desktopFolder: boolean }[], signIns: SignedIn[] | null, desktopOwner: string | null): { toFix: number } | null {
+  if (signIns == null) return null;
+  const toFix = accounts.filter((account) => {
+    const connection = connectionOf(account, signIns.find((s) => s.alias === account.alias), desktopOwner);
+    return connection.terminal === "signedOut" || connection.terminal === "otherAccount" || connection.desktop === "missing";
+  }).length;
+  return { toFix };
+}
+
+/**
+ * The account to advise: the best one as Relais measured it, unless its
+ * terminal holds another account or none (its figures would be someone
+ * else's); then the next free account with the most room left.
+ */
+export function advisedOf<T extends Line & { email: string | null; desktopFolder: boolean }>(accounts: T[], signIns: SignedIn[] | null, here: string | null, best: string | null): string | null {
+  if (best == null || best === here) return null;
+  const trusted = (account: T) => {
+    const terminal = connectionOf(account, signIns?.find((s) => s.alias === account.alias), here).terminal;
+    return terminal !== "otherAccount" && terminal !== "signedOut";
+  };
+  const bestAccount = accounts.find((a) => a.alias === best);
+  if (bestAccount && trusted(bestAccount)) return best;
+  return relayOrder(accounts, here, new Set()).find((a) => a.alias !== here && !a.limited && trusted(a))?.alias ?? null;
+}

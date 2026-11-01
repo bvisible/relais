@@ -128,7 +128,7 @@ const PREVIEW_PALETTE: PaletteColor[] = [
   { name: "sky", hex: "#38BDF8" },
 ];
 
-// `?state=limited`, `?state=tiring` or `?state=signedOut` in the address previews those screens.
+// `?state=limited`, `?state=tiring`, `?state=signedOut` or `?state=connections` in the address previews those screens.
 const previewMode = typeof location !== "undefined" ? new URLSearchParams(location.search).get("state") : null;
 
 let previewState: Overview = {
@@ -242,7 +242,8 @@ async function preview<T>(command: string, args?: Record<string, unknown>): Prom
     if (previewSignInOpenedAt != null && Date.now() - previewSignInOpenedAt > 10_000) previewSignedOut.delete("spare");
     return previewState.accounts
       .filter((a) => args?.only == null || a.alias === args.only)
-      .map((a) => ({ alias: a.alias, signedIn: !previewSignedOut.has(a.alias), email: a.email, plan: "max" })) as T;
+      // `?state=connections`: work's terminal profile holds another account.
+      .map((a) => ({ alias: a.alias, signedIn: !previewSignedOut.has(a.alias), email: previewMode === "connections" && a.alias === "work" ? "spare@example.com" : a.email, plan: "max" })) as T;
   }
   if (command === "sign_in_again") previewSignInOpenedAt = Date.now();
   if (command === "open_chrome" || command === "sign_in_again") return undefined as T;
