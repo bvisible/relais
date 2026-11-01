@@ -144,6 +144,21 @@ pub fn resume_in_desktop(layout: &Layout, session_id: &str, cwd: &str) -> Result
 }
 
 /// French when macOS or the environment prefers it, for the menu bar title.
+const FRENCH: &str = include_str!("../../../crates/relais-cli/locales/fr.json");
+const ENGLISH: &str = include_str!("../../../crates/relais-cli/locales/en.json");
+
+/// A sentence for the user outside the panel, from the command's translations.
+pub fn text(key: &str, args: &[(&str, &str)]) -> String {
+    let table = if prefers_french() { FRENCH } else { ENGLISH };
+    let line = serde_json::from_str::<serde_json::Value>(table)
+        .ok()
+        .and_then(|table| table.get(key)?.as_str().map(String::from))
+        .unwrap_or_else(|| key.to_string());
+    args.iter().fold(line, |line, (name, value)| {
+        line.replace(&format!("{{{name}}}"), value)
+    })
+}
+
 pub fn prefers_french() -> bool {
     static FRENCH: OnceLock<bool> = OnceLock::new();
     *FRENCH.get_or_init(|| {

@@ -5,6 +5,7 @@
 //! and every token refresh is done by Anthropic's own apps; Relais only decides
 //! which per-account profile is active.
 
+pub mod alerts;
 pub mod claude;
 pub mod error;
 pub mod fsutil;

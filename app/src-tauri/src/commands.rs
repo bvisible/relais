@@ -80,6 +80,7 @@ pub struct Overview {
     cli_found: bool,
     /// Claude Code waits for an answer of the user before it can measure.
     measure_waits: bool,
+    alerts: bool,
     version: &'static str,
     now: i64,
 }
@@ -190,6 +191,7 @@ pub fn build_overview(relais: &Relais) -> Overview {
             .or_else(|| desktop_profile::owner(&relais.layout, &relais.registry)),
         best: relais.best_other_account(now),
         measure_waits: !relais.accounts_awaiting_setup().is_empty(),
+        alerts: relais.alerts_on(),
         version: env!("CARGO_PKG_VERSION"),
         statusline: integration::statusline_installed(&relais.layout),
         shell: integration::shell_installed(&relais.layout),
@@ -405,6 +407,13 @@ pub fn sign_in_again(window: WebviewWindow, alias: String) -> Result<(), String>
     platform::open_terminal_with(&layout, &home, &["account", "login", &alias])?;
     let _ = window.hide();
     Ok(())
+}
+
+#[tauri::command]
+pub fn set_alerts(enabled: bool) -> Result<Overview, String> {
+    let relais = load()?;
+    relais.set_alerts(enabled).map_err(text)?;
+    Ok(build_overview(&relais))
 }
 
 /// Opens Terminal on `relais allow-measure`: what Claude Code asks before it

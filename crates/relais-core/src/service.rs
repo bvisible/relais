@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
 
+use crate::alerts::{self, Alert, Memory};
 use crate::claude::cli as claude;
 use crate::claude::desktop;
 use crate::claude::profile::{self, LinkReport};
@@ -75,6 +76,23 @@ const USAGE_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(
 const LIVE_FOR: i64 = 120;
 /// More conversations than can be working at once.
 const LIVE_LOOKUP: usize = 64;
+
+/// An alert to show: what happened to which account and, when the account in
+/// use is running out, the one with the most room.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DueAlert {
+    pub alias: String,
+    pub alert: Alert,
+    pub next: Option<String>,
+}
+
+#[derive(Default, serde::Serialize, serde::Deserialize)]
+struct AlertsFile {
+    #[serde(default)]
+    off: bool,
+    #[serde(default)]
+    accounts: HashMap<String, Memory>,
+}
 
 /// Sets or clears an account's entry in one of the measure's notes. Measures
 /// started together must not erase each other's.
@@ -509,6 +527,81 @@ impl Relais {
                     .is_some_and(|reason| usage_probe::awaits_the_user(reason))
             })
             .collect()
+    }
+
+    fn alerts_file(&self) -> PathBuf {
+        self.layout.relais_dir.join("alerts.json")
+    }
+
+    fn load_alerts(&self) -> AlertsFile {
+        fsutil::read_json(&self.alerts_file())
+            .ok()
+            .flatten()
+            .and_then(|value| serde_json::from_value(value).ok())
+            .unwrap_or_default()
+    }
+
+    fn save_alerts(&self, file: &AlertsFile) -> Result<()> {
+        fsutil::write_json_atomic(&self.alerts_file(), &json!(file))
+    }
+
+    pub fn alerts_on(&self) -> bool {
+        !self.load_alerts().off
+    }
+
+    pub fn set_alerts(&self, on: bool) -> Result<()> {
+        let mut file = self.load_alerts();
+        file.off = !on;
+        self.save_alerts(&file)
+    }
+
+    /// What to tell the user now. `desktop_owner` is the account the desktop
+    /// app runs on; the terminals' active account counts as in use too.
+    pub fn due_alerts(&self, desktop_owner: Option<&str>, now: i64) -> Vec<DueAlert> {
+        let mut file = self.load_alerts();
+        if file.off {
+            return Vec::new();
+        }
+        let in_use = |alias: &str| {
+            desktop_owner == Some(alias) || self.registry.active.as_deref() == Some(alias)
+        };
+        // An account coming back only matters to someone running short.
+        let short = self.registry.accounts.iter().any(|account| {
+            in_use(&account.alias)
+                && self.usage_of(&account.alias).is_some_and(|reading| {
+                    match reading.availability(now) {
+                        usage::Availability::Limited { .. } => true,
+                        usage::Availability::Available { used } => {
+                            used >= f64::from(alerts::STEPS[0])
+                        }
+                    }
+                })
+        });
+        let mut due = Vec::new();
+        for account in &self.registry.accounts {
+            let Some(reading) = self.usage_of(&account.alias) else {
+                continue;
+            };
+            let alias = account.alias.clone();
+            let memory = file.accounts.get(&alias).cloned().unwrap_or_default();
+            let (alert, memory) = alerts::next_alert(&memory, &reading, in_use(&alias), now);
+            file.accounts.insert(alias.clone(), memory);
+            match alert {
+                Some(alert @ Alert::Near(_)) => due.push(DueAlert {
+                    next: self.best_account_other_than(&alias, now),
+                    alias,
+                    alert,
+                }),
+                Some(alert @ Alert::Back) if short => due.push(DueAlert {
+                    alias,
+                    alert,
+                    next: None,
+                }),
+                _ => {}
+            }
+        }
+        let _ = self.save_alerts(&file);
+        due
     }
 
     /// The empty folder of Relais's own that Claude Code is opened in to
@@ -1269,6 +1362,89 @@ printf '{{"type":"result","num_turns":0,"result":"Not logged in"}}'
         assert!(relais.refresh_usage("work", &quiet, zurich(NOW)).is_err());
 
         assert!(!relais.needs_usage_refresh("work", NOW + 60));
+    }
+
+    #[test]
+    fn the_account_in_use_near_its_limit_names_the_one_with_room() {
+        let (_root, relais) = fixture();
+        relais
+            .record_statusline(None, &statusline_input(90.0), NOW)
+            .unwrap();
+        let profile = relais.layout.profile_dir("work");
+        relais
+            .record_statusline(Some(&profile), &statusline_input(20.0), NOW)
+            .unwrap();
+
+        assert_eq!(
+            relais.due_alerts(Some("main"), NOW + 1),
+            vec![DueAlert {
+                alias: "main".into(),
+                alert: Alert::Near(85),
+                next: Some("work".into()),
+            }]
+        );
+        assert_eq!(relais.due_alerts(Some("main"), NOW + 2), vec![]);
+    }
+
+    #[test]
+    fn an_account_coming_back_is_told_only_to_someone_running_short() {
+        let (_root, relais) = fixture();
+        let profile = relais.layout.profile_dir("work");
+        relais
+            .record_statusline(Some(&profile), &statusline_input(100.0), NOW)
+            .unwrap();
+        relais
+            .record_statusline(None, &statusline_input(99.0), NOW)
+            .unwrap();
+        assert_eq!(relais.due_alerts(Some("main"), NOW + 1).len(), 1);
+
+        let due = relais.due_alerts(Some("main"), NOW + 3601);
+
+        assert_eq!(due, vec![]);
+
+        let (_root, relais) = fixture();
+        let profile = relais.layout.profile_dir("work");
+        relais
+            .record_statusline(Some(&profile), &statusline_input(100.0), NOW)
+            .unwrap();
+        relais
+            .record_statusline(
+                None,
+                &serde_json::to_vec(&json!({"session_id": "s-1", "rate_limits": {
+                    "seven_day": {"used_percentage": 99, "resets_at": NOW + 86400}
+                }}))
+                .unwrap(),
+                NOW,
+            )
+            .unwrap();
+        relais.due_alerts(Some("main"), NOW + 1);
+
+        assert_eq!(
+            relais.due_alerts(Some("main"), NOW + 3601),
+            vec![DueAlert {
+                alias: "work".into(),
+                alert: Alert::Back,
+                next: None,
+            }]
+        );
+    }
+
+    #[test]
+    fn alerts_can_be_turned_off_and_come_back_on() {
+        let (_root, relais) = fixture();
+        relais
+            .record_statusline(None, &statusline_input(90.0), NOW)
+            .unwrap();
+        assert!(relais.alerts_on());
+
+        relais.set_alerts(false).unwrap();
+
+        assert!(!relais.alerts_on());
+        assert_eq!(relais.due_alerts(Some("main"), NOW + 1), vec![]);
+
+        relais.set_alerts(true).unwrap();
+
+        assert_eq!(relais.due_alerts(Some("main"), NOW + 2).len(), 1);
     }
 
     #[test]

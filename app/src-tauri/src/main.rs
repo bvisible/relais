@@ -1,5 +1,6 @@
 //! Relais: the menu bar app.
 
+mod alerts;
 mod commands;
 mod measure;
 mod panel;
@@ -43,6 +44,7 @@ fn main() {
             commands::suggest_alias,
             commands::set_statusline,
             commands::set_shell,
+            commands::set_alerts,
             commands::hide,
             commands::quit,
             updates::check_update,
@@ -54,6 +56,7 @@ fn main() {
             tray::create(app.handle())?;
             tray::keep_title_fresh(app.handle().clone());
             measure::keep_measuring();
+            alerts::keep_watching(app.handle().clone());
             if let Some(window) = app.get_webview_window(panel::LABEL) {
                 // Fail open: as a plain window the panel still works on the desktop.
                 if let Err(error) = panel::prepare(&window) {

@@ -42,6 +42,8 @@ export type Overview = {
   cliFound: boolean;
   /** Claude Code waits for an answer of the user before it can measure. */
   measureWaits: boolean;
+  /** Notifications near a limit and when an account is back. */
+  alerts: boolean;
   version: string;
   now: number;
 };
@@ -117,6 +119,7 @@ export const api = {
   suggestAlias: (email: string) => call<string>("suggest_alias", { email }),
   setStatusline: (enabled: boolean) => call<Overview>("set_statusline", { enabled }),
   setShell: (enabled: boolean) => call<Overview>("set_shell", { enabled }),
+  setAlerts: (enabled: boolean) => call<Overview>("set_alerts", { enabled }),
   hide: () => call<void>("hide"),
   quit: () => call<void>("quit"),
 };
@@ -209,6 +212,7 @@ let previewState: Overview = {
   shell: false,
   cliFound: true,
   measureWaits: previewMode === "trust",
+  alerts: true,
   version: "0.2.0",
   now: nowSecs(),
 };
@@ -283,6 +287,7 @@ async function preview<T>(command: string, args?: Record<string, unknown>): Prom
   }
   if (command === "set_statusline") previewState = { ...previewState, statusline: Boolean(args?.enabled) };
   if (command === "set_shell") previewState = { ...previewState, shell: Boolean(args?.enabled) };
+  if (command === "set_alerts") previewState = { ...previewState, alerts: Boolean(args?.enabled) };
   if (command === "suggest_alias") {
     const local = String(args?.email ?? "").split("@")[0].toLowerCase().replace(/[^a-z0-9_]+/g, "-").replace(/^-+|-+$/g, "");
     return (local || "account") as T;

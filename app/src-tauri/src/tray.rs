@@ -40,8 +40,7 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
-/// Shows the panel centered under the menu bar item, or hides it, on the
-/// screen that was clicked and whole within it.
+/// Shows the panel, or hides it if it is open.
 fn toggle_panel(app: &AppHandle, rect: Rect) {
     let Some(window) = app.get_webview_window(panel::LABEL) else {
         return;
@@ -50,7 +49,30 @@ fn toggle_panel(app: &AppHandle, rect: Rect) {
         let _ = window.hide();
         return;
     }
-    let monitor = clicked_monitor(&window);
+    show_panel(app, &window, rect);
+}
+
+/// Opens the panel from anywhere: a notification, a keyboard shortcut.
+pub fn open_panel(app: &AppHandle) {
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        let Some(window) = handle.get_webview_window(panel::LABEL) else {
+            return;
+        };
+        let rect = handle
+            .tray_by_id(TRAY_ID)
+            .and_then(|tray| tray.rect().ok().flatten());
+        match rect {
+            Some(rect) => show_panel(&handle, &window, rect),
+            None => panel::show(&handle, true),
+        }
+    });
+}
+
+/// Shows the panel centered under the menu bar item, on the screen in use and
+/// whole within it.
+fn show_panel(app: &AppHandle, window: &WebviewWindow, rect: Rect) {
+    let monitor = clicked_monitor(window);
     let scale = monitor
         .as_ref()
         .map(Monitor::scale_factor)

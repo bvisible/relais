@@ -1,3 +1,5 @@
+import { isTauri } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 
 import { api, type Account, type AccountSignIn, type AccountStats, type Conversation, type Overview, type PaletteColor, type ResumeTarget } from "./api";
@@ -277,6 +279,16 @@ export function App() {
     showFull(true);
   };
 
+  // A notification's button asks to switch: the confirmation takes it from there.
+  useEffect(() => {
+    if (!isTauri()) return;
+    const stop = listen<string>("relais-switch-to", ({ payload }) => {
+      setView("accounts");
+      setPending(payload);
+    });
+    return () => void stop.then((unlisten) => unlisten());
+  }, []);
+
   // The full view shows each account's history and sign-ins.
   useEffect(() => {
     if (view !== "accounts" || !full) return;
@@ -345,6 +357,7 @@ export function App() {
           }}
           onStatusline={(enabled) => run(() => api.setStatusline(enabled))}
           onShell={(enabled) => run(() => api.setShell(enabled))}
+          onAlerts={(enabled) => run(() => api.setAlerts(enabled))}
           upToDate={upToDate}
           onCheckUpdate={checkUpdate}
         />
@@ -751,7 +764,7 @@ function planName(plan: string): string {
 
 // ---- Settings and adding an account ----------------------------------------
 
-function Settings(props: { overview: Overview; followTheme: boolean; onFollowTheme: (on: boolean) => void; onStatusline: (enabled: boolean) => void; onShell: (enabled: boolean) => void; upToDate: boolean | null; onCheckUpdate: () => Promise<void> }) {
+function Settings(props: { overview: Overview; followTheme: boolean; onFollowTheme: (on: boolean) => void; onStatusline: (enabled: boolean) => void; onShell: (enabled: boolean) => void; onAlerts: (enabled: boolean) => void; upToDate: boolean | null; onCheckUpdate: () => Promise<void> }) {
   const { overview } = props;
   const [checking, setChecking] = useState(false);
   const check = async () => {
@@ -762,6 +775,7 @@ function Settings(props: { overview: Overview; followTheme: boolean; onFollowThe
   const rows = [
     { id: "statusline", title: t("statuslineTitle"), detail: t("statuslineDetail"), on: overview.statusline, set: props.onStatusline },
     { id: "shell", title: t("shellTitle"), detail: t("shellDetail"), on: overview.shell, set: props.onShell },
+    { id: "alerts", title: t("alertsTitle"), detail: t("alertsDetail"), on: overview.alerts, set: props.onAlerts },
   ];
   return (
     <div className="page">
