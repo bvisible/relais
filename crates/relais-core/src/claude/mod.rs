@@ -3,6 +3,7 @@
 pub mod cli;
 pub mod desktop;
 pub mod desktop_app;
+pub mod desktop_carry;
 pub mod desktop_identity;
 pub mod desktop_profile;
 pub mod profile;
