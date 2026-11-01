@@ -9,13 +9,14 @@ use relais_core::claude::{cli as claude, desktop_profile, transcripts};
 use relais_core::history;
 use relais_core::integration;
 use relais_core::registry;
-use relais_core::service::Relais;
+use relais_core::service::{LiveSession, Relais};
 use relais_core::usage::{Availability, UsageReading, Window};
 use relais_core::Error;
 use relais_core::Layout;
 use serde::Serialize;
 use tauri::{AppHandle, WebviewWindow};
 
+use crate::alerts;
 use crate::measure;
 use crate::platform;
 use crate::tray;
@@ -81,6 +82,10 @@ pub struct Overview {
     /// Claude Code waits for an answer of the user before it can measure.
     measure_waits: bool,
     alerts: bool,
+    /// The account to switch to once the app's sessions are done.
+    switch_waiting: Option<String>,
+    /// Conversations a switch set aside, ready to come back.
+    set_aside: usize,
     version: &'static str,
     now: i64,
 }
@@ -192,6 +197,8 @@ pub fn build_overview(relais: &Relais) -> Overview {
         best: relais.best_other_account(now),
         measure_waits: !relais.accounts_awaiting_setup().is_empty(),
         alerts: relais.alerts_on(),
+        switch_waiting: alerts::switch_waiting(),
+        set_aside: desktop_switch::set_aside_waiting(&relais.layout, &relais.registry),
         version: env!("CARGO_PKG_VERSION"),
         statusline: integration::statusline_installed(&relais.layout),
         shell: integration::shell_installed(&relais.layout),
@@ -409,6 +416,35 @@ pub fn sign_in_again(window: WebviewWindow, alias: String) -> Result<(), String>
     Ok(())
 }
 
+/// Asks to be told once the app's sessions are done, or forgets it.
+#[tauri::command]
+pub fn wait_to_switch(alias: Option<String>) -> Result<Overview, String> {
+    alerts::wait_to_switch(alias);
+    Ok(build_overview(&load()?))
+}
+
+/// Puts what switches set aside back in the app's list. The app keeps its list
+/// in memory, so it closes and opens again around it, on the user's click.
+#[tauri::command]
+pub async fn bring_back() -> Result<Overview, String> {
+    let relais = load()?;
+    let desktop = DesktopApp::from_env();
+    let was_running = desktop.is_running();
+    if was_running {
+        desktop.quit(DESKTOP_QUIT_WAIT).map_err(desktop_error)?;
+    }
+    let brought = desktop_switch::bring_back_set_aside(
+        &relais.layout,
+        &relais.registry,
+        desktop.is_running(),
+    );
+    if was_running {
+        desktop.open().map_err(desktop_error)?;
+    }
+    brought.map_err(desktop_error)?;
+    Ok(build_overview(&relais))
+}
+
 #[tauri::command]
 pub fn set_alerts(enabled: bool) -> Result<Overview, String> {
     let relais = load()?;
@@ -438,6 +474,8 @@ pub struct DesktopPlanView {
     own: usize,
     /// Sessions of the app working right now: closing it stops them.
     live: usize,
+    /// The app's version, when newer than what Relais was tested with.
+    untested: Option<String>,
     /// `parked`, `oldFolder` or `none` (the app will ask to sign in).
     sign_in: SignIn,
 }
@@ -452,7 +490,8 @@ pub fn desktop_plan(alias: String) -> Result<DesktopPlanView, String> {
         from: plan.from,
         conversations: plan.conversations,
         own: plan.own.len(),
-        live: relais.live_desktop_conversations(now()),
+        live: relais.live_desktop_sessions(now()).len(),
+        untested: DesktopApp::from_env().untested_version(),
         sign_in: plan.sign_in,
     })
 }
@@ -466,6 +505,8 @@ pub struct DesktopSwitchView {
     started: Option<Started>,
     /// An earlier switch was cut short and has been undone first.
     undid_interrupted: bool,
+    /// The sessions the switch stopped, to resume.
+    interrupted: Vec<LiveSession>,
     overview: Overview,
 }
 
@@ -473,6 +514,7 @@ pub struct DesktopSwitchView {
 fn desktop_error(error: Error) -> String {
     match error {
         Error::DesktopStillRunning => "desktop-still-running".into(),
+        Error::IncompatibleDesktop(_) => "desktop-incompatible".into(),
         Error::DesktopNotOpened => "desktop-not-opened".into(),
         Error::UnknownDesktopOwner => "desktop-owner-unknown".into(),
         Error::UnknownSignedInAccount(_) => "desktop-unknown-account".into(),
@@ -505,9 +547,11 @@ pub async fn switch_desktop(
             outcome: "already",
             started: None,
             undid_interrupted,
+            interrupted: Vec::new(),
             overview: build_overview(&relais),
         });
     }
+    let interrupted = relais.live_desktop_sessions(now());
     let own = match own.as_deref() {
         Some("add") => Some(OwnConversations::Add),
         Some("aside") => Some(OwnConversations::PutAside),
@@ -540,8 +584,10 @@ pub async fn switch_desktop(
         DESKTOP_SIGN_IN_WAIT,
     )
     .map_err(desktop_error)?;
+    alerts::wait_to_switch(None);
     Ok(DesktopSwitchView {
         outcome: "switched",
+        interrupted,
         started: Some(started),
         undid_interrupted,
         overview: build_overview(&relais),

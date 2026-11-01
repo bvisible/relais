@@ -21,6 +21,18 @@ pub const DESKTOP_CONTROL_ENV: &str = "RELAIS_DESKTOP_CONTROL";
 /// How long a fresh start gets to log the account it loaded.
 pub const DESKTOP_SIGN_IN_WAIT: Duration = Duration::from_secs(60);
 
+/// The major version of the app Relais was last tested with.
+const TESTED_MAJOR: u32 = 3;
+const DESKTOP_INFO_PLIST: &str = "/Applications/Claude.app/Contents/Info.plist";
+
+fn is_untested(version: &str) -> bool {
+    version
+        .split('.')
+        .next()
+        .and_then(|major| major.parse::<u32>().ok())
+        .is_some_and(|major| major > TESTED_MAJOR)
+}
+
 pub struct DesktopApp {
     script: Option<PathBuf>,
 }
@@ -38,6 +50,21 @@ impl DesktopApp {
             .output()
             .ok()?;
         pid_from_lsappinfo(&String::from_utf8_lossy(&output.stdout))
+    }
+
+    /// The app's version when its major version is newer than the one Relais
+    /// was tested with: a switch still works, but deserves a word of warning.
+    pub fn untested_version(&self) -> Option<String> {
+        if self.is_scripted() {
+            return None;
+        }
+        let output = Command::new("/usr/bin/plutil")
+            .args(["-extract", "CFBundleShortVersionString", "raw", "-o", "-"])
+            .arg(DESKTOP_INFO_PLIST)
+            .output()
+            .ok()?;
+        let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        is_untested(&version).then_some(version)
     }
 
     /// Driven by a script rather than the real app.
@@ -176,6 +203,14 @@ pub fn pid_from_lsappinfo(text: &str) -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_newer_major_version_is_untested() {
+        assert!(!is_untested("3.6556.2"));
+        assert!(!is_untested("2.42304.0"));
+        assert!(is_untested("4.0.1"));
+        assert!(!is_untested(""));
+    }
 
     const LOG: &str = "\
 2026-10-06 21:36:52 [info] [account] User is logged out, skipping account ID wait

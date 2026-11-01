@@ -2,6 +2,7 @@
 //! notification, panel closed. Its button opens the confirmation: Relais
 //! suggests, it never switches.
 
+use std::sync::Mutex;
 use std::time::Duration;
 
 use mac_notification_sys::{MainButton, Notification, NotificationResponse};
@@ -19,6 +20,19 @@ const LOOK_EVERY: Duration = Duration::from_secs(30);
 /// What the panel listens to: the account to confirm a switch to.
 pub const SWITCH_TO_EVENT: &str = "relais-switch-to";
 
+/// The account to switch to once the desktop app's sessions are done.
+static SWITCH_WAITING: Mutex<Option<String>> = Mutex::new(None);
+
+pub fn switch_waiting() -> Option<String> {
+    SWITCH_WAITING.lock().ok()?.clone()
+}
+
+pub fn wait_to_switch(alias: Option<String>) {
+    if let Ok(mut waiting) = SWITCH_WAITING.lock() {
+        *waiting = alias;
+    }
+}
+
 /// Set to show one notification at launch, for checks.
 const TEST_ENV: &str = "RELAIS_TEST_NOTIFICATION";
 
@@ -35,6 +49,14 @@ pub fn keep_watching(app: AppHandle) {
             let now = chrono::Utc::now().timestamp();
             for due in relais.due_alerts(owner.as_deref(), now) {
                 notify_about(&app, due);
+            }
+            if let Some(alias) = switch_waiting() {
+                if relais.live_desktop_sessions(now).is_empty() {
+                    wait_to_switch(None);
+                    let title = platform::text("alert.sessions_done", &[]);
+                    let body = platform::text("alert.sessions_done_detail", &[("alias", &alias)]);
+                    notify(app.clone(), title, body, Some(alias));
+                }
             }
         }
         std::thread::sleep(LOOK_EVERY);

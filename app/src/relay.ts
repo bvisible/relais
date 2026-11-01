@@ -23,15 +23,21 @@ export type DesktopPlan = {
   own: number;
   /** Claude Desktop sessions working right now: closing it stops them. */
   live: number;
+  /** Claude Desktop's version, when newer than what Relais was tested with. */
+  untested: string | null;
   signIn: "parked" | "oldFolder" | "none";
 };
 
 export type Started = "signedIn" | "notConfirmed" | "signedOut";
 
+/** A session a switch stopped, to resume. */
+export type LiveSession = { id: string; title: string | null };
+
 export type SwitchResult = {
   outcome: "already" | "switched";
   started: Started | null;
   undidInterrupted: boolean;
+  interrupted: LiveSession[];
 };
 
 /** What the confirmation says: what happens, what stays, and what to know. */
@@ -39,6 +45,7 @@ export function confirmLines(plan: DesktopPlan, alias: string, email: string): s
   const lines = [t("relayConfirmCloses", { alias })];
   if (plan.live > 0) lines.push(plan.live === 1 ? t("relayConfirmLiveOne") : t("relayConfirmLiveMany", { n: plan.live }));
   lines.push(plan.conversations === 1 ? t("relayConfirmKeepsOne") : t("relayConfirmKeepsMany", { n: plan.conversations }));
+  if (plan.untested) lines.push(t("relayConfirmUntested", { version: plan.untested }));
   if (plan.signIn === "none") lines.push(t("relayConfirmSignIn", { email }));
   if (plan.own > 0) lines.push(t("relayConfirmOwn", { alias, n: plan.own }));
   return lines;

@@ -44,6 +44,10 @@ export type Overview = {
   measureWaits: boolean;
   /** Notifications near a limit and when an account is back. */
   alerts: boolean;
+  /** The account to switch to once Claude Desktop's sessions are done. */
+  switchWaiting: string | null;
+  /** Conversations a switch set aside, ready to come back. */
+  setAside: number;
   version: string;
   now: number;
 };
@@ -120,6 +124,8 @@ export const api = {
   setStatusline: (enabled: boolean) => call<Overview>("set_statusline", { enabled }),
   setShell: (enabled: boolean) => call<Overview>("set_shell", { enabled }),
   setAlerts: (enabled: boolean) => call<Overview>("set_alerts", { enabled }),
+  waitToSwitch: (alias: string | null) => call<Overview>("wait_to_switch", { alias }),
+  bringBack: () => call<Overview>("bring_back"),
   hide: () => call<void>("hide"),
   quit: () => call<void>("quit"),
 };
@@ -139,7 +145,7 @@ const PREVIEW_PALETTE: PaletteColor[] = [
   { name: "sky", hex: "#38BDF8" },
 ];
 
-// `?state=limited`, `?state=tiring`, `?state=signedOut`, `?state=connections`, `?state=trust`, `?state=update` or `?state=showcase` (the README's screenshots) in the address previews those screens.
+// `?state=limited`, `?state=tiring`, `?state=signedOut`, `?state=connections`, `?state=trust`, `?state=update`, `?state=aside` or `?state=showcase` (the README's screenshots) in the address previews those screens.
 const previewMode = typeof location !== "undefined" ? new URLSearchParams(location.search).get("state") : null;
 
 let previewState: Overview = {
@@ -213,6 +219,8 @@ let previewState: Overview = {
   cliFound: true,
   measureWaits: previewMode === "trust",
   alerts: true,
+  switchWaiting: null,
+  setAside: previewMode === "aside" ? 4 : 0,
   version: "0.2.0",
   now: nowSecs(),
 };
@@ -266,7 +274,7 @@ async function preview<T>(command: string, args?: Record<string, unknown>): Prom
     await new Promise((resolve) => setTimeout(resolve, 150));
     const alias = String(args?.alias);
     const target = previewState.accounts.find((a) => a.alias === alias);
-    return { from: previewState.desktopOwner ?? "", conversations: 139, own: alias === "work" ? 4 : 0, live: 1, signIn: target?.desktopFolder ? "parked" : "none" } as T;
+    return { from: previewState.desktopOwner ?? "", conversations: 139, own: alias === "work" ? 4 : 0, live: 1, untested: null, signIn: target?.desktopFolder ? "parked" : "none" } as T;
   }
   if (command === "switch_desktop") {
     await new Promise((resolve) => setTimeout(resolve, 1600));
@@ -278,7 +286,8 @@ async function preview<T>(command: string, args?: Record<string, unknown>): Prom
       desktopOwner: alias,
       accounts: previewState.accounts.map((a) => ({ ...a, active: a.alias === alias, desktopFolder: a.desktopFolder || a.alias === alias })),
     };
-    return { outcome: "switched", started, undidInterrupted: false, overview: { ...previewState, now: nowSecs() } } as T;
+    const interrupted = [{ id: "s1", title: "Rings and colors in the menu bar app" }];
+    return { outcome: "switched", started, undidInterrupted: false, interrupted, overview: { ...previewState, now: nowSecs() } } as T;
   }
   if (command === "check_update") return (previewMode === "update" ? { version: "0.3.0" } : null) as T;
   if (command === "install_update") {
@@ -287,6 +296,11 @@ async function preview<T>(command: string, args?: Record<string, unknown>): Prom
   }
   if (command === "set_statusline") previewState = { ...previewState, statusline: Boolean(args?.enabled) };
   if (command === "set_shell") previewState = { ...previewState, shell: Boolean(args?.enabled) };
+  if (command === "wait_to_switch") previewState = { ...previewState, switchWaiting: (args?.alias as string | null) ?? null };
+  if (command === "bring_back") {
+    await new Promise((resolve) => setTimeout(resolve, 1600));
+    previewState = { ...previewState, setAside: 0 };
+  }
   if (command === "set_alerts") previewState = { ...previewState, alerts: Boolean(args?.enabled) };
   if (command === "suggest_alias") {
     const local = String(args?.email ?? "").split("@")[0].toLowerCase().replace(/[^a-z0-9_]+/g, "-").replace(/^-+|-+$/g, "");

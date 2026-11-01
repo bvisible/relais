@@ -45,6 +45,8 @@ fn main() {
             commands::set_statusline,
             commands::set_shell,
             commands::set_alerts,
+            commands::wait_to_switch,
+            commands::bring_back,
             commands::hide,
             commands::quit,
             updates::check_update,

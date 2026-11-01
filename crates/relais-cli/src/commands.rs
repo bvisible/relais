@@ -1204,15 +1204,18 @@ pub fn desktop(alias: Option<&str>, dry_run: bool, own: Option<OwnConversations>
         return Ok(0);
     }
     describe_plan(&plan, &email);
-    let live = relais.live_desktop_conversations(now());
-    if live > 0 {
+    let live = relais.live_desktop_sessions(now());
+    if !live.is_empty() {
         println!(
             "{}",
             t(
                 "desktop.plan_live",
-                &[("conversations", &conversation_count(live))]
+                &[("conversations", &conversation_count(live.len()))]
             )
         );
+    }
+    if let Some(version) = app.untested_version() {
+        println!("{}", t("desktop.untested", &[("version", &version)]));
     }
     if dry_run {
         println!("{}", t("desktop.dry_run", &[]));
@@ -1265,6 +1268,16 @@ pub fn desktop(alias: Option<&str>, dry_run: bool, own: Option<OwnConversations>
         };
     println!("{message}");
     println!("{}", t("desktop.terminal_follows", &[("alias", alias)]));
+    for session in live {
+        let title = session.title.unwrap_or_else(|| session.id.clone());
+        println!(
+            "{}",
+            t(
+                "desktop.interrupted_session",
+                &[("title", &title), ("id", &session.id)]
+            )
+        );
+    }
     Ok(0)
 }
 
@@ -1362,6 +1375,9 @@ fn desktop_failure(error: Error) -> Failure {
         }
         Error::MissingAccountIds(alias) => {
             Failure::Message(t("error.desktop_missing_ids", &[("alias", &alias)]))
+        }
+        Error::IncompatibleDesktop(what) => {
+            Failure::Message(t("error.desktop_incompatible", &[("what", &what)]))
         }
         Error::Conflict(path) => Failure::Message(t(
             "error.desktop_conflict",

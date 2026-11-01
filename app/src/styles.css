@@ -1410,3 +1410,41 @@ input:focus-visible {
   flex: none;
   margin-left: auto;
 }
+
+.relay-interrupted {
+  margin: 0 20px 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  font-size: 13px;
+}
+
+.relay-interrupted p {
+  margin: 0 0 6px;
+  color: var(--muted);
+}
+
+.relay-interrupted ul {
+  margin: 0 0 6px;
+  padding: 0;
+  list-style: none;
+}
+
+.relay-interrupted li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 3px 0;
+}
+
+.relay-interrupted span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.relay-actions {
+  flex-wrap: wrap;
+}

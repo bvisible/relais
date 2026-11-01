@@ -360,6 +360,7 @@ export function App() {
           onAlerts={(enabled) => run(() => api.setAlerts(enabled))}
           upToDate={upToDate}
           onCheckUpdate={checkUpdate}
+          onBringBack={() => run(() => api.bringBack())}
         />
       )}
       {view === "add" && (
@@ -764,9 +765,16 @@ function planName(plan: string): string {
 
 // ---- Settings and adding an account ----------------------------------------
 
-function Settings(props: { overview: Overview; followTheme: boolean; onFollowTheme: (on: boolean) => void; onStatusline: (enabled: boolean) => void; onShell: (enabled: boolean) => void; onAlerts: (enabled: boolean) => void; upToDate: boolean | null; onCheckUpdate: () => Promise<void> }) {
+function Settings(props: { overview: Overview; followTheme: boolean; onFollowTheme: (on: boolean) => void; onStatusline: (enabled: boolean) => void; onShell: (enabled: boolean) => void; onAlerts: (enabled: boolean) => void; upToDate: boolean | null; onCheckUpdate: () => Promise<void>; onBringBack: () => Promise<void> }) {
   const { overview } = props;
   const [checking, setChecking] = useState(false);
+  const [bringing, setBringing] = useState<"idle" | "confirm" | "working">("idle");
+  const bringBack = async () => {
+    if (bringing === "idle") return setBringing("confirm");
+    setBringing("working");
+    await props.onBringBack();
+    setBringing("idle");
+  };
   const check = async () => {
     setChecking(true);
     await props.onCheckUpdate();
@@ -807,6 +815,19 @@ function Settings(props: { overview: Overview; followTheme: boolean; onFollowThe
           <input id="follow-theme" type="checkbox" className="check" checked={props.followTheme} onChange={(e) => props.onFollowTheme(e.target.checked)} />
         </div>
       </div>
+      {overview.setAside > 0 && (
+        <div className="card list">
+          <div className="list-row">
+            <div className="list-text">
+              <div className="strong">{overview.setAside === 1 ? t("setAsideOne") : t("setAsideMany", { n: overview.setAside })}</div>
+              <div className="muted small">{t("setAsideDetail")}</div>
+            </div>
+            <button className="button" disabled={bringing === "working"} onClick={() => void bringBack()}>
+              {bringing === "working" ? t("setAsideWorking") : bringing === "confirm" ? t("setAsideConfirm") : t("setAsideBring")}
+            </button>
+          </div>
+        </div>
+      )}
       <div className="card list">
         <div className="list-row">
           <div className="list-text">

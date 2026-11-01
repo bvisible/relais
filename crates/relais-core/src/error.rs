@@ -39,6 +39,8 @@ pub enum Error {
     InvalidColor(String),
     #[error("cannot tell which account the Claude desktop app folder belongs to")]
     UnknownDesktopOwner,
+    #[error("the Claude desktop app keeps {0} in a way Relais does not know")]
+    IncompatibleDesktop(String),
     #[error("the Claude desktop app did not close")]
     DesktopStillRunning,
     #[error("the Claude desktop app could not be opened")]

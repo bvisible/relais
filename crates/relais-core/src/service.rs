@@ -77,6 +77,13 @@ const LIVE_FOR: i64 = 120;
 /// More conversations than can be working at once.
 const LIVE_LOOKUP: usize = 64;
 
+/// A conversation of the desktop app working right now.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct LiveSession {
+    pub id: String,
+    pub title: Option<String>,
+}
+
 /// An alert to show: what happened to which account and, when the account in
 /// use is running out, the one with the most room.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -385,16 +392,20 @@ impl Relais {
 
     /// The desktop app's conversations working right now: closing the app
     /// stops them.
-    pub fn live_desktop_conversations(&self, now: i64) -> usize {
+    pub fn live_desktop_sessions(&self, now: i64) -> Vec<LiveSession> {
         self.recent_conversations(LIVE_LOOKUP, now)
             .map(|recent| {
                 recent
-                    .iter()
+                    .into_iter()
                     .filter(|c| now - c.last_activity < LIVE_FOR)
                     .filter(|c| c.conversation.entrypoint.as_deref() == Some("claude-desktop"))
-                    .count()
+                    .map(|c| LiveSession {
+                        id: c.conversation.session_id,
+                        title: c.conversation.title,
+                    })
+                    .collect()
             })
-            .unwrap_or(0)
+            .unwrap_or_default()
     }
 
     /// The latest conversations started by a person, most recent message first,
@@ -1031,7 +1042,9 @@ mod tests {
         transcript(&relais, "over", &[line(desktop, NOW - 600)], NOW - 600);
         transcript(&relais, "terminal", &[line("cli", NOW - 30)], NOW - 30);
 
-        assert_eq!(relais.live_desktop_conversations(NOW), 1);
+        let live = relais.live_desktop_sessions(NOW);
+        assert_eq!(live.len(), 1);
+        assert_eq!(live[0].id, "live");
     }
 
     #[test]

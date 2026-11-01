@@ -5,7 +5,7 @@ import { test } from "node:test";
 
 import { advisedOf, confirmLines, connectionOf, connectionSummary, relayOrder, resultLine, ringsOf, staleLine, usageLine } from "../src/relay.ts";
 
-const plan = (extra: Partial<{ conversations: number; own: number; live: number; signIn: "parked" | "oldFolder" | "none" }> = {}) => ({ from: "main", conversations: 3, own: 0, live: 0, signIn: "parked" as const, ...extra });
+const plan = (extra: Partial<{ conversations: number; own: number; live: number; untested: string | null; signIn: "parked" | "oldFolder" | "none" }> = {}) => ({ from: "main", conversations: 3, own: 0, live: 0, untested: null, signIn: "parked" as const, ...extra });
 
 const NOW = 1_791_270_000;
 
@@ -48,8 +48,12 @@ test("sessions still working are named before the switch stops them", () => {
   assert.equal(confirmLines(plan(), "work", "work@example.com").length, 2);
 });
 
+test("a version of Claude newer than the one tested is said before the switch", () => {
+  assert.equal(confirmLines(plan({ untested: "4.0.1" }), "work", "work@example.com")[2], "Claude 4.0.1 est plus récent que la version testée : une sauvegarde est faite, et une erreur annule la bascule.");
+});
+
 test("the result line says where Claude is", () => {
-  const result = (started: "signedIn" | "notConfirmed" | "signedOut" | null, outcome: "already" | "switched" = "switched") => resultLine({ outcome, started, undidInterrupted: false }, "work", "work@example.com");
+  const result = (started: "signedIn" | "notConfirmed" | "signedOut" | null, outcome: "already" | "switched" = "switched") => resultLine({ outcome, started, undidInterrupted: false, interrupted: [] }, "work", "work@example.com");
   assert.equal(result("signedIn"), "Tu es sur work. Tout est là.");
   assert.equal(result("notConfirmed"), "Claude est ouvert sur work. Sa connexion n’est pas encore confirmée.");
   assert.equal(result("signedOut"), "Connecte-toi dans Claude avec work@example.com : ton espace t’attend.");

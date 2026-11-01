@@ -5,7 +5,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { api, type Account, type AccountSignIn, type AvailableUpdate, type Overview } from "./api";
 import { t, type MessageKey } from "./i18n";
-import { advisedOf, confirmLines, connectionOf, connectionSummary, relayOrder, resultLine, ringsOf, staleLine, usageLine, type DesktopPlan, type Ring } from "./relay.ts";
+import { advisedOf, confirmLines, connectionOf, connectionSummary, relayOrder, resultLine, ringsOf, staleLine, usageLine, type DesktopPlan, type LiveSession, type Ring } from "./relay.ts";
 
 /** The panel's tabs, at its foot. */
 export type Tab = "accounts" | "conversations" | "settings";
@@ -54,6 +54,7 @@ export function RelayHome(props: {
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const [result, setResult] = useState<string | null>(null);
+  const [interrupted, setInterrupted] = useState<LiveSession[]>([]);
   const resultTimer = useRef<number | undefined>(undefined);
 
   const open = async (account: Account) => {
@@ -92,6 +93,7 @@ export function RelayHome(props: {
     try {
       const done = await api.switchDesktop(target.alias, plan.own > 0 ? own : null);
       props.onOverview(done.overview);
+      setInterrupted(done.interrupted);
       const line = resultLine(done, target.alias, target.email ?? target.alias);
       setResult(done.undidInterrupted ? `${t("relayUndone")} ${line}` : line);
       window.clearTimeout(resultTimer.current);
@@ -103,6 +105,17 @@ export function RelayHome(props: {
     } finally {
       setBusy(false);
     }
+  };
+
+  const waitForSessions = async () => {
+    if (!target) return;
+    props.onOverview(await api.waitToSwitch(target.alias));
+    close();
+  };
+
+  const resumeSession = (session: LiveSession) => {
+    setInterrupted((current) => current.filter((s) => s.id !== session.id));
+    void api.resume(session.id, "desktop").catch((e) => setProblem(props.describeError(e)));
   };
 
   return (
@@ -150,10 +163,38 @@ export function RelayHome(props: {
         </p>
       )}
 
+      {overview?.switchWaiting && (
+        <p className="relay-summary is-todo">
+          {t("relayWaiting", { alias: overview.switchWaiting })} ·{" "}
+          <button className="relay-link" onClick={() => void api.waitToSwitch(null).then(props.onOverview)}>
+            {t("relayWaitingCancel")}
+          </button>
+        </p>
+      )}
+
       {result && (
         <p className="relay-result" role="status">
           {result}
         </p>
+      )}
+
+      {interrupted.length > 0 && (
+        <section className="relay-interrupted">
+          <p>{interrupted.length === 1 ? t("relayInterruptedOne") : t("relayInterruptedMany", { n: interrupted.length })}</p>
+          <ul>
+            {interrupted.map((session) => (
+              <li key={session.id}>
+                <span>{session.title ?? t("relayUntitled")}</span>
+                <button className="relay-link" onClick={() => resumeSession(session)}>
+                  {t("relayResume")}
+                </button>
+              </li>
+            ))}
+          </ul>
+          <button className="relay-link" onClick={() => setInterrupted([])}>
+            {t("relayDismiss")}
+          </button>
+        </section>
       )}
 
       {overview && accounts.length === 0 && (
@@ -250,6 +291,11 @@ export function RelayHome(props: {
               <button className="relay-button" disabled={busy} onClick={close}>
                 {t("cancel")}
               </button>
+              {plan && plan.live > 0 && (
+                <button className="relay-button" disabled={busy} onClick={() => void waitForSessions()}>
+                  {t("relayWhenDone")}
+                </button>
+              )}
               <button className="relay-button is-primary" disabled={busy || plan == null || (plan.own > 0 && own == null)} onClick={() => void go()}>
                 {t("relayGo", { alias: target.alias })}
               </button>

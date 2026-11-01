@@ -89,6 +89,7 @@ pub enum Step {
 
 /// Reads what switching to `to` would do. Nothing changes.
 pub fn plan(layout: &Layout, registry: &Registry, to: &str) -> Result<SwitchPlan> {
+    check_workspace(layout)?;
     let target = registry
         .get(to)
         .ok_or_else(|| Error::UnknownAccount(to.to_string()))?;
@@ -123,6 +124,51 @@ pub fn plan(layout: &Layout, registry: &Registry, to: &str) -> Result<SwitchPlan
         to_ids,
         sign_in,
     })
+}
+
+/// Refuses a workspace Relais no longer recognizes, before anything moves: an
+/// update of the app can change how it files things, and carrying them blindly
+/// would lose them.
+fn check_workspace(layout: &Layout) -> Result<()> {
+    let name_of = |path: &Path| {
+        path.file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned()
+    };
+    let is_object = |value: Option<&serde_json::Value>| value.is_none_or(|v| v.is_object());
+    for file in [layout.desktop_config_file(), layout.desktop_presets_file()] {
+        let incompatible = || Error::IncompatibleDesktop(name_of(&file));
+        let Some(value) = fsutil::read_json(&file).map_err(|_| incompatible())? else {
+            continue;
+        };
+        let preferences = value.get("preferences");
+        let epitaxy = preferences.and_then(|p| p.get("epitaxyPrefs"));
+        if !value.is_object() || !is_object(preferences) || !is_object(epitaxy) {
+            return Err(incompatible());
+        }
+    }
+    for root in INDEX_ROOTS {
+        for account in subfolders(&layout.desktop_dir.join(root)) {
+            for org in subfolders(&account) {
+                let records = fs::read_dir(&org).into_iter().flatten().flatten();
+                for record in records.map(|entry| entry.path()) {
+                    let name = name_of(&record);
+                    if !(name.starts_with("local_") && name.ends_with(".json")) {
+                        continue;
+                    }
+                    let readable = fsutil::read_json(&record)
+                        .ok()
+                        .flatten()
+                        .is_some_and(|value| value.get("sessionId").is_some());
+                    if !readable {
+                        return Err(Error::IncompatibleDesktop(name));
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// The account whose sign-in is in place, by the id it carries; without
@@ -204,6 +250,31 @@ pub fn bring_back_set_aside(
         }
     }
     Ok(brought)
+}
+
+/// How many conversations `bring_back_set_aside` would return.
+pub fn set_aside_waiting(layout: &Layout, registry: &Registry) -> usize {
+    let ids = source_alias(layout, registry)
+        .ok()
+        .and_then(|alias| registry.get(&alias))
+        .and_then(|account| ids_of(account).ok());
+    let Some(ids) = ids else {
+        return 0;
+    };
+    let mut waiting = 0;
+    for stamp in subfolders(&layout.relais_dir.join("set-aside")) {
+        for root in INDEX_ROOTS {
+            let list = desktop_carry::index_dir(&layout.desktop_dir.join(root), &ids);
+            for account_dir in subfolders(&stamp.join(root)) {
+                for set_aside in subfolders(&account_dir) {
+                    waiting += desktop_carry::target_conversations(&list, &set_aside)
+                        .own
+                        .len();
+                }
+            }
+        }
+    }
+    waiting
 }
 
 fn subfolders(dir: &Path) -> Vec<PathBuf> {
@@ -1163,6 +1234,73 @@ mod tests {
             }
         );
         assert!(!list.join("local_twin.json").exists());
+    }
+
+    #[test]
+    fn the_conversations_waiting_to_come_back_are_counted_without_the_twins() {
+        let f = fixture();
+        let list = f
+            .layout
+            .desktop_dir
+            .join("claude-code-sessions/acc-b/org-b");
+        conversation(&list, "local_own", "cli-own");
+        conversation(&list, "local_twin", "cli-1");
+        assert_eq!(set_aside_waiting(&f.layout, &f.registry), 0);
+
+        apply(
+            &f.layout,
+            &f.registry,
+            "b",
+            Some(OwnConversations::PutAside),
+            false,
+            NOW,
+        )
+        .unwrap();
+
+        assert_eq!(set_aside_waiting(&f.layout, &f.registry), 1);
+    }
+
+    #[test]
+    fn settings_that_are_not_what_they_should_be_stop_the_switch_before_anything_moves() {
+        let f = fixture();
+        write(&f.layout.desktop_config_file(), "not json");
+        let before = tree(f.layout.home.as_path());
+
+        assert!(matches!(
+            plan(&f.layout, &f.registry, "b"),
+            Err(Error::IncompatibleDesktop(what)) if what == "claude_desktop_config.json"
+        ));
+
+        assert_eq!(tree(f.layout.home.as_path()), before);
+    }
+
+    #[test]
+    fn preferences_of_another_shape_stop_the_switch() {
+        let f = fixture();
+        write(
+            &f.layout.desktop_config_file(),
+            r#"{"preferences": {"epitaxyPrefs": ["moved"]}}"#,
+        );
+
+        assert!(matches!(
+            plan(&f.layout, &f.registry, "b"),
+            Err(Error::IncompatibleDesktop(_))
+        ));
+    }
+
+    #[test]
+    fn a_conversation_record_of_another_shape_stops_the_switch() {
+        let f = fixture();
+        let list = f
+            .layout
+            .desktop_dir
+            .join("claude-code-sessions/acc-a/org-a");
+        write(&list.join("local_new.json"), r#"{"renamed": true}"#);
+
+        assert!(matches!(
+            plan(&f.layout, &f.registry, "b"),
+            Err(Error::IncompatibleDesktop(what)) if what == "local_new.json"
+        ));
     }
 
     #[test]
