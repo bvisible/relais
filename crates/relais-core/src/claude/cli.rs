@@ -99,41 +99,6 @@ pub fn auth_status(binary: &Path, config_dir: Option<&Path>) -> Result<AuthStatu
     )))
 }
 
-/// Asks Claude Code for a profile's limits with its `/usage` command, and
-/// returns what it prints. No conversation is started and nothing is billed
-/// (`num_turns` and the cost stay at 0); `--no-session-persistence` keeps the
-/// run out of the conversation index. Runs in `cwd`, a folder of Relais's own.
-/// A version that would answer `/usage` as a prompt is refused.
-pub fn usage_report(binary: &Path, config_dir: Option<&Path>, cwd: &Path) -> Result<String> {
-    let output = command_for_profile(binary, config_dir)
-        .args([
-            "-p",
-            "/usage",
-            "--output-format",
-            "json",
-            "--no-session-persistence",
-        ])
-        .current_dir(cwd)
-        .stdin(std::process::Stdio::null())
-        .output()
-        .map_err(|e| Error::io(binary, e))?;
-    let value: Value = serde_json::from_slice(&output.stdout).map_err(|_| {
-        Error::Command(format!(
-            "{} -p /usage: {}",
-            binary.display(),
-            String::from_utf8_lossy(&output.stderr).trim()
-        ))
-    })?;
-    if value.get("num_turns").and_then(Value::as_u64).unwrap_or(0) > 0 {
-        return Err(Error::UsageCommandUnavailable);
-    }
-    value
-        .get("result")
-        .and_then(Value::as_str)
-        .map(String::from)
-        .ok_or_else(|| Error::Command(format!("{} -p /usage gave no result", binary.display())))
-}
-
 /// Reads `oauthAccount` from a profile's `.claude.json`.
 pub fn read_account_identity(global_config: &Path) -> Result<Option<AccountIdentity>> {
     let Some(config) = fsutil::read_json(global_config)? else {
@@ -266,35 +231,5 @@ mod tests {
             read_account_identity(&dir.path().join("absent.json")).unwrap(),
             None
         );
-    }
-
-    const USAGE_REPORT: &str = r#"printf '%s' "$*" > "$PWD/args"; printf '{"type":"result","num_turns":0,"total_cost_usd":0,"result":"Current session: 4%% used\\nCurrent week (all models): 37%% used · resets Oct 8 at 10pm (Europe/Zurich)\\n"}'"#;
-
-    #[test]
-    fn the_usage_report_comes_from_the_usage_command_without_saving_a_session() {
-        let dir = tempfile::tempdir().unwrap();
-        let binary = fake_claude(dir.path(), USAGE_REPORT);
-        let cwd = dir.path().join("probe");
-        std::fs::create_dir_all(&cwd).unwrap();
-
-        let text = usage_report(&binary, None, &cwd).unwrap();
-
-        assert!(text.contains("37% used"), "{text}");
-        let args = std::fs::read_to_string(cwd.join("args")).unwrap();
-        assert!(args.contains("-p /usage"), "{args}");
-        assert!(args.contains("--no-session-persistence"), "{args}");
-    }
-
-    #[test]
-    fn a_usage_command_that_turned_into_a_conversation_is_refused() {
-        let dir = tempfile::tempdir().unwrap();
-        let binary = fake_claude(
-            dir.path(),
-            r#"printf '{"type":"result","num_turns":1,"total_cost_usd":0.01,"result":"I can help with that."}'"#,
-        );
-
-        let error = usage_report(&binary, None, dir.path()).unwrap_err();
-
-        assert!(matches!(error, Error::UsageCommandUnavailable));
     }
 }

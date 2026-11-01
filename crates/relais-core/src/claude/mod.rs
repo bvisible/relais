@@ -10,3 +10,4 @@ pub mod desktop_switch;
 pub mod profile;
 pub mod sync;
 pub mod transcripts;
+pub mod usage_probe;

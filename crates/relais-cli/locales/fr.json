@@ -99,7 +99,6 @@
   "desktop.switched": "Claude Desktop est ouvert sur {alias} ; sa connexion n'est pas encore confirmée.",
   "desktop.signed_in": "Claude Desktop est sur {alias}, connecté. Tes discussions, dossiers et favoris sont là où tu les as laissés.",
   "desktop.other_account": "L'app Claude Desktop s'est ouverte sur un autre compte que {alias} : vérifie-la avant de t'en servir.",
-  "usage.command_unavailable": "Cette version de Claude Code répond à /usage par une conversation : Relais ne le lui redemandera pas.",
   "help.account.adopt": "Garder le compte connecté sur le profil par défaut : le compte enregistré là passe dans un profil à part",
   "adopt.done": "{alias} ({email}) tient désormais le profil par défaut. {previous} ({previous_email}) reste enregistré avec un profil à part : reconnecte-le avec `relais account login {previous}`.",
   "error.adopt_not_signed_in": "Aucun compte n'est connecté sur le profil par défaut. Lance d'abord `claude auth login`.",

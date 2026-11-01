@@ -1,6 +1,7 @@
 //! Relais: the menu bar app.
 
 mod commands;
+mod measure;
 mod panel;
 mod platform;
 mod tray;
@@ -47,6 +48,7 @@ fn main() {
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
             tray::create(app.handle())?;
             tray::keep_title_fresh(app.handle().clone());
+            measure::keep_measuring();
             if let Some(window) = app.get_webview_window(panel::LABEL) {
                 // Fail open: as a plain window the panel still works on the desktop.
                 if let Err(error) = panel::prepare(&window) {

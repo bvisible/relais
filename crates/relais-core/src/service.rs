@@ -11,6 +11,7 @@ use crate::claude::desktop;
 use crate::claude::profile::{self, LinkReport};
 use crate::claude::sync::{self, ConfigFile, SyncOutcome};
 use crate::claude::transcripts::{self, Conversation, ACTIVITY_BUCKETS};
+use crate::claude::usage_probe;
 use crate::error::{Error, Result};
 use crate::fsutil;
 use crate::history::{self, HistoryStore, Sample};
@@ -64,10 +65,11 @@ pub struct Adoption {
 
 /// The status line measured an account this recently: the terminals run on it.
 pub const MEASURED_LATELY: i64 = 10 * 60;
-/// An account whose weekly reset stays unknown is asked again after this long.
-/// Claude Code's `/usage` reads every local transcript to tell what weighs on
-/// the limits: about half a minute of processor time each run.
-pub const USAGE_RETRY_AFTER: i64 = 6 * 3600;
+/// How often each account is measured in the background. An account nobody
+/// uses does not move, and the one in use has the status line besides.
+pub const USAGE_EVERY: i64 = 15 * 60;
+/// How long Claude Code gets to show an account's limits.
+const USAGE_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(45);
 
 /// How long a sync waits for Claude Code to release a config file.
 pub const SYNC_LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
@@ -413,20 +415,15 @@ impl Relais {
     }
 
     /// Whether Claude Code should be asked for `alias`'s limits in the
-    /// background: its weekly reset is unknown or past, and it was not asked in
-    /// the last six hours. A known reset stays right until it passes.
+    /// background: the status line did not measure it lately, and it was not
+    /// asked in the last quarter of an hour.
     pub fn needs_usage_refresh(&self, alias: &str, now: i64) -> bool {
-        let known = self
-            .usage_of(alias)
-            .and_then(|reading| reading.seven_day)
-            .and_then(|week| week.resets_at)
-            .is_some_and(|at| at > now);
-        if known || self.measured_lately(alias, now) {
+        if self.measured_lately(alias, now) {
             return false;
         }
         self.usage_attempts()
             .get(alias)
-            .is_none_or(|at| now - at >= USAGE_RETRY_AFTER)
+            .is_none_or(|at| now - at >= USAGE_EVERY)
     }
 
     fn usage_attempts_file(&self) -> PathBuf {
@@ -441,10 +438,18 @@ impl Relais {
             .unwrap_or_default()
     }
 
-    /// Asks Claude Code for `alias`'s limits (`claude -p /usage`, nothing billed,
-    /// nothing saved) and stores the reading, reset times included. A Claude
-    /// Code that answered `/usage` as a conversation is not asked again until
-    /// its binary changes; a signed-out account is not asked at all.
+    /// Measures started together must not erase each other's attempt.
+    fn note_usage_attempt(&self, alias: &str, at: i64) {
+        static ONE_WRITER: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _writing = ONE_WRITER.lock();
+        let mut attempts = self.usage_attempts();
+        attempts.insert(alias.to_string(), at);
+        let _ = fsutil::write_json_atomic(&self.usage_attempts_file(), &json!(attempts));
+    }
+
+    /// Asks Claude Code for `alias`'s limits and stores the reading, reset
+    /// times included: `/usage` in a private terminal, nothing billed, nothing
+    /// saved. A profile signed out, or holding another account, is not asked.
     pub fn refresh_usage<Tz: chrono::TimeZone>(
         &self,
         alias: &str,
@@ -455,34 +460,29 @@ impl Relais {
             .registry
             .get(alias)
             .ok_or_else(|| Error::UnknownAccount(alias.to_string()))?;
-        let probe_dir = self.layout.relais_dir.join("probe");
-        let refused = probe_dir.join("refused.json");
-        let binary_stamp = json!({
-            "binary": binary.display().to_string(),
-            "modified": fsutil::modified_secs(binary),
-        });
-        if fsutil::read_json(&refused).ok().flatten().as_ref() == Some(&binary_stamp) {
-            return Ok(None);
-        }
-        // A signed-out profile has no limits to tell: it is not asked, and no
-        // attempt holds it back once someone signs in again. The check takes a
-        // quarter of a second; when it fails, the question is asked anyway.
+        // A signed-out profile has no limits to tell, and a profile holding
+        // another account would tell someone else's. The check takes a quarter
+        // of a second; when it fails, the question is asked anyway.
         if let Ok(status) = claude::auth_status(binary, account.config_dir.as_deref()) {
-            if !status.logged_in {
+            let another = match (&status.email, &account.email) {
+                (Some(there), Some(ours)) => !there.eq_ignore_ascii_case(ours),
+                _ => false,
+            };
+            if !status.logged_in || another {
                 return Ok(None);
             }
         }
-        fs::create_dir_all(&probe_dir).map_err(|e| Error::io(&probe_dir, e))?;
-        let mut attempts = self.usage_attempts();
-        attempts.insert(alias.to_string(), now.timestamp());
-        let _ = fsutil::write_json_atomic(&self.usage_attempts_file(), &json!(attempts));
-        let text = match claude::usage_report(binary, account.config_dir.as_deref(), &probe_dir) {
-            Err(Error::UsageCommandUnavailable) => {
-                let _ = fsutil::write_json_atomic(&refused, &binary_stamp);
-                return Err(Error::UsageCommandUnavailable);
-            }
-            other => other?,
-        };
+        let probe_dir = self.layout.relais_dir.join("probe");
+        let workspace = probe_dir.join("workspace");
+        fs::create_dir_all(&workspace).map_err(|e| Error::io(&workspace, e))?;
+        self.note_usage_attempt(alias, now.timestamp());
+        usage_probe::audit_policy(&self.layout, account.config_dir.as_deref())?;
+        let text = usage_probe::report(
+            binary,
+            account.config_dir.as_deref(),
+            &workspace,
+            USAGE_PROBE_TIMEOUT,
+        )?;
         let Some(reading) = usage::parse_usage_report(&text, now.clone()) else {
             return Ok(None);
         };
@@ -1024,19 +1024,39 @@ mod tests {
         );
     }
 
-    fn fake_usage_command(dir: &Path, turns: u32) -> PathBuf {
-        let path = dir.join("claude");
+    /// A stand-in for Claude Code signed in with `email`: a prompt, the
+    /// official command once `/usage` is typed, `panel` once Enter is pressed.
+    /// Each run of the client is written down in `runs`.
+    fn fake_client(dir: &Path, name: &str, email: &str, panel: &str) -> PathBuf {
+        let path = dir.join(name);
         let script = format!(
             r#"#!/bin/sh
-if [ "$1 $2" = "auth status" ]; then printf '{{"loggedIn":true}}'; exit 0; fi
+if [ "$1 $2" = "auth status" ]; then printf '{{"loggedIn":true,"email":"{email}"}}'; exit 0; fi
 printf 'run\n' >> "{runs}"
-printf '{{"type":"result","num_turns":{turns},"total_cost_usd":0,"result":"Current session: 4%% used\\nCurrent week (all models): 37%% used · resets Oct 8 at 10pm (Europe/Zurich)\\nCurrent week (Fable): 12%% used · resets Oct 8 at 10pm (Europe/Zurich)\\n"}}'
+stty raw -echo
+printf 'Claude Code\r\n❯\r\n'
+dd bs=1 count=6 >/dev/null 2>&1
+printf '/usage Show plan usage limits\r\n'
+dd bs=1 count=1 >/dev/null 2>&1
+printf '\033[2J\033[HSettings: Usage\r\n{panel}'
+sleep 20
 "#,
             runs = dir.join("runs").display()
         );
         fs::write(&path, script).unwrap();
         fs::set_permissions(&path, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
         path
+    }
+
+    const WORK_EMAIL: &str = "work@example.com";
+
+    fn fake_usage_command(dir: &Path) -> PathBuf {
+        fake_client(
+            dir,
+            "claude",
+            WORK_EMAIL,
+            "Current session: 4%% used\\r\\nCurrent week (all models): 37%% used · resets Oct 8 at 10pm (Europe/Zurich)\\r\\nCurrent week (Fable): 12%% used · resets Oct 8 at 10pm (Europe/Zurich)\\r\\n",
+        )
     }
 
     fn zurich(at: i64) -> chrono::DateTime<chrono::FixedOffset> {
@@ -1048,7 +1068,7 @@ printf '{{"type":"result","num_turns":{turns},"total_cost_usd":0,"result":"Curre
     #[test]
     fn the_usage_command_gives_an_account_its_reset_times() {
         let (root, relais) = fixture();
-        let binary = fake_usage_command(root.path(), 0);
+        let binary = fake_usage_command(root.path());
 
         let reading = relais
             .refresh_usage("work", &binary, zurich(NOW))
@@ -1064,7 +1084,7 @@ printf '{{"type":"result","num_turns":{turns},"total_cost_usd":0,"result":"Curre
     #[test]
     fn the_usage_command_also_gives_the_limit_of_each_model() {
         let (root, relais) = fixture();
-        let binary = fake_usage_command(root.path(), 0);
+        let binary = fake_usage_command(root.path());
         assert!(relais.model_limits_of("work").is_none());
 
         relais.refresh_usage("work", &binary, zurich(NOW)).unwrap();
@@ -1111,49 +1131,91 @@ printf '{{"type":"result","num_turns":0,"result":"Not logged in"}}'
     fn a_report_without_limits_leaves_the_model_limits_alone() {
         let (root, relais) = fixture();
         relais
-            .refresh_usage("work", &fake_usage_command(root.path(), 0), zurich(NOW))
+            .refresh_usage("work", &fake_usage_command(root.path()), zurich(NOW))
             .unwrap();
-        let signed_out = root.path().join("claude-signed-out");
-        fs::write(
-            &signed_out,
-            "#!/bin/sh\nprintf '{\"type\":\"result\",\"num_turns\":0,\"result\":\"Not logged in\"}'\n",
-        )
-        .unwrap();
-        fs::set_permissions(
-            &signed_out,
-            std::os::unix::fs::PermissionsExt::from_mode(0o755),
-        )
-        .unwrap();
+        let quiet = root.path().join("claude-quiet");
+        fs::write(&quiet, "#!/bin/sh\nexit 0\n").unwrap();
+        fs::set_permissions(&quiet, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
 
-        relais
-            .refresh_usage("work", &signed_out, zurich(NOW + 60))
-            .unwrap();
+        assert!(relais
+            .refresh_usage("work", &quiet, zurich(NOW + 60))
+            .is_err());
 
         assert_eq!(relais.model_limits_of("work").unwrap().windows.len(), 1);
     }
 
     #[test]
-    fn an_account_whose_weekly_reset_is_known_is_not_asked_until_it_passes() {
-        let (_root, relais) = fixture();
-        relais
-            .record_statusline(None, &statusline_input(5.0), NOW)
-            .unwrap();
-
-        assert!(!relais.needs_usage_refresh("main", NOW + 60));
-        assert!(!relais.needs_usage_refresh("main", NOW + 80_000));
-        assert!(relais.needs_usage_refresh("main", NOW + 86_401));
-    }
-
-    #[test]
-    fn an_account_without_a_known_reset_is_asked_at_most_every_six_hours() {
+    fn an_account_is_measured_again_every_quarter_of_an_hour_even_with_its_reset_known() {
         let (root, relais) = fixture();
-        let binary = fake_usage_command_without_reset(root.path());
+        let binary = fake_usage_command(root.path());
         assert!(relais.needs_usage_refresh("work", NOW));
 
         relais.refresh_usage("work", &binary, zurich(NOW)).unwrap();
 
-        assert!(!relais.needs_usage_refresh("work", NOW + 3600));
-        assert!(relais.needs_usage_refresh("work", NOW + 6 * 3600 + 1));
+        assert!(!relais.needs_usage_refresh("work", NOW + 14 * 60));
+        assert!(relais.needs_usage_refresh("work", NOW + 15 * 60));
+    }
+
+    #[test]
+    fn measures_started_together_each_leave_their_attempt() {
+        let (_root, relais) = fixture();
+        fs::create_dir_all(relais.layout.relais_dir.join("probe")).unwrap();
+        let aliases: Vec<String> = (0..16).map(|n| format!("account-{n}")).collect();
+
+        std::thread::scope(|scope| {
+            for alias in &aliases {
+                let relais = &relais;
+                scope.spawn(move || relais.note_usage_attempt(alias, NOW));
+            }
+        });
+
+        assert_eq!(relais.usage_attempts().len(), aliases.len());
+    }
+
+    #[test]
+    fn a_failed_measure_waits_its_turn_like_the_others() {
+        let (root, relais) = fixture();
+        let quiet = root.path().join("claude-quiet");
+        fs::write(&quiet, "#!/bin/sh\nexit 0\n").unwrap();
+        fs::set_permissions(&quiet, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+
+        assert!(relais.refresh_usage("work", &quiet, zurich(NOW)).is_err());
+
+        assert!(!relais.needs_usage_refresh("work", NOW + 60));
+    }
+
+    #[test]
+    fn a_profile_signed_in_with_another_account_is_not_measured() {
+        let (root, relais) = fixture();
+        let binary = fake_client(
+            root.path(),
+            "claude-other",
+            "other@example.com",
+            "Current week (all models): 37%% used\\r\\n",
+        );
+
+        assert!(relais
+            .refresh_usage("work", &binary, zurich(NOW))
+            .unwrap()
+            .is_none());
+
+        assert!(!root.path().join("runs").exists());
+        assert!(relais.usage_of("work").is_none());
+    }
+
+    #[test]
+    fn the_address_of_a_profile_is_compared_without_its_case() {
+        let (root, relais) = fixture();
+        let binary = fake_client(
+            root.path(),
+            "claude-case",
+            "WORK@Example.com",
+            "Current week (all models): 37%% used\\r\\n",
+        );
+
+        let reading = relais.refresh_usage("work", &binary, zurich(NOW)).unwrap();
+
+        assert!(reading.is_some());
     }
 
     #[test]
@@ -1166,35 +1228,6 @@ printf '{{"type":"result","num_turns":0,"result":"Not logged in"}}'
         assert!(relais.measured_lately("main", NOW + 60));
         assert!(!relais.measured_lately("main", NOW + 11 * 60));
         assert!(!relais.measured_lately("work", NOW));
-    }
-
-    fn fake_usage_command_without_reset(dir: &Path) -> PathBuf {
-        let path = dir.join("claude-no-reset");
-        fs::write(
-            &path,
-            "#!/bin/sh\nif [ \"$1 $2\" = \"auth status\" ]; then printf '{\"loggedIn\":true}'; exit 0; fi\nprintf '{\"type\":\"result\",\"num_turns\":0,\"result\":\"Current week (all models): 0%% used\\\\n\"}'\n",
-        )
-        .unwrap();
-        fs::set_permissions(&path, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
-        path
-    }
-
-    #[test]
-    fn a_usage_command_answered_as_a_conversation_is_not_tried_again() {
-        let (root, relais) = fixture();
-        let binary = fake_usage_command(root.path(), 1);
-
-        assert!(matches!(
-            relais.refresh_usage("work", &binary, zurich(NOW)),
-            Err(Error::UsageCommandUnavailable)
-        ));
-        assert!(relais
-            .refresh_usage("work", &binary, zurich(NOW + 900))
-            .unwrap()
-            .is_none());
-
-        let runs = fs::read_to_string(root.path().join("runs")).unwrap();
-        assert_eq!(runs.lines().count(), 1);
     }
 
     fn signed_in(email: &str) -> SignedIn {

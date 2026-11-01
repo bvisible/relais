@@ -16,10 +16,6 @@ const FAKE_CLAUDE: &str = r#"#!/bin/sh
 dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 if [ -n "$CLAUDE_CONFIG_DIR" ]; then global="$CLAUDE_CONFIG_DIR/.claude.json"; else global="$HOME/.claude.json"; fi
 case "$1 $2" in
-  "-p /usage")
-    reset=$(date -v+2d '+%b %-d' 2>/dev/null || date -d '+2 days' '+%b %-d')
-    printf '{"type":"result","num_turns":0,"total_cost_usd":0,"result":"Current session: 3%% used\\nCurrent week (all models): 41%% used · resets %s at 10pm (Europe/Zurich)\\n"}' "$reset"
-    exit 0;;
   "auth status")
     if [ -f "$dir/.credentials.json" ]; then
       email=$(cat "$dir/.credentials.json")
@@ -39,6 +35,17 @@ case "$1 $2" in
       "$FAKE_LOGIN_EMAIL" "$FAKE_LOGIN_EMAIL" "$FAKE_LOGIN_EMAIL" "$sep" "$rest" > "$global"
     exit 0;;
 esac
+if [ "$1" = "--safe-mode" ]; then
+  reset=$(date -v+2d '+%b %-d' 2>/dev/null || date -d '+2 days' '+%b %-d')
+  stty raw -echo
+  printf 'Claude Code\r\n\342\235\257\r\n'
+  dd bs=1 count=6 >/dev/null 2>&1
+  printf '/usage Show plan usage limits\r\n'
+  dd bs=1 count=1 >/dev/null 2>&1
+  printf '\033[2J\033[HSettings: Usage\r\nCurrent session: 3%% used\r\nCurrent week (all models): 41%% used \302\267 resets %s at 10pm (Europe/Zurich)\r\n' "$reset"
+  sleep 20
+  exit 0
+fi
 printf 'CONFIG_DIR=%s PWD=%s ARGS=%s\n' "${CLAUDE_CONFIG_DIR:-unset}" "$(pwd)" "$*" >> "$FAKE_LOG"
 exit "${FAKE_EXIT:-0}"
 "#;

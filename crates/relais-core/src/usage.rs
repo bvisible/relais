@@ -129,11 +129,14 @@ fn window_from_statusline(value: &Value) -> Option<Window> {
 /// (`resets Oct 8 at 10pm (Europe/Zurich)`). Claude Code writes those times in
 /// the machine's time zone, which is `now`'s.
 pub fn parse_usage_report<Tz: TimeZone>(text: &str, now: DateTime<Tz>) -> Option<UsageReading> {
-    let window = |label: &str| -> Option<Window> {
-        let line = text.lines().find(|l| l.trim_start().starts_with(label))?;
-        report_window(line.trim_start().strip_prefix(label)?, &now)
+    let sections = report_sections(text);
+    let window = |label: &str| {
+        sections
+            .iter()
+            .find(|(name, _)| name == label)
+            .and_then(|(_, body)| report_window(body, &now))
     };
-    let five_hour = window("Current session:");
+    let five_hour = window("Current session");
     let seven_day = window(ALL_MODELS_WEEK);
     if five_hour.is_none() && seven_day.is_none() {
         return None;
@@ -147,18 +150,17 @@ pub fn parse_usage_report<Tz: TimeZone>(text: &str, now: DateTime<Tz>) -> Option
     })
 }
 
-const ALL_MODELS_WEEK: &str = "Current week (all models):";
+const ALL_MODELS_WEEK: &str = "Current week (all models)";
 
 /// The weekly limits `/usage` reports for single models (`Current week
 /// (Fable): 0% used · resets …`), in the order it lists them.
 pub fn parse_model_limits<Tz: TimeZone>(text: &str, now: DateTime<Tz>) -> ModelLimits {
-    let windows = text
-        .lines()
-        .map(str::trim_start)
-        .filter(|line| !line.starts_with(ALL_MODELS_WEEK))
-        .filter_map(|line| {
-            let (model, rest) = line.strip_prefix("Current week (")?.split_once("):")?;
-            let window = report_window(rest, &now)?;
+    let windows = report_sections(text)
+        .iter()
+        .filter(|(label, _)| label != ALL_MODELS_WEEK)
+        .filter_map(|(label, body)| {
+            let model = label.strip_prefix("Current week (")?.strip_suffix(')')?;
+            let window = report_window(body, &now)?;
             Some(ModelWindow {
                 model: model.trim().to_string(),
                 used_percentage: window.used_percentage,
@@ -172,17 +174,87 @@ pub fn parse_model_limits<Tz: TimeZone>(text: &str, now: DateTime<Tz>) -> ModelL
     }
 }
 
-/// `12% used · resets Oct 7 at 2:20am (Europe/Zurich)`, the part of a
-/// `/usage` line after its label.
-fn report_window<Tz: TimeZone>(rest: &str, now: &DateTime<Tz>) -> Option<Window> {
-    let used = rest.trim().split('%').next()?.trim().parse::<f64>().ok()?;
-    let resets_at = rest
-        .split("resets ")
-        .nth(1)
-        .and_then(|reset| parse_reset(reset, now));
+/// What ends a limit's section: the panel goes on with credits and sessions,
+/// whose percentages are not that limit's.
+const AFTER_LIMITS: [&str; 7] = [
+    "Extra usage",
+    "Usage credits",
+    "Cloud credits",
+    "Credits",
+    "What's contributing",
+    "Press ",
+    "Esc to",
+];
+
+/// The report split by limit, as (label, what follows it). The label may
+/// share its line with its figures or stand on its own above them.
+fn report_sections(text: &str) -> Vec<(String, String)> {
+    let mut sections: Vec<(String, String)> = Vec::new();
+    let mut open = false;
+    for line in text.lines().map(str::trim) {
+        let label = if line.starts_with("Current session") {
+            Some("Current session")
+        } else if line.starts_with("Current week (") {
+            line.find(')').map(|end| &line[..=end])
+        } else {
+            None
+        };
+        if let Some(label) = label {
+            open = true;
+            let rest = line[label.len()..].trim_start_matches(':').trim();
+            sections.push((label.to_string(), rest.to_string()));
+        } else if AFTER_LIMITS.iter().any(|end| line.starts_with(end)) {
+            open = false;
+        } else if open {
+            if let Some((_, body)) = sections.last_mut() {
+                body.push('\n');
+                body.push_str(line);
+            }
+        }
+    }
+    sections
+}
+
+/// A limit's share and reset, from what follows its label: `12% used · resets
+/// Oct 7 at 2:20am (Europe/Zurich)`, or `2% 2% used` above `Resets 9pm`.
+fn report_window<Tz: TimeZone>(body: &str, now: &DateTime<Tz>) -> Option<Window> {
+    let used = body.lines().find_map(line_share)?;
+    let resets_at = body.lines().find_map(|line| {
+        let at = line.to_ascii_lowercase().find("resets ")?;
+        parse_reset(line[at + "resets ".len()..].split(" · ").next()?, now)
+    });
     Some(Window {
         used_percentage: used,
         resets_at,
+    })
+}
+
+/// The share used a line states. Only a number with its role counts: a screen
+/// reader gives the meter's value before its label (`2% 2% used`), and a share
+/// left has to be turned over.
+fn line_share(line: &str) -> Option<f64> {
+    line.match_indices('%').find_map(|(index, _)| {
+        let digits = line[..index]
+            .rfind(|c: char| !c.is_ascii_digit() && c != '.')
+            .map_or(0, |space| space + 1);
+        let share = line[digits..index].parse::<f64>().ok()?;
+        if !(0.0..=100.0).contains(&share) {
+            return None;
+        }
+        let role = line[index + 1..].trim_start().to_ascii_lowercase();
+        if ["used", "spent", "consumed"]
+            .iter()
+            .any(|word| role.starts_with(word))
+        {
+            Some(share)
+        } else if ["left", "remaining", "available"]
+            .iter()
+            .any(|word| role.starts_with(word))
+        {
+            Some(100.0 - share)
+        } else {
+            None
+        }
     })
 }
 
@@ -806,6 +878,77 @@ What's contributing to your limits usage?";
                 .unwrap()
                 .timestamp();
             assert_eq!(reading.seven_day.unwrap().resets_at, Some(expected));
+        }
+
+        /// The `/usage` panel as the interactive client draws it for a screen
+        /// reader: each label on its line, and the meter's share read twice.
+        const PANEL: &str = "Settings  Status   Config   Usage   Stats
+Session
+Total cost:            $0.0000
+Current session
+14% 14% used
+Resets 11:59pm
+Current week (all models)
+2% 2% used
+Resets Oct 8 at 10pm (Europe/Zurich)
+Current week (Fable)
+5% 5% used
+Resets Oct 9 at 9am (Europe/Zurich)
+What's contributing to your usage?
+Approximate · sessions on this machine only
+Usage credits
+75% used";
+
+        #[test]
+        fn the_interactive_panel_keeps_each_share_and_reset_in_its_section() {
+            let reading = parse_usage_report(PANEL, zurich_now()).unwrap();
+
+            let five = reading.five_hour.unwrap();
+            assert_eq!(five.used_percentage, 14.0);
+            assert_eq!(five.resets_at, Some(local(10, 6, 23, 59)));
+            let week = reading.seven_day.unwrap();
+            assert_eq!(week.used_percentage, 2.0);
+            assert_eq!(week.resets_at, Some(local(10, 8, 22, 0)));
+        }
+
+        #[test]
+        fn the_interactive_panel_reads_a_model_limit_apart() {
+            let limits = parse_model_limits(PANEL, zurich_now());
+
+            assert_eq!(
+                limits.windows,
+                vec![ModelWindow {
+                    model: "Fable".into(),
+                    used_percentage: 5.0,
+                    resets_at: Some(local(10, 9, 9, 0)),
+                }]
+            );
+        }
+
+        #[test]
+        fn a_plan_without_the_session_limit_still_gives_its_week() {
+            let text = "Current week (all models)\n2% 2% used\nResets Oct 8 at 10pm (Europe/Zurich)\nCurrent week (Fable)\n0% 0% used";
+
+            let reading = parse_usage_report(text, zurich_now()).unwrap();
+
+            assert_eq!(reading.five_hour, None);
+            assert_eq!(reading.seven_day.unwrap().used_percentage, 2.0);
+        }
+
+        #[test]
+        fn a_share_left_is_turned_into_a_share_used() {
+            let text = "Current week (all models)\n36% remaining\n";
+
+            let reading = parse_usage_report(text, zurich_now()).unwrap();
+
+            assert_eq!(reading.seven_day.unwrap().used_percentage, 64.0);
+        }
+
+        #[test]
+        fn a_window_not_started_never_borrows_a_percentage_from_what_follows() {
+            let text = "Current session\nNot started\nCurrent week (all models)\nNot started\nUsage credits\n75% used\n";
+
+            assert!(parse_usage_report(text, zurich_now()).is_none());
         }
 
         #[test]

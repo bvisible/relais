@@ -43,8 +43,6 @@ pub enum Error {
     DesktopStillRunning,
     #[error("the Claude desktop app could not be opened")]
     DesktopNotOpened,
-    #[error("this version of Claude Code answers /usage as a conversation")]
-    UsageCommandUnavailable,
     #[error("the Claude desktop app is signed in to an account Relais does not know ({0})")]
     UnknownSignedInAccount(String),
     #[error("Relais does not know the account or organization id of {0}")]

@@ -99,7 +99,6 @@
   "desktop.switched": "Claude Desktop is open on {alias}; its sign-in is not confirmed yet.",
   "desktop.signed_in": "Claude Desktop is on {alias}, signed in. Your conversations, folders and pins are where you left them.",
   "desktop.other_account": "The Claude desktop app opened on another account than {alias}: check it before using it.",
-  "usage.command_unavailable": "This version of Claude Code answers /usage as a conversation: Relais will not ask it again.",
   "help.account.adopt": "Keep the account signed in on the default profile: the account recorded there moves to a profile of its own",
   "adopt.done": "{alias} ({email}) now holds the default profile. {previous} ({previous_email}) stays registered with a profile of its own: sign it in with `relais account login {previous}`.",
   "error.adopt_not_signed_in": "Nothing is signed in on the default profile. Run `claude auth login` first.",

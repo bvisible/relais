@@ -16,6 +16,7 @@ use relais_core::Layout;
 use serde::Serialize;
 use tauri::{AppHandle, WebviewWindow};
 
+use crate::measure;
 use crate::platform;
 use crate::tray;
 
@@ -348,27 +349,11 @@ pub async fn account_stats() -> Result<Vec<AccountStats>, String> {
         .collect())
 }
 
-/// Asks Claude Code for accounts' limits (`claude -p /usage`: nothing billed,
-/// nothing saved), one account after the other since each run reads every local
-/// transcript. In the background (`force` false), only accounts whose weekly
-/// reset is unknown or past, at most every six hours; on request, every account
-/// but the one the terminals run on.
+/// Measures the accounts now: those due, or with `force` every account but
+/// the one the terminals run on. Runs in the background as well.
 #[tauri::command]
 pub async fn refresh_usage(force: bool) -> Result<Overview, String> {
-    let relais = load()?;
-    if let Some(binary) = platform::claude_binary() {
-        let now = now();
-        for account in &relais.registry.accounts {
-            let wanted = if force {
-                !relais.measured_lately(&account.alias, now)
-            } else {
-                relais.needs_usage_refresh(&account.alias, now)
-            };
-            if wanted {
-                let _ = relais.refresh_usage(&account.alias, &binary, chrono::Local::now());
-            }
-        }
-    }
+    measure::measure(force);
     Ok(build_overview(&load()?))
 }
 

@@ -550,11 +550,8 @@ fn refresh_usage(relais: &Relais) {
             }
             let binary = &binary;
             scope.spawn(move || {
-                if let Err(Error::UsageCommandUnavailable) =
-                    relais.refresh_usage(&account.alias, binary, chrono::Local::now())
-                {
-                    warn(t("usage.command_unavailable", &[]));
-                }
+                // Fail open: an account not measured keeps its last figures.
+                let _ = relais.refresh_usage(&account.alias, binary, chrono::Local::now());
             });
         }
     });
