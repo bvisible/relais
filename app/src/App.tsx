@@ -2,8 +2,8 @@ import { isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 
-import { api, type Account, type AccountSignIn, type AccountStats, type Conversation, type Overview, type PaletteColor, type ResumeTarget } from "./api";
-import { age, dayLabels, inTime, isLive, margin, newlySignedIn, remaining, span, time } from "./format";
+import { api, type Account, type AccountSignIn, type AccountStats, type Conversation, type Overview, type PaletteColor, type ProjectUsage, type ResumeTarget } from "./api";
+import { age, dayLabels, inTime, isLive, margin, newlySignedIn, projectShares, remaining, span, time } from "./format";
 import { isMessageKey, t, type MessageKey } from "./i18n";
 import { RelayHome, TabBar, type UpdateState } from "./RelayHome";
 
@@ -19,6 +19,7 @@ const NEUTRAL = "#93A29B";
 const FOLLOW_THEME_KEY = "relais.followTheme";
 const FULL_VIEW_KEY = "relais.fullView";
 const SHOWN_CONVERSATIONS = 5;
+const SHOWN_PROJECTS = 5;
 const FETCHED_CONVERSATIONS = 12;
 const SIGN_IN_CHECK_EVERY_MS = 10 * 60_000;
 const UPDATE_CHECK_EVERY_MS = 6 * 3600_000;
@@ -97,6 +98,7 @@ export function App() {
   const [now, setNow] = useState(nowSecs);
   const [followTheme, setFollowTheme] = useState(readFollowTheme);
   const [update, setUpdate] = useState<UpdateState>(null);
+  const [projects, setProjects] = useState<ProjectUsage[]>([]);
   const [upToDate, setUpToDate] = useState<boolean | null>(null);
 
   // A newer version is offered, never installed behind the user's back. Fail
@@ -279,6 +281,10 @@ export function App() {
     showFull(true);
   };
 
+  useEffect(() => {
+    if (view === "conversations") void api.projectUsage().then(setProjects).catch(() => setProjects([]));
+  }, [view]);
+
   // A notification's button asks to switch: the confirmation takes it from there.
   useEffect(() => {
     if (!isTauri()) return;
@@ -308,6 +314,7 @@ export function App() {
           <div className="page-head">
             <h1 className="page-title">{t("relayMenuConversations")}</h1>
           </div>
+          <Projects usage={projects} />
           <Sessions conversations={conversations} accounts={new Map((overview?.accounts ?? []).map((a) => [a.alias, a]))} now={now} onResume={(id, target) => run(() => api.resume(id, target))} />
         </div>
       )}
@@ -384,6 +391,30 @@ export function App() {
 }
 
 // ---- Home ------------------------------------------------------------------
+
+/** Where the week's consumption went. */
+function Projects({ usage }: { usage: ProjectUsage[] }) {
+  const shares = projectShares(usage, SHOWN_PROJECTS);
+  if (shares.length === 0) return null;
+  return (
+    <section className="card projects" aria-labelledby="projects-title">
+      <h2 id="projects-title" className="section-title">
+        {t("projectsTitle")}
+      </h2>
+      <ul>
+        {shares.map(({ project, share }) => (
+          <li key={project}>
+            <span className="project-name">{project}</span>
+            <span className="project-bar">
+              <span style={{ width: `${Math.max(share, 2)}%` }} />
+            </span>
+            <span className="muted tiny">{share} %</span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
 
 function Sessions({ conversations, accounts, now, onResume }: { conversations: Conversation[]; accounts: Map<string, Account>; now: number; onResume: (id: string, target: ResumeTarget) => void }) {
   const live = conversations.filter((c) => isLive(c.lastActivity, now)).length;

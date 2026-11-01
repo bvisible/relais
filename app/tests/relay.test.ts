@@ -3,13 +3,28 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { advisedOf, confirmLines, connectionOf, connectionSummary, relayOrder, resultLine, ringsOf, staleLine, usageLine } from "../src/relay.ts";
+import { projectShares } from "../src/format.ts";
+
+import { advisedOf, confirmLines, connectionOf, connectionSummary, forecastLine, relayOrder, resultLine, ringsOf, staleLine, usageLine } from "../src/relay.ts";
 
 const plan = (extra: Partial<{ conversations: number; own: number; live: number; untested: string | null; signIn: "parked" | "oldFolder" | "none" }> = {}) => ({ from: "main", conversations: 3, own: 0, live: 0, untested: null, signIn: "parked" as const, ...extra });
 
 const NOW = 1_791_270_000;
 
-const account = (alias: string, five: number | null, week: number | null, extra: Partial<{ limited: boolean; limitedUntil: number | null; observedAt: number | null }> = {}) => ({
+test("the heaviest projects are shown with their share of the whole", () => {
+  const usage = [
+    { project: "a", tokens: 60 },
+    { project: "b", tokens: 30 },
+    { project: "c", tokens: 10 },
+  ];
+  assert.deepEqual(projectShares(usage, 2), [
+    { project: "a", share: 60 },
+    { project: "b", share: 30 },
+  ]);
+  assert.deepEqual(projectShares([], 2), []);
+});
+
+const account = (alias: string, five: number | null, week: number | null, extra: Partial<{ limited: boolean; limitedUntil: number | null; observedAt: number | null; fullAt: number | null }> = {}) => ({
   alias,
   email: `${alias}@example.com`,
   fiveHour: five === null ? null : { used: five, resetsAt: NOW + 3600 },
@@ -79,6 +94,14 @@ test("an old reading says how old it is, a fresh one says nothing", () => {
   assert.equal(staleLine(account("a", 12, 40, { observedAt: NOW - 20 * 60 }), NOW), null);
   assert.equal(plain(staleLine(account("a", 12, 40, { observedAt: NOW - 3 * 3600 }), NOW) ?? ""), "mesuré il y a 3 h");
   assert.equal(staleLine(account("a", null, null, { observedAt: null }), NOW), null);
+});
+
+test("a limit reached today at this pace is told, a far one is not", () => {
+  const paced = (secs: number | null) => account("a", 80, 40, { fullAt: secs == null ? null : NOW + secs });
+  assert.match(plain(forecastLine(paced(2 * 3600), NOW) ?? ""), /^à ce rythme, limite vers \d{2}:\d{2}$/);
+  assert.equal(forecastLine(paced(3 * 86400), NOW), null);
+  assert.equal(forecastLine(paced(null), NOW), null);
+  assert.equal(forecastLine(paced(-60), NOW), null);
 });
 
 test("a paused account says when it is back", () => {

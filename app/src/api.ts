@@ -27,6 +27,8 @@ export type Account = {
   observedAt: number | null;
   limited: boolean;
   limitedUntil: number | null;
+  /** When the account reaches a limit at its current pace. */
+  fullAt: number | null;
 };
 
 export type PaletteColor = { name: string; hex: string };
@@ -51,6 +53,9 @@ export type Overview = {
   version: string;
   now: number;
 };
+
+/** What a project consumed this week, in tokens. */
+export type ProjectUsage = { project: string; tokens: number };
 
 /** A newer Relais on GitHub. */
 export type AvailableUpdate = { version: string };
@@ -126,6 +131,7 @@ export const api = {
   setAlerts: (enabled: boolean) => call<Overview>("set_alerts", { enabled }),
   waitToSwitch: (alias: string | null) => call<Overview>("wait_to_switch", { alias }),
   bringBack: () => call<Overview>("bring_back"),
+  projectUsage: () => call<ProjectUsage[]>("project_usage"),
   hide: () => call<void>("hide"),
   quit: () => call<void>("quit"),
 };
@@ -166,6 +172,7 @@ let previewState: Overview = {
       observedAt: nowSecs() - 30,
       limited: previewMode === "limited",
       limitedUntil: previewMode === "limited" ? nowSecs() + 72 * 60 : null,
+      fullAt: previewMode === "tiring" || previewMode === "showcase" ? nowSecs() + 95 * 60 : null,
     },
     {
       alias: "studio",
@@ -180,6 +187,7 @@ let previewState: Overview = {
       observedAt: nowSecs() - 3600,
       limited: true,
       limitedUntil: nowSecs() + 4 * 86400 + 22 * 3600,
+      fullAt: null,
     },
     {
       alias: "spare",
@@ -195,6 +203,7 @@ let previewState: Overview = {
       observedAt: nowSecs() - 600,
       limited: false,
       limitedUntil: null,
+      fullAt: null,
     },
     {
       alias: "work",
@@ -209,6 +218,7 @@ let previewState: Overview = {
       observedAt: nowSecs() - 120,
       limited: false,
       limitedUntil: null,
+      fullAt: null,
     },
   ],
   palette: PREVIEW_PALETTE,
@@ -288,6 +298,14 @@ async function preview<T>(command: string, args?: Record<string, unknown>): Prom
     };
     const interrupted = [{ id: "s1", title: "Rings and colors in the menu bar app" }];
     return { outcome: "switched", started, undidInterrupted: false, interrupted, overview: { ...previewState, now: nowSecs() } } as T;
+  }
+  if (command === "project_usage") {
+    return [
+      { project: "website", tokens: 5_400_000 },
+      { project: "mobile-app", tokens: 3_100_000 },
+      { project: "api", tokens: 1_200_000 },
+      { project: "docs", tokens: 300_000 },
+    ] as T;
   }
   if (command === "check_update") return (previewMode === "update" ? { version: "0.3.0" } : null) as T;
   if (command === "install_update") {

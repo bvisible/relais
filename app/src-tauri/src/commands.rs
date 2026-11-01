@@ -5,6 +5,7 @@ use std::path::Path;
 use relais_core::claude::desktop_app::{DesktopApp, DESKTOP_QUIT_WAIT, DESKTOP_SIGN_IN_WAIT};
 use relais_core::claude::desktop_carry::OwnConversations;
 use relais_core::claude::desktop_switch::{self, SignIn, Started};
+use relais_core::claude::project_usage::ProjectUsage;
 use relais_core::claude::{cli as claude, desktop_profile, transcripts};
 use relais_core::history;
 use relais_core::integration;
@@ -58,6 +59,8 @@ pub struct AccountView {
     observed_at: Option<i64>,
     limited: bool,
     limited_until: Option<i64>,
+    /// When the account reaches a limit at its current pace.
+    full_at: Option<i64>,
 }
 
 #[derive(Serialize)]
@@ -180,6 +183,14 @@ pub fn build_overview(relais: &Relais) -> Overview {
                     })
                     .unwrap_or_default(),
                 observed_at: reading.as_ref().map(|r| r.observed_at),
+                full_at: reading.as_ref().filter(|_| limit.is_none()).and_then(|r| {
+                    history::forecast(
+                        &relais.usage_history(&account.alias),
+                        now,
+                        r.five_hour.as_ref().and_then(|w| w.resets_at),
+                        r.seven_day.as_ref().and_then(|w| w.resets_at),
+                    )
+                }),
                 limited: limit.is_some(),
                 limited_until: limit.flatten(),
             }
@@ -443,6 +454,12 @@ pub async fn bring_back() -> Result<Overview, String> {
     }
     brought.map_err(desktop_error)?;
     Ok(build_overview(&relais))
+}
+
+/// What each project consumed this week; `measure` keeps it current.
+#[tauri::command]
+pub fn project_usage() -> Result<Vec<ProjectUsage>, String> {
+    Ok(load()?.project_usage(now()))
 }
 
 #[tauri::command]

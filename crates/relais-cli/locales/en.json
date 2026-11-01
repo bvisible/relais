@@ -53,6 +53,8 @@
   "alert.sessions_done": "Your sessions are done",
   "alert.sessions_done_detail": "You can switch to {alias}.",
   "alert.switch": "Switch to {alias}",
+  "help.projects": "What each project consumed this week",
+  "projects.none": "Nothing consumed this week.",
   "doctor.ok": "ok",
   "doctor.claude": "claude: {path} ({version})",
   "doctor.accounts": "Accounts: {count}, active: {active}",

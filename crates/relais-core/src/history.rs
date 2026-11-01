@@ -224,11 +224,139 @@ pub fn weekly_peaks(samples: &[Sample], now: i64, weeks: usize) -> Vec<Option<f6
         .collect()
 }
 
+/// How far back the pace of a window is read: long enough to smooth a burst,
+/// short enough to be today's pace.
+const WEEK_PACE_SPAN: i64 = 6 * 3600;
+const FIVE_HOUR_PACE_SPAN: i64 = 90 * 60;
+/// Less than this says nothing about a pace.
+const PACE_MIN_SPAN: i64 = 20 * 60;
+const PACE_MIN_GAIN: f64 = 1.0;
+
+/// When a limit fills up at the pace of the last readings, if that comes
+/// before it starts over. `share` picks the limit out of a sample.
+fn full_at(
+    samples: &[Sample],
+    share: fn(&Sample) -> Option<f64>,
+    span: i64,
+    now: i64,
+    resets_at: Option<i64>,
+) -> Option<i64> {
+    let mut points: Vec<(i64, f64)> = samples
+        .iter()
+        .filter(|s| s.t > now - span && s.t <= now)
+        .filter_map(|s| Some((s.t, share(s)?)))
+        .collect();
+    points.sort_by_key(|(t, _)| *t);
+    // Only what follows the last reset belongs to this window.
+    let start = points
+        .windows(2)
+        .rposition(|pair| pair[1].1 < pair[0].1)
+        .map_or(0, |index| index + 1);
+    let (first, last) = (points.get(start)?, points.last()?);
+    let (elapsed, gained) = (last.0 - first.0, last.1 - first.1);
+    if elapsed < PACE_MIN_SPAN || gained < PACE_MIN_GAIN || last.1 >= 100.0 {
+        return None;
+    }
+    let at = last.0 + ((100.0 - last.1) * elapsed as f64 / gained) as i64;
+    (at > now && resets_at.is_none_or(|reset| at < reset)).then_some(at)
+}
+
+/// When the account reaches a limit at its current pace: the sooner of its two
+/// windows, or `None` when it will not get there before they start over.
+pub fn forecast(
+    samples: &[Sample],
+    now: i64,
+    five_hour_resets: Option<i64>,
+    week_resets: Option<i64>,
+) -> Option<i64> {
+    let five = full_at(
+        samples,
+        |s| s.fh,
+        FIVE_HOUR_PACE_SPAN,
+        now,
+        five_hour_resets,
+    );
+    let week = full_at(samples, |s| s.sd, WEEK_PACE_SPAN, now, week_resets);
+    five.into_iter().chain(week).min()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use chrono::{FixedOffset, TimeZone};
     use serde_json::json;
+
+    fn week(points: &[(i64, f64)]) -> Vec<Sample> {
+        points
+            .iter()
+            .map(|&(ago, share)| Sample {
+                t: NOW - ago,
+                fh: None,
+                sd: Some(share),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_steady_pace_tells_when_the_week_fills_up() {
+        let samples = week(&[(3 * 3600, 70.0), (3600, 80.0)]);
+
+        // Five points an hour from 80 at NOW - 1 h: full four hours later.
+        let at = forecast(&samples, NOW, None, Some(NOW + 86_400));
+
+        assert_eq!(at, Some(NOW - 3600 + 4 * 3600));
+    }
+
+    #[test]
+    fn a_limit_that_starts_over_first_is_no_threat() {
+        let samples = week(&[(3 * 3600, 70.0), (3600, 80.0)]);
+
+        assert_eq!(forecast(&samples, NOW, None, Some(NOW + 3600)), None);
+    }
+
+    #[test]
+    fn a_share_that_does_not_move_forecasts_nothing() {
+        let samples = week(&[(3 * 3600, 70.0), (3600, 70.0)]);
+
+        assert_eq!(forecast(&samples, NOW, None, Some(NOW + 86_400)), None);
+    }
+
+    #[test]
+    fn a_few_minutes_say_nothing_about_a_pace() {
+        let samples = week(&[(600, 70.0), (60, 75.0)]);
+
+        assert_eq!(forecast(&samples, NOW, None, Some(NOW + 86_400)), None);
+    }
+
+    #[test]
+    fn only_what_follows_a_reset_counts() {
+        let samples = week(&[(5 * 3600, 90.0), (3 * 3600, 2.0), (3600, 12.0)]);
+
+        let at = forecast(&samples, NOW, None, None);
+
+        // Ten points in two hours, 88 to go: 17.6 hours.
+        assert_eq!(at, Some(NOW - 3600 + 63_360));
+    }
+
+    #[test]
+    fn the_sooner_limit_is_the_one_told() {
+        let mut samples = week(&[(3 * 3600, 10.0), (3600, 20.0)]);
+        samples.push(Sample {
+            t: NOW - 3600,
+            fh: Some(50.0),
+            sd: None,
+        });
+        samples.push(Sample {
+            t: NOW - 600,
+            fh: Some(75.0),
+            sd: None,
+        });
+
+        assert_eq!(
+            forecast(&samples, NOW, Some(NOW + 2 * 3600), Some(NOW + 86_400 * 5)),
+            Some(NOW - 600 + 3000)
+        );
+    }
 
     const NOW: i64 = 1_791_270_000;
     const DAY: i64 = 86_400;

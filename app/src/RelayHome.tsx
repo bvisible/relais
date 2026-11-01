@@ -5,7 +5,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { api, type Account, type AccountSignIn, type AvailableUpdate, type Overview } from "./api";
 import { t, type MessageKey } from "./i18n";
-import { advisedOf, confirmLines, connectionOf, connectionSummary, relayOrder, resultLine, ringsOf, staleLine, usageLine, type DesktopPlan, type LiveSession, type Ring } from "./relay.ts";
+import { advisedOf, confirmLines, connectionOf, connectionSummary, forecastLine, relayOrder, resultLine, ringsOf, staleLine, usageLine, type DesktopPlan, type LiveSession, type Ring } from "./relay.ts";
 
 /** The panel's tabs, at its foot. */
 export type Tab = "accounts" | "conversations" | "settings";
@@ -222,6 +222,7 @@ export function RelayHome(props: {
                   {isHere && <span className="relay-chip">{t("relayHere")}</span>}
                 </div>
                 <div className="relay-usage">{[usageLine(account, now), staleLine(account, now)].filter(Boolean).join(" · ")}</div>
+                {isHere && forecastLine(account, now) && <div className="relay-usage">{forecastLine(account, now)}</div>}
                 {connection?.terminal === "otherAccount" && (
                   <div className="relay-todo">
                     {t("relayTerminalOther", { email: connection.otherEmail ?? "?" })} ·{" "}

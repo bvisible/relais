@@ -10,6 +10,7 @@ use crate::alerts::{self, Alert, Memory};
 use crate::claude::cli as claude;
 use crate::claude::desktop;
 use crate::claude::profile::{self, LinkReport};
+use crate::claude::project_usage::{self, ProjectUsage};
 use crate::claude::sync::{self, ConfigFile, SyncOutcome};
 use crate::claude::transcripts::{self, Conversation, ACTIVITY_BUCKETS};
 use crate::claude::usage_probe;
@@ -613,6 +614,24 @@ impl Relais {
         }
         let _ = self.save_alerts(&file);
         due
+    }
+
+    fn project_usage_file(&self) -> PathBuf {
+        self.layout.relais_dir.join("project-usage.json")
+    }
+
+    /// Reads what the transcripts gained since last time.
+    pub fn refresh_project_usage(&self, now: i64) -> Result<()> {
+        project_usage::refresh(
+            &self.layout.claude_dir.join("projects"),
+            &self.project_usage_file(),
+            now,
+        )
+    }
+
+    /// What each project consumed this week, the heaviest first.
+    pub fn project_usage(&self, now: i64) -> Vec<ProjectUsage> {
+        project_usage::by_project(&self.project_usage_file(), now)
     }
 
     /// The empty folder of Relais's own that Claude Code is opened in to

@@ -782,6 +782,41 @@ fn allowing_the_measure_opens_the_client_in_the_folder_it_measures_from() {
 }
 
 #[test]
+fn projects_lists_what_each_project_consumed() {
+    let env = Env::new();
+    env.sign_in_default("main@example.com");
+    assert_ok(&env.run(&["init"]));
+    let folder = env.home().join(".claude/projects/-work");
+    fs::create_dir_all(&folder).unwrap();
+    let when = transcript_date();
+    fs::write(
+        folder.join("a.jsonl"),
+        format!(
+            "{}\n",
+            json!({"cwd": "/work/app", "timestamp": when, "message": {
+                "id": "m1", "usage": {"input_tokens": 10, "output_tokens": 5}
+            }})
+        ),
+    )
+    .unwrap();
+
+    let output = env.run(&["projects"]);
+
+    assert_ok(&output);
+    assert!(text(&output).contains("app"), "{}", text(&output));
+    assert!(text(&output).contains("100%"), "{}", text(&output));
+}
+
+/// Now as a transcript writes it.
+fn transcript_date() -> String {
+    let out = Command::new("date")
+        .args(["-u", "+%Y-%m-%dT%H:%M:%SZ"])
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
+}
+
+#[test]
 fn a_closed_pipe_ends_a_command_quietly() {
     let env = Env::new();
     env.sign_in_default("main@example.com");

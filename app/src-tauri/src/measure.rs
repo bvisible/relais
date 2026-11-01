@@ -39,9 +39,20 @@ pub fn measure(force: bool) {
     }
 }
 
+/// Reads what the transcripts gained: long the first time, on its own thread.
+fn refresh_projects() {
+    if let Ok(relais) = Layout::from_env().and_then(Relais::load) {
+        let _ = relais.refresh_project_usage(chrono::Utc::now().timestamp());
+    }
+}
+
 pub fn keep_measuring() {
     std::thread::spawn(|| loop {
         measure(false);
+        std::thread::sleep(LOOK_EVERY);
+    });
+    std::thread::spawn(|| loop {
+        refresh_projects();
         std::thread::sleep(LOOK_EVERY);
     });
 }

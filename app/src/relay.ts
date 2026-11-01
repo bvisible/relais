@@ -13,6 +13,7 @@ type Line = {
   limited: boolean;
   limitedUntil: number | null;
   observedAt: number | null;
+  fullAt?: number | null;
 };
 
 /** What a switch would do, as the Rust side plans it. */
@@ -77,6 +78,15 @@ function parts(account: Line, now: number): string[] {
   }
   return [five ?? week ?? t("relayUnmeasured")];
 }
+
+/** When the account in use reaches a limit at this pace, if that is soon
+ * enough to plan around. */
+export function forecastLine(account: Line, now: number): string | null {
+  if (account.fullAt == null || account.fullAt <= now || account.fullAt - now > FORECAST_WITHIN) return null;
+  return unbreakable(t("relayForecast", { time: time(account.fullAt, now) }));
+}
+
+const FORECAST_WITHIN = 24 * 3600;
 
 /** How old an account's figures are, once it matters: each account is
  * measured every quarter of an hour, so a reading this old says one failed. */

@@ -137,3 +137,10 @@ export function newlySignedIn(before: SignInState[], after: SignInState[]): stri
   const out = new Set(before.filter((s) => s.signedIn === false).map((s) => s.alias));
   return after.filter((s) => s.signedIn === true && out.has(s.alias)).map((s) => s.alias);
 }
+
+/** The heaviest projects with their share of the whole, the rest left out. */
+export function projectShares(usage: { project: string; tokens: number }[], shown: number): { project: string; share: number }[] {
+  const total = usage.reduce((sum, project) => sum + project.tokens, 0);
+  if (total === 0) return [];
+  return usage.slice(0, shown).map(({ project, tokens }) => ({ project, share: Math.round((tokens / total) * 100) }));
+}

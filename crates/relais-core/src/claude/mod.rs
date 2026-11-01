@@ -8,6 +8,7 @@ pub mod desktop_identity;
 pub mod desktop_profile;
 pub mod desktop_switch;
 pub mod profile;
+pub mod project_usage;
 pub mod sync;
 pub mod transcripts;
 pub mod usage_probe;

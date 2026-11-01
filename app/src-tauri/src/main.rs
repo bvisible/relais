@@ -47,6 +47,7 @@ fn main() {
             commands::set_alerts,
             commands::wait_to_switch,
             commands::bring_back,
+            commands::project_usage,
             commands::hide,
             commands::quit,
             updates::check_update,

@@ -1448,3 +1448,42 @@ input:focus-visible {
 .relay-actions {
   flex-wrap: wrap;
 }
+
+.projects {
+  padding: 14px;
+}
+
+.projects ul {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.projects li {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr) 40px;
+  gap: 10px;
+  align-items: center;
+  padding: 3px 0;
+  font-size: 13px;
+}
+
+.project-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-bar {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--track);
+  overflow: hidden;
+}
+
+.project-bar span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--ink-2);
+}

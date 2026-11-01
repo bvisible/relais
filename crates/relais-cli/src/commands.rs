@@ -1060,6 +1060,23 @@ pub fn allow_measure() -> Outcome {
     Ok(0)
 }
 
+/// What each project consumed this week, from the transcripts on this Mac.
+pub fn projects() -> Outcome {
+    let relais = load()?;
+    relais.refresh_project_usage(now())?;
+    let usage = relais.project_usage(now());
+    let total: u64 = usage.iter().map(|project| project.tokens).sum();
+    let width = usage.iter().map(|p| p.project.len()).max().unwrap_or(0);
+    for project in usage.iter().take(10) {
+        let share = project.tokens * 100 / total.max(1);
+        println!("{:<width$}  {share:>3}%", project.project);
+    }
+    if usage.is_empty() {
+        println!("{}", t("projects.none", &[]));
+    }
+    Ok(0)
+}
+
 fn doctor_measure(relais: &Relais, account: &Account) {
     let Some(reason) = relais.usage_failure(&account.alias) else {
         return;
