@@ -5,20 +5,15 @@
 use std::sync::Mutex;
 use std::time::Duration;
 
-use mac_notification_sys::{MainButton, Notification, NotificationResponse};
 use relais_core::alerts::Alert;
 use relais_core::claude::desktop_switch;
 use relais_core::service::{DueAlert, Relais};
 use relais_core::Layout;
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
 
-use crate::{platform, tray};
+use crate::{notifications, platform};
 
-const BUNDLE_ID: &str = "ai.neoservice.relais";
 const LOOK_EVERY: Duration = Duration::from_secs(30);
-
-/// What the panel listens to: the account to confirm a switch to.
-pub const SWITCH_TO_EVENT: &str = "relais-switch-to";
 
 /// The account to switch to once the desktop app's sessions are done.
 static SWITCH_WAITING: Mutex<Option<String>> = Mutex::new(None);
@@ -37,25 +32,33 @@ pub fn wait_to_switch(alias: Option<String>) {
 const TEST_ENV: &str = "RELAIS_TEST_NOTIFICATION";
 
 pub fn keep_watching(app: AppHandle) {
-    let _ = mac_notification_sys::set_application(BUNDLE_ID);
+    let aliases: Vec<String> = Layout::from_env()
+        .and_then(Relais::load)
+        .map(|relais| {
+            let accounts = relais.registry.accounts.iter();
+            accounts.map(|account| account.alias.clone()).collect()
+        })
+        .unwrap_or_default();
+    notifications::prepare(app, &aliases);
     if std::env::var_os(TEST_ENV).is_some() {
-        let title = platform::text("alert.near", &[("alias", "main"), ("share", "85")]);
-        let body = platform::text("alert.near_next", &[("next", "spare")]);
-        notify(app.clone(), title, body, Some("spare".to_string()));
+        let alias = aliases.first().map_or("main", String::as_str);
+        let title = platform::text("alert.near", &[("alias", alias), ("share", "85")]);
+        let body = platform::text("alert.near_next", &[("next", alias)]);
+        notifications::show(&title, &body, Some(alias));
     }
     std::thread::spawn(move || loop {
         if let Ok(relais) = Layout::from_env().and_then(Relais::load) {
             let owner = desktop_switch::signed_in_account(&relais.layout, &relais.registry).ok();
             let now = chrono::Utc::now().timestamp();
             for due in relais.due_alerts(owner.as_deref(), now) {
-                notify_about(&app, due);
+                notify_about(due);
             }
             if let Some(alias) = switch_waiting() {
                 if relais.live_desktop_sessions(now).is_empty() {
                     wait_to_switch(None);
                     let title = platform::text("alert.sessions_done", &[]);
                     let body = platform::text("alert.sessions_done_detail", &[("alias", &alias)]);
-                    notify(app.clone(), title, body, Some(alias));
+                    notifications::show(&title, &body, Some(&alias));
                 }
             }
         }
@@ -63,7 +66,7 @@ pub fn keep_watching(app: AppHandle) {
     });
 }
 
-fn notify_about(app: &AppHandle, due: DueAlert) {
+fn notify_about(due: DueAlert) {
     let alias = due.alias.as_str();
     let (title, body, target) = match due.alert {
         Alert::Near(share) => {
@@ -84,36 +87,5 @@ fn notify_about(app: &AppHandle, due: DueAlert) {
             Some(alias.to_string()),
         ),
     };
-    notify(app.clone(), title, body, target);
-}
-
-/// Shows a notification; its button, or a click on it, opens the panel on the
-/// confirmation for `target`. Waits for the answer on a thread of its own.
-pub fn notify(app: AppHandle, title: String, body: String, target: Option<String>) {
-    std::thread::spawn(move || {
-        let action = target
-            .as_deref()
-            .map(|alias| platform::text("alert.switch", &[("alias", alias)]));
-        let mut notification = Notification::new();
-        notification
-            .title(&title)
-            .message(&body)
-            .wait_for_click(true);
-        if let Some(action) = action.as_deref() {
-            notification.main_button(MainButton::SingleAction(action));
-        }
-        // Fail open: a notification that cannot show leaves the panel as it is.
-        let Ok(response) = notification.send() else {
-            return;
-        };
-        if matches!(
-            response,
-            NotificationResponse::ActionButton(_) | NotificationResponse::Click
-        ) {
-            tray::open_panel(&app);
-            if let Some(alias) = target {
-                let _ = app.emit(SWITCH_TO_EVENT, alias);
-            }
-        }
-    });
+    notifications::show(&title, &body, target.as_deref());
 }

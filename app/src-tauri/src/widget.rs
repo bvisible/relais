@@ -1,5 +1,6 @@
-//! What the macOS widget shows, written where the app and the widget share
-//! files. The widget reads it on its own schedule: it never asks the app.
+//! What the macOS widget shows, in `~/.relais/widget.json`, the one file the
+//! widget's sandbox lets it read. It reads it on its own schedule, without
+//! asking the app.
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -14,7 +15,6 @@ use serde_json::{json, Value};
 
 use crate::{platform, tray};
 
-const GROUP: &str = "BT249938WK.ai.neoservice.relais";
 const WRITE_EVERY: Duration = Duration::from_secs(60);
 
 #[derive(Serialize)]
@@ -78,11 +78,7 @@ fn snapshot(relais: &Relais, now: i64, offset: chrono::FixedOffset) -> Value {
 }
 
 fn file(layout: &Layout) -> PathBuf {
-    layout
-        .home
-        .join("Library/Group Containers")
-        .join(GROUP)
-        .join("widget.json")
+    layout.relais_dir.join("widget.json")
 }
 
 pub fn keep_fresh() {
@@ -92,12 +88,8 @@ pub fn keep_fresh() {
             if let Ok(relais) = Layout::from_env().and_then(Relais::load) {
                 let offset = *chrono::Local::now().offset();
                 let next = snapshot(&relais, chrono::Utc::now().timestamp(), offset);
-                let path = file(&relais.layout);
-                if let Some(folder) = path.parent() {
-                    let _ = std::fs::create_dir_all(folder);
-                }
                 // Fail open: without the widget, nothing depends on this file.
-                if next != last && fsutil::write_json_atomic(&path, &next).is_ok() {
+                if next != last && fsutil::write_json_atomic(&file(&relais.layout), &next).is_ok() {
                     last = next;
                 }
             }

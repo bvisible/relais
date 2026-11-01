@@ -1,11 +1,10 @@
-// The Relais widget: the account Claude runs on and the others, read from the
-// file the app writes in the group they share. Its sentences come ready-made
-// from the app, in the user's language.
+// The Relais widget: the account Claude runs on and the others, read from
+// ~/.relais/widget.json, the one file its sandbox opens to it. Its sentences
+// come ready-made from the app, in the user's language.
 
+import Darwin
 import SwiftUI
 import WidgetKit
-
-private let group = "BT249938WK.ai.neoservice.relais"
 
 struct AccountLine: Codable, Identifiable {
     let alias: String
@@ -27,9 +26,15 @@ struct Entry: TimelineEntry {
     let accounts: [AccountLine]
 }
 
+/// In a sandbox, NSHomeDirectory() is the widget's own container.
+private func realHome() -> String? {
+    guard let entry = getpwuid(getuid()), let home = entry.pointee.pw_dir else { return nil }
+    return String(cString: home)
+}
+
 private func stored() -> [AccountLine] {
-    guard let folder = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group),
-        let data = try? Data(contentsOf: folder.appendingPathComponent("widget.json")),
+    guard let home = realHome(),
+        let data = try? Data(contentsOf: URL(fileURLWithPath: home + "/.relais/widget.json")),
         let snapshot = try? JSONDecoder().decode(Snapshot.self, from: data)
     else { return [] }
     return snapshot.accounts

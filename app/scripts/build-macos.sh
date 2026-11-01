@@ -39,12 +39,11 @@ if [ -n "$identity" ] && [ "$identity" != "-" ]; then
     --identifier ai.neoservice.relais.cli "$bundle/Contents/MacOS/relais"
   codesign --force --timestamp --options runtime --sign "$identity" \
     --entitlements "$root/app/widget/RelaisWidget.entitlements" "$extension"
-  codesign --force --timestamp --options runtime --sign "$identity" \
-    --entitlements "$root/app/widget/Relais.entitlements" "$bundle"
+  codesign --force --timestamp --options runtime --sign "$identity" "$bundle"
 else
   codesign --force --sign - --identifier ai.neoservice.relais.cli "$bundle/Contents/MacOS/relais"
   codesign --force --sign - --entitlements "$root/app/widget/RelaisWidget.entitlements" "$extension"
-  codesign --force --sign - --entitlements "$root/app/widget/Relais.entitlements" "$bundle"
+  codesign --force --sign - "$bundle"
 fi
 codesign --verify --deep --strict "$bundle"
 echo "$bundle"
