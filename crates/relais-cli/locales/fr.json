@@ -99,5 +99,12 @@
   "desktop.switched": "L'app Claude Desktop est sur {alias}.",
   "desktop.signed_in": "L'app Claude Desktop est sur {alias}, connectée.",
   "desktop.other_account": "L'app Claude Desktop s'est ouverte sur un autre compte que {alias} : vérifie-la avant de t'en servir.",
-  "usage.command_unavailable": "Cette version de Claude Code répond à /usage par une conversation : Relais ne le lui redemandera pas."
+  "usage.command_unavailable": "Cette version de Claude Code répond à /usage par une conversation : Relais ne le lui redemandera pas.",
+  "help.account.adopt": "Garder le compte connecté sur le profil par défaut : le compte enregistré là passe dans un profil à part",
+  "adopt.done": "{alias} ({email}) tient désormais le profil par défaut. {previous} ({previous_email}) reste enregistré avec un profil à part : reconnecte-le avec `relais account login {previous}`.",
+  "error.adopt_not_signed_in": "Aucun compte n'est connecté sur le profil par défaut. Lance d'abord `claude auth login`.",
+  "error.adopt_unknown_email": "Claude Code ne dit pas quel compte est connecté sur le profil par défaut.",
+  "error.adopt_nothing_to_do": "{alias} tient déjà le profil par défaut : il n'y a rien à adopter.",
+  "error.adopt_no_default_account": "Aucun compte enregistré n'utilise le profil par défaut.",
+  "doctor.account_mismatch_default": "{alias} : connecté en tant que {actual}, enregistré comme {expected}. Pour garder {actual} sur ce profil : `relais account adopt`. Pour remettre {expected} : `relais account login {alias}`."
 }

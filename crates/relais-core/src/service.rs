@@ -15,7 +15,7 @@ use crate::error::{Error, Result};
 use crate::fsutil;
 use crate::history::{self, HistoryStore, Sample};
 use crate::layout::Layout;
-use crate::registry::{Account, Registry};
+use crate::registry::{self, Account, Registry};
 use crate::sessions::SessionAccounts;
 use crate::usage::{self, ModelLimits, UsageReading, UsageStore};
 
@@ -42,6 +42,24 @@ pub struct ConversationCounts {
     pub week: usize,
     /// Unix seconds of the latest sighting.
     pub last_seen: Option<i64>,
+}
+
+/// Who Claude Code says is signed in on a profile. Metadata only, never a token.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SignedIn {
+    pub email: String,
+    pub account_uuid: Option<String>,
+    pub org_id: Option<String>,
+}
+
+/// What [`Relais::adopt_default_profile`] changed.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Adoption {
+    /// The account that now holds the default profile.
+    pub alias: String,
+    /// The account that held it before. It keeps its place in the registry,
+    /// now with a profile of its own, still to be signed in.
+    pub previous: String,
 }
 
 /// The status line measured an account this recently: the terminals run on it.
@@ -83,6 +101,107 @@ impl Relais {
             None => Ok(None),
             Some(dir) => profile::ensure_links(&self.layout.claude_dir, dir).map(Some),
         }
+    }
+
+    /// Registers `signed_in` as the account of the default profile (`~/.claude`),
+    /// when it is no longer the account Relais recorded there: someone ran
+    /// `/login` with another account.
+    ///
+    /// The account recorded until now is not dropped. Its identity is still
+    /// right, and so is what Relais keeps under its name: the desktop app's
+    /// sign-in, its color. It moves to a profile of its own, to be signed in
+    /// again. The new account joins at the end, and takes the active marker
+    /// when the previous one held it, since the terminals still run on the
+    /// default profile.
+    ///
+    /// The registry changes in memory only: the caller saves it. On disk, this
+    /// first copies the registry file and sets aside the usage reading stored
+    /// under the previous name, both in `backups/adopt/<now>`: the status line
+    /// wrote that reading while the default profile held another account, so
+    /// nothing says whose it is. The next status line fills in the right one.
+    pub fn adopt_default_profile(
+        &mut self,
+        signed_in: SignedIn,
+        alias: Option<&str>,
+        now: i64,
+    ) -> Result<Adoption> {
+        let previous = self
+            .registry
+            .accounts
+            .iter()
+            .find(|a| a.is_default_profile())
+            .cloned()
+            .ok_or(Error::NoDefaultProfileAccount)?;
+        let email = signed_in.email.trim().to_string();
+        let same_email = |a: &Account| {
+            a.email
+                .as_deref()
+                .is_some_and(|known| known.eq_ignore_ascii_case(&email))
+        };
+        if same_email(&previous) {
+            return Err(Error::AlreadyOnDefaultProfile(previous.alias));
+        }
+        if self.registry.accounts.iter().any(same_email) {
+            return Err(Error::DuplicateEmail(email));
+        }
+        let alias = match alias {
+            Some(alias) => alias.to_string(),
+            None => {
+                let taken: Vec<&str> = self
+                    .registry
+                    .accounts
+                    .iter()
+                    .map(|a| a.alias.as_str())
+                    .collect();
+                registry::alias_from_email(&email, &taken)
+            }
+        };
+        if self.registry.get(&alias).is_some() {
+            return Err(Error::DuplicateAlias(alias));
+        }
+
+        let saved = self
+            .layout
+            .backups_dir()
+            .join("adopt")
+            .join(now.to_string());
+        fs::create_dir_all(&saved).map_err(|e| Error::io(&saved, e))?;
+        let accounts_file = self.layout.accounts_file();
+        if accounts_file.is_file() {
+            fs::copy(&accounts_file, saved.join("accounts.json"))
+                .map_err(|e| Error::io(&accounts_file, e))?;
+        }
+        UsageStore::new(&self.layout.usage_dir()).move_to(
+            &previous.alias,
+            &saved.join(format!("usage-{}.json", previous.alias)),
+        )?;
+
+        let profile_dir = self.layout.profile_dir(&previous.alias);
+        if let Some(entry) = self
+            .registry
+            .accounts
+            .iter_mut()
+            .find(|a| a.alias == previous.alias)
+        {
+            entry.config_dir = Some(profile_dir);
+            entry.chrome_profile = Some(format!("Relais-{}", previous.alias));
+        }
+        self.registry.add(Account {
+            alias: alias.clone(),
+            email: Some(email),
+            account_uuid: signed_in.account_uuid,
+            org_id: signed_in.org_id,
+            config_dir: None,
+            chrome_profile: None,
+            color: None,
+        })?;
+        if self.registry.active.as_deref() == Some(previous.alias.as_str()) {
+            self.registry.active = Some(alias.clone());
+        }
+        Ok(Adoption {
+            alias,
+            previous: previous.alias,
+        })
     }
 
     /// Brings the shared part of every account's `.claude.json` to the same state.
@@ -1076,5 +1195,174 @@ printf '{{"type":"result","num_turns":0,"result":"Not logged in"}}'
 
         let runs = fs::read_to_string(root.path().join("runs")).unwrap();
         assert_eq!(runs.lines().count(), 1);
+    }
+
+    fn signed_in(email: &str) -> SignedIn {
+        SignedIn {
+            email: email.into(),
+            account_uuid: Some(format!("acc-{email}")),
+            org_id: Some(format!("org-{email}")),
+        }
+    }
+
+    #[test]
+    fn adopting_gives_the_default_profile_to_the_account_signed_in_there() {
+        let (_root, mut relais) = fixture();
+
+        let adoption = relais
+            .adopt_default_profile(signed_in("new@example.com"), None, NOW)
+            .unwrap();
+
+        assert_eq!(adoption.alias, "new");
+        assert_eq!(adoption.previous, "main");
+        let aliases: Vec<&str> = relais
+            .registry
+            .accounts
+            .iter()
+            .map(|a| a.alias.as_str())
+            .collect();
+        assert_eq!(aliases, ["main", "work", "new"]);
+        let new = relais.registry.get("new").unwrap();
+        assert!(new.is_default_profile());
+        assert_eq!(new.email.as_deref(), Some("new@example.com"));
+        assert_eq!(new.account_uuid.as_deref(), Some("acc-new@example.com"));
+        assert_eq!(new.org_id.as_deref(), Some("org-new@example.com"));
+        let main = relais.registry.get("main").unwrap();
+        assert_eq!(main.config_dir, Some(relais.layout.profile_dir("main")));
+        assert_eq!(main.chrome_profile.as_deref(), Some("Relais-main"));
+        assert_eq!(main.email.as_deref(), Some("main@example.com"));
+        assert_eq!(main.account_uuid.as_deref(), Some("acc-main"));
+        assert_eq!(
+            relais.registry.get("work").unwrap().config_dir,
+            Some(relais.layout.profile_dir("work")),
+            "the other accounts are not touched"
+        );
+    }
+
+    #[test]
+    fn the_active_marker_follows_the_default_profile() {
+        let (_root, mut relais) = fixture();
+        assert_eq!(relais.registry.active.as_deref(), Some("main"));
+        relais
+            .adopt_default_profile(signed_in("new@example.com"), None, NOW)
+            .unwrap();
+        assert_eq!(
+            relais.registry.active.as_deref(),
+            Some("new"),
+            "the terminals still run on the default profile"
+        );
+
+        let (_root, mut relais) = fixture();
+        relais.registry.set_active("work").unwrap();
+        relais
+            .adopt_default_profile(signed_in("new@example.com"), None, NOW)
+            .unwrap();
+        assert_eq!(relais.registry.active.as_deref(), Some("work"));
+    }
+
+    #[test]
+    fn the_reading_under_the_previous_name_is_set_aside() {
+        let (_root, mut relais) = fixture();
+        relais.save().unwrap();
+        relais
+            .record_statusline(None, &statusline_input(42.0), NOW)
+            .unwrap();
+        assert!(relais.usage_of("main").is_some());
+
+        relais
+            .adopt_default_profile(signed_in("new@example.com"), None, NOW)
+            .unwrap();
+
+        assert!(
+            relais.usage_of("main").is_none(),
+            "nothing says whose reading it was"
+        );
+        let saved = relais
+            .layout
+            .backups_dir()
+            .join("adopt")
+            .join(NOW.to_string());
+        assert!(saved.join("usage-main.json").is_file());
+        let registry: Value =
+            serde_json::from_slice(&fs::read(saved.join("accounts.json")).unwrap()).unwrap();
+        assert_eq!(registry["accounts"][0]["alias"], json!("main"));
+        assert!(
+            registry["accounts"][0].get("configDir").is_none(),
+            "the registry as it was before"
+        );
+    }
+
+    #[test]
+    fn the_desktop_app_stays_with_the_previous_account() {
+        let (_root, mut relais) = fixture();
+        crate::claude::desktop_profile::set_owner(&relais.layout, "main").unwrap();
+
+        relais
+            .adopt_default_profile(signed_in("new@example.com"), None, NOW)
+            .unwrap();
+
+        assert_eq!(
+            crate::claude::desktop_profile::owner(&relais.layout, &relais.registry).as_deref(),
+            Some("main"),
+            "its sign-in did not change"
+        );
+    }
+
+    #[test]
+    fn an_account_registered_with_its_own_profile_is_not_adopted() {
+        let (_root, mut relais) = fixture();
+        let before = relais.registry.clone();
+
+        let error = relais
+            .adopt_default_profile(signed_in("WORK@example.com"), None, NOW)
+            .unwrap_err();
+
+        assert!(matches!(error, Error::DuplicateEmail(_)), "{error:?}");
+        assert_eq!(relais.registry, before);
+    }
+
+    #[test]
+    fn the_account_already_on_the_default_profile_has_nothing_to_adopt() {
+        let (_root, mut relais) = fixture();
+        let before = relais.registry.clone();
+
+        let error = relais
+            .adopt_default_profile(signed_in("Main@Example.com"), None, NOW)
+            .unwrap_err();
+
+        assert!(
+            matches!(&error, Error::AlreadyOnDefaultProfile(alias) if alias == "main"),
+            "{error:?}"
+        );
+        assert_eq!(relais.registry, before);
+    }
+
+    #[test]
+    fn adopting_uses_the_alias_asked_and_refuses_a_taken_one() {
+        let (_root, mut relais) = fixture();
+        let adoption = relais
+            .adopt_default_profile(signed_in("new@example.com"), Some("fresh"), NOW)
+            .unwrap();
+        assert_eq!(adoption.alias, "fresh");
+
+        let (_root, mut relais) = fixture();
+        let before = relais.registry.clone();
+        let error = relais
+            .adopt_default_profile(signed_in("new@example.com"), Some("work"), NOW)
+            .unwrap_err();
+        assert!(matches!(error, Error::DuplicateAlias(_)), "{error:?}");
+        assert_eq!(relais.registry, before);
+    }
+
+    #[test]
+    fn adopting_needs_an_account_registered_on_the_default_profile() {
+        let (_root, mut relais) = fixture();
+        relais.registry.remove("main").unwrap();
+
+        let error = relais
+            .adopt_default_profile(signed_in("new@example.com"), None, NOW)
+            .unwrap_err();
+
+        assert!(matches!(error, Error::NoDefaultProfileAccount), "{error:?}");
     }
 }

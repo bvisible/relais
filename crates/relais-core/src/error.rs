@@ -23,6 +23,10 @@ pub enum Error {
     DuplicateEmail(String),
     #[error("no account is registered yet")]
     NoAccounts,
+    #[error("{0} already holds the default profile")]
+    AlreadyOnDefaultProfile(String),
+    #[error("no registered account uses the default profile")]
+    NoDefaultProfileAccount,
     #[error("the claude command was not found in PATH")]
     ClaudeNotFound,
     #[error("command failed: {0}")]

@@ -12,7 +12,7 @@ use relais_core::claude::desktop_app::{
 };
 use relais_core::claude::{desktop_profile, transcripts};
 use relais_core::registry::{self, Account};
-use relais_core::service::Relais;
+use relais_core::service::{Relais, SignedIn};
 use relais_core::usage::Availability;
 use relais_core::{integration, Error, Layout};
 
@@ -45,6 +45,12 @@ impl Failure {
                 t("error.duplicate_email", &[("email", email)])
             }
             Failure::Core(Error::NoAccounts) => t("error.no_accounts", &[]),
+            Failure::Core(Error::AlreadyOnDefaultProfile(alias)) => {
+                t("error.adopt_nothing_to_do", &[("alias", alias)])
+            }
+            Failure::Core(Error::NoDefaultProfileAccount) => {
+                t("error.adopt_no_default_account", &[])
+            }
             Failure::Core(Error::ClaudeNotFound) => t("error.claude_not_found", &[]),
             Failure::Core(Error::DesktopStillRunning) => t("desktop.still_running", &[]),
             Failure::Core(Error::DesktopNotOpened) => t("desktop.open_failed", &[]),
@@ -447,6 +453,57 @@ pub fn account_login(alias: &str) -> Outcome {
             &[
                 ("alias", alias),
                 ("email", status.email.as_deref().unwrap_or("?"))
+            ]
+        )
+    );
+    Ok(0)
+}
+
+/// Records that someone signed another account in on the default profile
+/// (`/login` inside Claude Code): that account takes the profile, and the one
+/// recorded there until now moves to a profile of its own.
+pub fn account_adopt(alias: Option<String>) -> Outcome {
+    let binary = claude_binary()?;
+    let mut relais = load()?;
+    require_accounts(&relais)?;
+    let alias = alias.map(|a| validate_alias(&a)).transpose()?;
+    let status = claude::auth_status(&binary, None)
+        .ok()
+        .filter(|s| s.logged_in)
+        .ok_or_else(|| Failure::Message(t("error.adopt_not_signed_in", &[])))?;
+    let identity = claude::read_account_identity(&relais.layout.claude_global_config)?;
+    let email = status
+        .email
+        .clone()
+        .or_else(|| identity.as_ref().and_then(|i| i.email.clone()))
+        .ok_or_else(|| Failure::Message(t("error.adopt_unknown_email", &[])))?;
+    let previous_email = relais
+        .registry
+        .find_by_config_dir(None)
+        .and_then(|a| a.email.clone())
+        .unwrap_or_else(|| "?".to_string());
+    let adoption = relais.adopt_default_profile(
+        SignedIn {
+            email: email.clone(),
+            account_uuid: identity.as_ref().and_then(|i| i.account_uuid.clone()),
+            org_id: identity
+                .as_ref()
+                .and_then(|i| i.org_id.clone())
+                .or(status.org_id),
+        },
+        alias.as_deref(),
+        now(),
+    )?;
+    relais.save()?;
+    println!(
+        "{}",
+        t(
+            "adopt.done",
+            &[
+                ("alias", &adoption.alias),
+                ("email", &email),
+                ("previous", &adoption.previous),
+                ("previous_email", &previous_email),
             ]
         )
     );
@@ -992,10 +1049,15 @@ fn doctor_account(relais: &Relais, account: &Account, binary: &Path) {
                     )
                 );
             } else {
+                let key = if account.is_default_profile() {
+                    "doctor.account_mismatch_default"
+                } else {
+                    "doctor.account_mismatch"
+                };
                 println!(
                     "✗ {}",
                     t(
-                        "doctor.account_mismatch",
+                        key,
                         &[
                             ("alias", &account.alias),
                             ("actual", &actual),

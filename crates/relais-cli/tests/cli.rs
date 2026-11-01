@@ -8,6 +8,10 @@ use std::process::{Command, Output, Stdio};
 
 use serde_json::{json, Value};
 
+// The fake keeps who is "signed in" in `$dir/.credentials.json`, a name Relais never links
+// into a profile (the real Claude Code keeps its tokens in the Keychain, outside the folder).
+// Any other name would be linked from `~/.claude` into every profile, and a sign-in in one
+// profile would overwrite the others'.
 const FAKE_CLAUDE: &str = r#"#!/bin/sh
 dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 if [ -n "$CLAUDE_CONFIG_DIR" ]; then global="$CLAUDE_CONFIG_DIR/.claude.json"; else global="$HOME/.claude.json"; fi
@@ -17,8 +21,8 @@ case "$1 $2" in
     printf '{"type":"result","num_turns":0,"total_cost_usd":0,"result":"Current session: 3%% used\\nCurrent week (all models): 41%% used · resets %s at 10pm (Europe/Zurich)\\n"}' "$reset"
     exit 0;;
   "auth status")
-    if [ -f "$dir/fake-account" ]; then
-      email=$(cat "$dir/fake-account")
+    if [ -f "$dir/.credentials.json" ]; then
+      email=$(cat "$dir/.credentials.json")
       printf '{"loggedIn":true,"email":"%s","orgId":"org-%s","subscriptionType":"max"}' "$email" "$email"
       exit 0
     fi
@@ -27,7 +31,7 @@ case "$1 $2" in
   "auth login")
     printf '%s' "$BROWSER" > "$HOME/browser-env"
     mkdir -p "$dir"
-    printf '%s' "$FAKE_LOGIN_EMAIL" > "$dir/fake-account"
+    printf '%s' "$FAKE_LOGIN_EMAIL" > "$dir/.credentials.json"
     if [ -f "$global" ]; then content=$(cat "$global"); else content='{}'; fi
     rest="${content#\{}"
     case "$rest" in "}"*) sep="";; *) sep=",";; esac
@@ -108,7 +112,7 @@ impl Env {
     }
 
     fn sign_in_default(&self, email: &str) {
-        fs::write(self.home().join(".claude/fake-account"), email).unwrap();
+        fs::write(self.home().join(".claude/.credentials.json"), email).unwrap();
         fs::write(
             self.home().join(".claude.json"),
             json!({"oauthAccount": {"accountUuid": "acc-main", "emailAddress": email, "organizationUuid": "org-main"},
@@ -685,6 +689,177 @@ fn account_add_refuses_a_sign_in_with_another_email() {
         !profile(&env, "hello").exists(),
         "the half-made profile is removed"
     );
+}
+
+/// What `/login` inside Claude Code does to the default profile: another
+/// account is signed in there, without Relais knowing.
+fn sign_in_default_as(env: &Env, email: &str, uuid: &str) {
+    fs::write(env.home().join(".claude/.credentials.json"), email).unwrap();
+    fs::write(
+        env.home().join(".claude.json"),
+        json!({"oauthAccount": {"accountUuid": uuid, "emailAddress": email, "organizationUuid": format!("org-{uuid}")},
+               "mcpServers": {"github": {"command": "gh"}}})
+        .to_string(),
+    )
+    .unwrap();
+}
+
+/// Two accounts registered, then someone signs a third in on the default profile.
+fn env_with_a_third_account_on_the_default_profile() -> Env {
+    let env = Env::new();
+    env.sign_in_default("main@example.com");
+    assert_ok(&env.run(&["init"]));
+    assert_ok(&env.add_account("work", "work@example.com"));
+    sign_in_default_as(&env, "new@example.com", "acc-new");
+    env
+}
+
+#[test]
+fn account_adopt_hands_the_default_profile_to_the_account_signed_in_there() {
+    let env = env_with_a_third_account_on_the_default_profile();
+
+    let output = env.run(&["account", "adopt"]);
+
+    assert_ok(&output);
+    let registry = env.registry();
+    let accounts = registry["accounts"].as_array().unwrap();
+    assert_eq!(accounts.len(), 3);
+    assert_eq!(accounts[2]["alias"], json!("new"));
+    assert_eq!(accounts[2]["email"], json!("new@example.com"));
+    assert_eq!(accounts[2]["accountUuid"], json!("acc-new"));
+    assert!(
+        accounts[2].get("configDir").is_none(),
+        "the account signed in keeps the default profile"
+    );
+    assert_eq!(accounts[0]["alias"], json!("main"));
+    assert_eq!(
+        accounts[0]["configDir"],
+        json!(profile(&env, "main").display().to_string())
+    );
+    assert_eq!(accounts[0]["chromeProfile"], json!("Relais-main"));
+    assert_eq!(registry["active"], json!("new"));
+    let message = text(&output);
+    assert!(
+        message.contains("new@example.com") && message.contains("relais account login main"),
+        "{message}"
+    );
+}
+
+#[test]
+fn account_adopt_names_the_account_with_the_alias_asked() {
+    let env = env_with_a_third_account_on_the_default_profile();
+
+    assert_ok(&env.run(&["account", "adopt", "--alias", "fresh"]));
+
+    assert_eq!(env.registry()["accounts"][2]["alias"], json!("fresh"));
+    assert_eq!(env.registry()["active"], json!("fresh"));
+}
+
+#[test]
+fn doctor_points_at_adopt_when_the_default_profile_changed_hands() {
+    let env = env_with_a_third_account_on_the_default_profile();
+
+    let before = text(&env.run(&["doctor"]));
+    assert!(
+        before.contains("signed in as new@example.com, registered as main@example.com")
+            && before.contains("relais account adopt"),
+        "{before}"
+    );
+
+    assert_ok(&env.run(&["account", "adopt"]));
+
+    let after = text(&env.run(&["doctor"]));
+    assert!(
+        !after.contains("registered as main@example.com"),
+        "the mismatch is gone: {after}"
+    );
+    assert!(
+        after.contains("new: signed in as new@example.com"),
+        "{after}"
+    );
+    assert!(
+        after.contains("main: not signed in"),
+        "the previous account waits for its own sign-in: {after}"
+    );
+}
+
+#[test]
+fn the_previous_account_signs_in_again_in_its_own_profile_after_an_adoption() {
+    let env = env_with_a_third_account_on_the_default_profile();
+    assert_ok(&env.run(&["account", "adopt"]));
+
+    let login = env
+        .relais()
+        .args(["account", "login", "main"])
+        .env("FAKE_LOGIN_EMAIL", "main@example.com")
+        .output()
+        .unwrap();
+
+    assert_ok(&login);
+    let doctor = text(&env.run(&["doctor"]));
+    assert!(
+        doctor.contains("main: signed in as main@example.com")
+            && doctor.contains("new: signed in as new@example.com"),
+        "both accounts are signed in, each in its own profile: {doctor}"
+    );
+    let browser = fs::read_to_string(env.home().join("browser-env")).unwrap();
+    assert!(
+        browser.contains("accounts/main/open-browser"),
+        "the sign-in opens the account's own Chrome profile: {browser}"
+    );
+}
+
+#[test]
+fn account_adopt_has_nothing_to_do_when_the_registered_account_is_still_there() {
+    let env = Env::new();
+    env.sign_in_default("main@example.com");
+    assert_ok(&env.run(&["init"]));
+    let before = env.registry();
+
+    let output = env.run(&["account", "adopt"]);
+
+    assert!(!output.status.success());
+    assert!(text(&output).contains("main"), "{}", text(&output));
+    assert_eq!(env.registry(), before);
+}
+
+#[test]
+fn account_adopt_refuses_an_account_that_has_its_own_profile() {
+    let env = Env::new();
+    env.sign_in_default("main@example.com");
+    assert_ok(&env.run(&["init"]));
+    assert_ok(&env.add_account("work", "work@example.com"));
+    sign_in_default_as(&env, "work@example.com", "acc-work");
+    let before = env.registry();
+
+    let output = env.run(&["account", "adopt"]);
+
+    assert!(!output.status.success());
+    assert!(
+        text(&output).contains("work@example.com"),
+        "{}",
+        text(&output)
+    );
+    assert_eq!(env.registry(), before);
+}
+
+#[test]
+fn account_adopt_needs_something_signed_in_on_the_default_profile() {
+    let env = Env::new();
+    env.sign_in_default("main@example.com");
+    assert_ok(&env.run(&["init"]));
+    fs::remove_file(env.home().join(".claude/.credentials.json")).unwrap();
+    let before = env.registry();
+
+    let output = env.run(&["account", "adopt"]);
+
+    assert!(!output.status.success());
+    assert!(
+        text(&output).contains("claude auth login"),
+        "{}",
+        text(&output)
+    );
+    assert_eq!(env.registry(), before);
 }
 
 fn chrono_now() -> i64 {

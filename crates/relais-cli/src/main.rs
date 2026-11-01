@@ -76,9 +76,20 @@ enum Commands {
 
 #[derive(Subcommand)]
 enum AccountAction {
-    Add { alias: String },
-    Login { alias: String },
-    Remove { alias: String },
+    Add {
+        alias: String,
+    },
+    Login {
+        alias: String,
+    },
+    Remove {
+        alias: String,
+    },
+    Adopt {
+        /// The name to give the account signed in on the default profile.
+        #[arg(long)]
+        alias: Option<String>,
+    },
 }
 
 /// The clap command with translated descriptions.
@@ -111,6 +122,7 @@ fn localized_command() -> clap::Command {
             .mut_subcommand("add", |sub| sub.about(t("help.account.add", &[])))
             .mut_subcommand("login", |sub| sub.about(t("help.account.login", &[])))
             .mut_subcommand("remove", |sub| sub.about(t("help.account.remove", &[])))
+            .mut_subcommand("adopt", |sub| sub.about(t("help.account.adopt", &[])))
     })
 }
 
@@ -131,6 +143,9 @@ fn main() -> ExitCode {
         Commands::Account {
             action: AccountAction::Remove { alias },
         } => commands::account_remove(&alias),
+        Commands::Account {
+            action: AccountAction::Adopt { alias },
+        } => commands::account_adopt(alias),
         Commands::List { refresh } => commands::list(refresh),
         Commands::Switch { target } => commands::switch(&target),
         Commands::Exec { account, args } => commands::exec(account.as_deref(), args),

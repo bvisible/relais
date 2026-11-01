@@ -415,6 +415,17 @@ impl UsageStore {
         fsutil::write_json_atomic(&path, &value)
     }
 
+    /// Moves an account's reading to `target`, leaving the account without
+    /// one. Returns `false` when it had none.
+    pub fn move_to(&self, alias: &str, target: &Path) -> Result<bool> {
+        let path = self.path(alias);
+        if !path.is_file() {
+            return Ok(false);
+        }
+        std::fs::rename(&path, target).map_err(|e| Error::io(&path, e))?;
+        Ok(true)
+    }
+
     pub fn load_models(&self, alias: &str) -> Result<Option<ModelLimits>> {
         let path = self.models_path(alias);
         match fsutil::read_json(&path)? {

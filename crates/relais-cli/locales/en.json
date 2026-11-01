@@ -99,5 +99,12 @@
   "desktop.switched": "The Claude desktop app is on {alias}.",
   "desktop.signed_in": "The Claude desktop app is on {alias}, signed in.",
   "desktop.other_account": "The Claude desktop app opened on another account than {alias}: check it before using it.",
-  "usage.command_unavailable": "This version of Claude Code answers /usage as a conversation: Relais will not ask it again."
+  "usage.command_unavailable": "This version of Claude Code answers /usage as a conversation: Relais will not ask it again.",
+  "help.account.adopt": "Keep the account signed in on the default profile: the account recorded there moves to a profile of its own",
+  "adopt.done": "{alias} ({email}) now holds the default profile. {previous} ({previous_email}) stays registered with a profile of its own: sign it in with `relais account login {previous}`.",
+  "error.adopt_not_signed_in": "Nothing is signed in on the default profile. Run `claude auth login` first.",
+  "error.adopt_unknown_email": "Claude Code does not say which account is signed in on the default profile.",
+  "error.adopt_nothing_to_do": "{alias} already holds the default profile: there is nothing to adopt.",
+  "error.adopt_no_default_account": "No registered account uses the default profile.",
+  "doctor.account_mismatch_default": "{alias}: signed in as {actual}, registered as {expected}. To keep {actual} on this profile: `relais account adopt`. To bring {expected} back: `relais account login {alias}`."
 }
