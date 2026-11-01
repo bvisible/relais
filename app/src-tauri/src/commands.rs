@@ -181,7 +181,9 @@ pub fn build_overview(relais: &Relais) -> Overview {
             .iter()
             .map(|&(name, hex)| PaletteColor { name, hex })
             .collect(),
-        desktop_owner: desktop_profile::owner(&relais.layout, &relais.registry),
+        desktop_owner: desktop_switch::signed_in_account(&relais.layout, &relais.registry)
+            .ok()
+            .or_else(|| desktop_profile::owner(&relais.layout, &relais.registry)),
         best: relais.best_other_account(now),
         statusline: integration::statusline_installed(&relais.layout),
         shell: integration::shell_installed(&relais.layout),

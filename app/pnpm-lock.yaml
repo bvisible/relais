@@ -8,10 +8,10 @@ importers:
 
   .:
     dependencies:
-      '@fontsource-variable/bricolage-grotesque':
+      '@fontsource-variable/karla':
         specifier: ^5.3.0
         version: 5.3.0
-      '@fontsource-variable/manrope':
+      '@fontsource/forum':
         specifier: ^5.3.0
         version: 5.3.0
       '@tauri-apps/api':
@@ -45,11 +45,11 @@ importers:
 
 packages:
 
-  '@fontsource-variable/bricolage-grotesque@5.3.0':
-    resolution: {integrity: sha512-TLi9Q4hJjS2UvoTMRSS2nHu6c4R56lAw60NR9QYtVRCHn0XtsFpiEhNffZ8Glsoxu6wEEwLKBP8lb94J52PNBA==}
+  '@fontsource-variable/karla@5.3.0':
+    resolution: {integrity: sha512-CypH/IGhvpU0I4sue6YG+ZDyx5heglFJAiU2NClTkKOh+jsqjZ7AAgWKGG59+X1dGCN/9L4BLLacCXD7TBBETA==}
 
-  '@fontsource-variable/manrope@5.3.0':
-    resolution: {integrity: sha512-6D5dgokHsWDDMtmXHznKa0hK229NN+1a4BLPmUCLqcO1Pw5EEhWY5RFt0AcXnVRAljFFPfRtLkJePQj6LSsV6g==}
+  '@fontsource/forum@5.3.0':
+    resolution: {integrity: sha512-wZmonoit7JhG5usRNScbeNBzqnqijKD7Kzv6pRBXklVdwsADNarLG/5K6+XoCMx3JyBAwg52TxO+dretsomNrQ==}
 
   '@oxc-project/types@0.152.0':
     resolution: {integrity: sha512-oM/5rLBm2tPkg0iBgkH/FOeR3PCDpY19GTgAZjMFM8h9WI9VW7cLgzp6nwtarYKmovavIQZ+Fe/RKX/8C8O/Rw==}
@@ -562,9 +562,9 @@ packages:
 
 snapshots:
 
-  '@fontsource-variable/bricolage-grotesque@5.3.0': {}
+  '@fontsource-variable/karla@5.3.0': {}
 
-  '@fontsource-variable/manrope@5.3.0': {}
+  '@fontsource/forum@5.3.0': {}
 
   '@oxc-project/types@0.152.0': {}
 

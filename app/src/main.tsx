@@ -1,5 +1,5 @@
-import "@fontsource-variable/bricolage-grotesque";
-import "@fontsource-variable/manrope";
+import "@fontsource/forum";
+import "@fontsource-variable/karla";
 import "./styles.css";
 
 import { StrictMode } from "react";

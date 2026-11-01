@@ -3,6 +3,8 @@
 
 import { invoke } from "@tauri-apps/api/core";
 
+import type { DesktopPlan, SwitchResult } from "./relay.ts";
+
 export type UsageWindow = { used: number; resetsAt: number | null };
 
 /** A weekly limit on one model only (`Fable`), as `/usage` last reported it. */
@@ -76,12 +78,7 @@ export type AccountSignIn = {
   plan: string | null;
 };
 
-export type DesktopSwitch = {
-  outcome: "already" | "restored" | "signInNeeded";
-  /** What the desktop app logged once open; `null` when it logged nothing in time. */
-  started: "signedIn" | "signedOut" | "otherAccount" | null;
-  overview: Overview;
-};
+export type DesktopSwitch = SwitchResult & { overview: Overview };
 
 export type ResumeTarget = "terminal" | "desktop";
 
@@ -101,7 +98,10 @@ export const api = {
   openChrome: (alias: string) => call<void>("open_chrome", { alias }),
   signInAgain: (alias: string) => call<void>("sign_in_again", { alias }),
   removeAccount: (alias: string) => call<Overview>("remove_account", { alias }),
-  switchDesktop: (alias: string) => call<DesktopSwitch>("switch_desktop", { alias }),
+  /** What switching Claude to `alias` would do; changes nothing. */
+  desktopPlan: (alias: string) => call<DesktopPlan>("desktop_plan", { alias }),
+  /** `own` says what to do with the account's own conversations, when it has some. */
+  switchDesktop: (alias: string, own: "add" | "aside" | null = null) => call<DesktopSwitch>("switch_desktop", { alias, own }),
   refreshUsage: (force: boolean) => call<Overview>("refresh_usage", { force }),
   conversations: (limit: number) => call<Conversation[]>("conversations", { limit }),
   resume: (sessionId: string, target: ResumeTarget) => call<void>("resume", { sessionId, target }),
@@ -178,6 +178,20 @@ let previewState: Overview = {
       limited: false,
       limitedUntil: null,
     },
+    {
+      alias: "work",
+      email: "work@example.com",
+      desktopFolder: true,
+      chromeProfile: "Relais-work",
+      color: "#F2B33D",
+      active: false,
+      fiveHour: { used: 30, resetsAt: nowSecs() + 3 * 3600 },
+      sevenDay: { used: 55, resetsAt: nowSecs() + 2 * 86400 },
+      models: [],
+      observedAt: nowSecs() - 120,
+      limited: false,
+      limitedUntil: null,
+    },
   ],
   palette: PREVIEW_PALETTE,
   desktopOwner: "main",
@@ -232,17 +246,23 @@ async function preview<T>(command: string, args?: Record<string, unknown>): Prom
   if (command === "sign_in_again") previewSignInOpenedAt = Date.now();
   if (command === "open_chrome" || command === "sign_in_again") return undefined as T;
   if (command === "refresh_usage") await new Promise((resolve) => setTimeout(resolve, args?.force ? 2500 : 300));
-  if (command === "switch_desktop") {
-    await new Promise((resolve) => setTimeout(resolve, 1200));
+  if (command === "desktop_plan") {
+    await new Promise((resolve) => setTimeout(resolve, 150));
     const alias = String(args?.alias);
     const target = previewState.accounts.find((a) => a.alias === alias);
-    const outcome = target?.desktopFolder ? "restored" : "signInNeeded";
+    return { from: previewState.desktopOwner ?? "", conversations: 139, own: alias === "work" ? 4 : 0, signIn: target?.desktopFolder ? "parked" : "none" } as T;
+  }
+  if (command === "switch_desktop") {
+    await new Promise((resolve) => setTimeout(resolve, 1600));
+    const alias = String(args?.alias);
+    const target = previewState.accounts.find((a) => a.alias === alias);
+    const started = target?.desktopFolder ? "signedIn" : "signedOut";
     previewState = {
       ...previewState,
       desktopOwner: alias,
-      accounts: previewState.accounts.map((a) => (a.alias === alias ? { ...a, desktopFolder: true } : a)),
+      accounts: previewState.accounts.map((a) => ({ ...a, active: a.alias === alias, desktopFolder: a.desktopFolder || a.alias === alias })),
     };
-    return { outcome, started: outcome === "restored" ? "signedIn" : "signedOut", overview: { ...previewState, now: nowSecs() } } as T;
+    return { outcome: "switched", started, undidInterrupted: false, overview: { ...previewState, now: nowSecs() } } as T;
   }
   if (command === "set_statusline") previewState = { ...previewState, statusline: Boolean(args?.enabled) };
   if (command === "set_shell") previewState = { ...previewState, shell: Boolean(args?.enabled) };

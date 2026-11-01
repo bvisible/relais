@@ -1,16 +1,17 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 
-import { api, type Account, type AccountSignIn, type AccountStats, type Conversation, type DesktopSwitch, type Overview, type PaletteColor, type ResumeTarget } from "./api";
-import { age, dayLabels, FIVE_HOURS_SECS, inTime, isLive, margin, mood, newlySignedIn, nextReturn, orderAccounts, pace, remaining, span, time, TIRING_FROM, WEEK_SECS } from "./format";
+import { api, type Account, type AccountSignIn, type AccountStats, type Conversation, type Overview, type PaletteColor, type ResumeTarget } from "./api";
+import { age, dayLabels, inTime, isLive, margin, newlySignedIn, remaining, span, time } from "./format";
 import { isMessageKey, t, type MessageKey } from "./i18n";
+import { RelayHome, type MenuChoice } from "./RelayHome";
 
-type View = "home" | "settings" | "add" | "accounts";
+type View = "home" | "settings" | "add" | "accounts" | "conversations";
 
 /** What Claude Code last said about each account's sign-in. */
 type SignIns = { checkedAt: number | null; list: AccountSignIn[]; checking: boolean };
 
 /** The tint of Relais when it does not follow the active account. */
-const DEFAULT_ACCENT = "#4CC38A";
+const DEFAULT_ACCENT = "#F55D1A";
 /** Conversations whose account is unknown (started before Relais measured them). */
 const NEUTRAL = "#93A29B";
 const FOLLOW_THEME_KEY = "relais.followTheme";
@@ -48,18 +49,6 @@ function writeFollowTheme(on: boolean) {
 }
 
 /** A translated sentence with its `{slot}` value set in bold. */
-function emphasize(key: MessageKey, slot: string, value: string, args: Record<string, string | number> = {}): ReactNode {
-  const marker = "\u0000";
-  const [before, after] = t(key, { ...args, [slot]: marker }).split(marker);
-  return (
-    <>
-      {before}
-      <strong>{value}</strong>
-      {after}
-    </>
-  );
-}
-
 /** A command's error, translated when it comes as a message code. */
 function describeError(error: unknown): string {
   const text = String(error);
@@ -72,6 +61,8 @@ function paletteName(color: PaletteColor): string {
 
 export function App() {
   const [view, setView] = useState<View>("home");
+  // An account whose switch was asked from the accounts page: home confirms it.
+  const [pending, setPending] = useState<string | null>(null);
   const [focus, setFocus] = useState<string | null>(null);
   const [overview, setOverview] = useState<Overview | null>(null);
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -240,16 +231,17 @@ export function App() {
     }
   };
 
-  const switchDesktop = async (alias: string): Promise<DesktopSwitch | null> => {
-    try {
-      const result = await api.switchDesktop(alias);
-      setOverview(result.overview);
-      setError(null);
-      return result;
-    } catch (e) {
-      setError(describeError(e));
-      return null;
-    }
+  const switchDesktopFromPage = (alias: string) => {
+    setPending(alias);
+    setView("home");
+  };
+
+  const onMenu = (choice: MenuChoice) => {
+    if (choice === "accounts") openAccounts(null);
+    else if (choice === "conversations") setView("conversations");
+    else if (choice === "refresh") void refreshUsage(true);
+    else if (choice === "settings") setView("settings");
+    else void api.quit();
   };
 
   const openAccounts = (alias: string | null) => {
@@ -267,22 +259,28 @@ export function App() {
   return (
     <main className="panel" style={{ "--accent": accent } as CSSProperties}>
       {view === "home" && (
-        <Home
+        <RelayHome
           overview={overview}
-          conversations={conversations}
-          signIns={signIns}
+          signedOut={new Set((signIns?.list ?? []).filter((s) => s.signedIn === false).map((s) => s.alias))}
           now={now}
-          refreshing={refreshing}
-          onRefresh={() => void refreshUsage(true)}
-          onSwitch={(alias) => run(() => api.switchAccount(alias))}
-          onResume={(id, target) => run(() => api.resume(id, target))}
-          onAccounts={openAccounts}
-          waiting={waiting}
-          measuring={measuring}
+          pending={pending}
+          onPendingSeen={() => setPending(null)}
+          onOverview={setOverview}
+          onMenu={onMenu}
           onSignIn={(alias) => void signInAndWatch(alias)}
-          onSettings={() => setView("settings")}
-          onSwitchDesktop={switchDesktop}
+          describeError={describeError}
         />
+      )}
+      {view === "conversations" && (
+        <div className="page">
+          <div className="page-head">
+            <h1 className="page-title">{t("relayMenuConversations")}</h1>
+            <button className="button" onClick={() => setView("home")}>
+              {t("back")}
+            </button>
+          </div>
+          <Sessions conversations={conversations} accounts={new Map((overview?.accounts ?? []).map((a) => [a.alias, a]))} now={now} onResume={(id, target) => run(() => api.resume(id, target))} />
+        </div>
       )}
       {view === "accounts" && overview && (
         <AccountsPage
@@ -297,7 +295,7 @@ export function App() {
           onOpenChrome={(alias) => run(() => api.openChrome(alias))}
           onSignInAgain={(alias) => void signInAndWatch(alias)}
           onRemove={(alias) => run(() => api.removeAccount(alias)).then(() => loadStats())}
-          onSwitchDesktop={switchDesktop}
+          onSwitchDesktop={switchDesktopFromPage}
           refreshing={refreshing}
           onRefresh={() => void refreshUsage(true)}
           onAdd={() => setView("add")}
@@ -336,300 +334,6 @@ export function App() {
 }
 
 // ---- Home ------------------------------------------------------------------
-
-/** A reading older than this shows its age. */
-const STALE_AFTER_SECS = 10 * 60;
-
-function Home(props: {
-  overview: Overview | null;
-  conversations: Conversation[];
-  signIns: SignIns | null;
-  now: number;
-  refreshing: boolean;
-  waiting: Map<string, number>;
-  measuring: Set<string>;
-  onRefresh: () => void;
-  onSwitch: (alias: string) => void;
-  onResume: (id: string, target: ResumeTarget) => void;
-  onAccounts: (alias: string | null) => void;
-  onSignIn: (alias: string) => void;
-  onSettings: () => void;
-  onSwitchDesktop: (alias: string) => Promise<DesktopSwitch | null>;
-}) {
-  const { overview, conversations, now } = props;
-  const accounts = overview?.accounts ?? [];
-  const active = accounts.find((a) => a.active) ?? null;
-  const signedOut = new Set((props.signIns?.list ?? []).filter((s) => s.signedIn === false).map((s) => s.alias));
-  const plans = new Map((props.signIns?.list ?? []).map((s) => [s.alias, s.plan]));
-  const desktopOwner = overview?.desktopOwner ?? null;
-  const byAlias = new Map(accounts.map((a) => [a.alias, a]));
-
-  return (
-    <>
-      <header className="header">
-        <div className="brand">
-          <span className="logo">
-            <Logo />
-          </span>
-          <span className="brand-name">Relais</span>
-        </div>
-        {active && (
-          <span className="live-chip">
-            <span className={`dot ${active.observedAt != null ? "pulse" : ""}`} />
-            {active.observedAt == null ? t("notMeasuredYet") : now - active.observedAt < 10 ? t("measuredNow") : t("measuredAgo", { age: age(active.observedAt, now) })}
-          </span>
-        )}
-      </header>
-
-      <div className="scroll">
-        {overview && accounts.length === 0 && (
-          <div className="card empty">
-            <strong>{t("noAccount")}</strong>
-            <span className="muted small">{t("noAccountHint")}</span>
-          </div>
-        )}
-
-        {accounts.length > 0 && <Summary accounts={accounts} signedOut={signedOut} best={overview?.best ?? null} now={now} onSwitch={props.onSwitch} />}
-
-        {orderAccounts(accounts, signedOut).map((account) => (
-          <AccountPanel
-            key={account.alias}
-            account={account}
-            plan={plans.get(account.alias) ?? null}
-            signedOut={signedOut.has(account.alias)}
-            waiting={props.waiting.has(account.alias)}
-            measuring={props.measuring.has(account.alias)}
-            desktop={desktopOwner === account.alias}
-            now={now}
-            onOpen={() => props.onAccounts(account.alias)}
-            onSignIn={() => props.onSignIn(account.alias)}
-          />
-        ))}
-
-        {accounts.length > 1 && <WhereBar accounts={accounts} desktopOwner={desktopOwner} onSwitch={props.onSwitch} onSwitchDesktop={props.onSwitchDesktop} />}
-
-        <Sessions conversations={conversations} accounts={byAlias} now={now} onResume={props.onResume} />
-      </div>
-
-      <footer className="footer">
-        <button className="button" disabled={props.refreshing} title={t("refreshDetail")} onClick={props.onRefresh}>
-          {props.refreshing ? t("refreshing") : t("refresh")}
-        </button>
-        <button className="button button-accent" onClick={() => props.onAccounts(null)}>
-          {t("accountsButton", { n: accounts.length })}
-        </button>
-        <button className="button" onClick={props.onSettings}>
-          {t("settings")}
-        </button>
-      </footer>
-    </>
-  );
-}
-
-/** How many accounts can work right now, and what comes next. */
-function Summary({ accounts, signedOut, best, now, onSwitch }: { accounts: Account[]; signedOut: Set<string>; best: string | null; now: number; onSwitch: (alias: string) => void }) {
-  const total = accounts.length;
-  const free = accounts.filter((a) => !a.limited && !signedOut.has(a.alias)).length;
-  const active = accounts.find((a) => a.active) ?? null;
-  const relay = accounts.find((a) => a.alias === best && !a.active && !a.limited && !signedOut.has(a.alias)) ?? null;
-  const handoff = active && relay && (active.limited || mood(active) === "tiring") ? relay : null;
-  const back = nextReturn(accounts);
-  const out = accounts.filter((a) => signedOut.has(a.alias));
-  const heading = free === 0 ? t("availableNone", { total }) : free === 1 ? t("availableOne", { total }) : t("availableMany", { n: free, total });
-  return (
-    <section className="summary-card" aria-live="polite">
-      <div className="summary-title">{heading}</div>
-      {active && handoff ? (
-        <div className="summary-handoff">
-          <span className="small">{t(active.limited ? "handoffLimited" : "handoffTiring", { alias: active.alias, best: handoff.alias, n: margin(handoff) ?? "—" })}</span>
-          <button className="relay-button tinted" style={tint(handoff.color)} onClick={() => onSwitch(handoff.alias)}>
-            {t("passRelayTo", { alias: handoff.alias })}
-          </button>
-        </div>
-      ) : back?.limitedUntil != null ? (
-        <div className="small summary-line">{emphasize("nextReturn", "alias", back.alias, { time: time(back.limitedUntil, now), in: inTime(back.limitedUntil, now) })}</div>
-      ) : free === total ? (
-        <div className="small summary-line">{t("allAvailable")}</div>
-      ) : null}
-      {out.length > 0 && <div className="small summary-warn">{out.length === 1 ? t("signedOutOne", { alias: out[0].alias }) : t("signedOutMany", { n: out.length })}</div>}
-    </section>
-  );
-}
-
-/** One account the way a usage panel shows it: a bar per limit, with what is used, what is left and the pace. */
-function AccountPanel(props: { account: Account; plan: string | null; signedOut: boolean; waiting: boolean; measuring: boolean; desktop: boolean; now: number; onOpen: () => void; onSignIn: () => void }) {
-  const { account, plan, signedOut, now } = props;
-  const status = signedOut
-    ? { kind: "off", label: t("statusSignedOut") }
-    : account.limited
-      ? { kind: "limited", label: account.limitedUntil != null ? t("statusLimitedUntil", { time: time(account.limitedUntil, now) }) : t("statusLimited") }
-      : account.observedAt == null
-        ? { kind: "unknown", label: t("statusUnmeasured") }
-        : { kind: "free", label: t("statusAvailable") };
-  // The weekly cap on Sonnet alone weighs little next to the others: it stays out of the way.
-  const models = account.models.filter((m) => !m.model.toLowerCase().startsWith("sonnet"));
-  const five = account.fiveHour;
-  const week = account.sevenDay;
-  const showFive = five != null && (!account.limited || five.used >= 100);
-  const stale = account.observedAt != null && now - account.observedAt > STALE_AFTER_SECS;
-  const sub = [account.email, plan ? planName(plan) : null, props.measuring ? t("measuringNow") : stale && account.observedAt != null ? t("measuredAgo", { age: age(account.observedAt, now) }) : null].filter(Boolean).join(" · ");
-  return (
-    <section className={`acct tinted is-${status.kind}`} style={tint(account.color)} aria-label={account.alias}>
-      <button className="acct-head" title={t("openAccount")} onClick={props.onOpen}>
-        <span className="acct-dot" />
-        <span className="acct-alias">{account.alias}</span>
-        {account.active && <span className="acct-chip">{t("whereTerminal")}</span>}
-        {props.desktop && <span className="acct-chip">{t("whereDesktop")}</span>}
-        <span className={`acct-status is-${status.kind}`}>{status.label}</span>
-      </button>
-      {sub && <div className="acct-sub">{sub}</div>}
-      {signedOut && (
-        <div className="acct-alert" aria-live="polite">
-          <span>{props.waiting ? t("signInWaiting") : t("signedOutNote")}</span>
-          <button className="button button-warn" onClick={props.onSignIn}>
-            {props.waiting ? t("signInRetry") : t("signIn")}
-          </button>
-        </div>
-      )}
-      {showFive && five && <Meter label={t("barSession")} window={five} length={FIVE_HOURS_SECS} now={now} idle={t("noSessionWindow")} />}
-      {week && <Meter label={t("barWeek")} window={week} length={WEEK_SECS} now={now} />}
-      {models.map((model) => (
-        <Meter key={model.model} label={t("barModel", { model: model.model })} window={model} length={WEEK_SECS} now={now} note={(account.observedAt ?? now) - model.observedAt > STALE_AFTER_SECS ? t("measuredAgo", { age: age(model.observedAt, now) }) : undefined} />
-      ))}
-      {!five && !week && models.length === 0 && <p className="acct-empty">{t("noReadingYet")}</p>}
-    </section>
-  );
-}
-
-/** One limit: its name and reset, a bar, then what is used, what is left and the pace. */
-function Meter({ label, window, length, now, idle, note }: { label: string; window: { used: number; resetsAt: number | null }; length: number; now: number; idle?: string; note?: string }) {
-  const used = Math.min(100, Math.max(0, window.used));
-  const resetsAt = window.resetsAt != null && window.resetsAt > now ? window.resetsAt : null;
-  const ahead = pace(window, length, now);
-  const drift = ahead == null ? 0 : Math.round(ahead);
-  const level = used >= 100 ? "is-full" : used >= TIRING_FROM ? "is-high" : "";
-  return (
-    <div className="meter">
-      <div className="meter-head">
-        <span className="meter-label">{label}</span>
-        <span className="meter-reset">{resetsAt != null ? t("resetAt", { time: time(resetsAt, now), in: inTime(resetsAt, now) }) : used === 0 && idle ? idle : t("resetUnknown")}</span>
-      </div>
-      <div className="meter-track" role="meter" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(used)}>
-        <span className={`meter-fill ${level}`} style={{ width: `${used}%` }} />
-      </div>
-      <div className="meter-line">
-        {t("usedLeft", { used: Math.round(used), left: Math.round(100 - used) })}
-        {drift > 0 && (
-          <>
-            {" · "}
-            <span className="meter-deficit">{t("deficit", { n: drift })}</span>
-          </>
-        )}
-        {drift < 0 && (
-          <>
-            {" · "}
-            <span className="meter-reserve">{t("reserve", { n: -drift })}</span>
-          </>
-        )}
-        {note && (
-          <>
-            {" · "}
-            <span className="meter-note">{note}</span>
-          </>
-        )}
-      </div>
-    </div>
-  );
-}
-
-/** Which account the terminal and Claude Desktop use, each changed from here. */
-function WhereBar(props: { accounts: Account[]; desktopOwner: string | null; onSwitch: (alias: string) => void; onSwitchDesktop: (alias: string) => Promise<DesktopSwitch | null> }) {
-  const { accounts, desktopOwner } = props;
-  const [open, setOpen] = useState<"terminal" | "desktop" | null>(null);
-  const [target, setTarget] = useState<Account | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [note, setNote] = useState<string | null>(null);
-  const terminal = accounts.find((a) => a.active) ?? null;
-  const desktop = accounts.find((a) => a.alias === desktopOwner) ?? null;
-  const toggle = (which: "terminal" | "desktop") => {
-    setOpen(open === which ? null : which);
-    setTarget(null);
-    setNote(null);
-  };
-  const pickDesktop = async (account: Account) => {
-    setBusy(true);
-    const result = await props.onSwitchDesktop(account.alias);
-    setBusy(false);
-    setTarget(null);
-    setOpen(null);
-    if (!result) return;
-    const email = account.email ?? account.alias;
-    if (result.started === "signedIn") setNote(t("desktopSignedIn", { alias: account.alias }));
-    else if (result.started === "otherAccount") setNote(t("desktopOtherAccount", { alias: account.alias }));
-    else if (result.started === "signedOut" || result.outcome === "signInNeeded") setNote(t("desktopSignInNow", { email }));
-    else setNote(t("desktopDone", { alias: account.alias }));
-  };
-  const pill = (which: "terminal" | "desktop", account: Account | null) => (
-    <button className={`where-pill ${open === which ? "is-open" : ""} ${account ? "tinted" : ""}`} style={account ? tint(account.color) : undefined} aria-expanded={open === which} onClick={() => toggle(which)}>
-      {which === "terminal" ? <PromptIcon size={13} /> : <MonitorIcon size={13} />}
-      <span className="where-pill-label">{which === "terminal" ? t("whereTerminal") : t("whereDesktop")}</span>
-      <span className="where-pill-alias">{account?.alias ?? "—"}</span>
-      <ChevronIcon />
-    </button>
-  );
-  return (
-    <section className="where-bar" aria-label={t("whereItWorks")}>
-      <div className="where-pills">
-        {pill("terminal", terminal)}
-        {pill("desktop", desktop)}
-      </div>
-      {open && !target && (
-        <div className="picker">
-          <span className="muted tiny">{open === "terminal" ? t("wherePickTerminal") : t("wherePickDesktop")}</span>
-          <div className="picker-options">
-            {accounts.map((account) => {
-              const current = open === "terminal" ? account.active : account.alias === desktopOwner;
-              return (
-                <button
-                  key={account.alias}
-                  className={`picker-option tinted ${current ? "is-current" : ""}`}
-                  style={tint(account.color)}
-                  disabled={current || busy}
-                  onClick={() => {
-                    if (open === "terminal") {
-                      props.onSwitch(account.alias);
-                      setOpen(null);
-                      setNote(t("terminalSwitched", { alias: account.alias }));
-                    } else {
-                      setTarget(account);
-                    }
-                  }}
-                >
-                  <Avatar color={account.color} label={initial(account.alias)} size={18} />
-                  <span className="ellipsis">{account.alias}</span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      )}
-      {open === "desktop" && target && (
-        <div className="confirm">
-          <span className="small">{target.desktopFolder ? t("desktopConfirmRestore", { alias: target.alias }) : t("desktopConfirmFirst", { email: target.email ?? target.alias })}</span>
-          <div className="actions">
-            <button className="button" disabled={busy} onClick={() => setTarget(null)}>
-              {t("cancel")}
-            </button>
-            <button className="button button-accent" disabled={busy} onClick={() => void pickDesktop(target)}>
-              {busy ? t("desktopSwitching") : t("desktopSwitch")}
-            </button>
-          </div>
-        </div>
-      )}
-      {note && !open && <p className="small no-margin where-note">{note}</p>}
-    </section>
-  );
-}
 
 function Sessions({ conversations, accounts, now, onResume }: { conversations: Conversation[]; accounts: Map<string, Account>; now: number; onResume: (id: string, target: ResumeTarget) => void }) {
   const live = conversations.filter((c) => isLive(c.lastActivity, now)).length;
@@ -693,24 +397,6 @@ function Avatar({ color, label, size }: { color: string; label: string; size: nu
   );
 }
 
-function Logo() {
-  return (
-    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M4 16c3-6 7-8 16-8" />
-      <path d="M16 4l4 4-4 4" />
-      <path d="M4 20h8" />
-    </svg>
-  );
-}
-
-function ChevronIcon() {
-  return (
-    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M6 9l6 6 6-6" />
-    </svg>
-  );
-}
-
 function MonitorIcon({ size = 15 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -744,7 +430,7 @@ function AccountsPage(props: {
   onOpenChrome: (alias: string) => void;
   onSignInAgain: (alias: string) => void;
   onRemove: (alias: string) => void;
-  onSwitchDesktop: (alias: string) => Promise<DesktopSwitch | null>;
+  onSwitchDesktop: (alias: string) => void;
   refreshing: boolean;
   onRefresh: () => void;
   onAdd: () => void;
@@ -843,24 +529,11 @@ function AccountCard(props: {
   onSignInAgain: (alias: string) => void;
   onRemove: (alias: string) => void;
   desktopOwner: string | null;
-  onSwitchDesktop: (alias: string) => Promise<DesktopSwitch | null>;
+  onSwitchDesktop: (alias: string) => void;
 }) {
   const { account, stats, signIn, now } = props;
   const [confirming, setConfirming] = useState(false);
-  const [desktopStep, setDesktopStep] = useState<"idle" | "confirm" | "busy">("idle");
-  const [desktopNote, setDesktopNote] = useState<string | null>(null);
   const desktopHere = props.desktopOwner === account.alias;
-  const email = account.email ?? signIn?.email ?? account.alias;
-  const switchDesktop = async () => {
-    setDesktopStep("busy");
-    const result = await props.onSwitchDesktop(account.alias);
-    setDesktopStep("idle");
-    if (!result) return;
-    if (result.started === "signedIn") setDesktopNote(t("desktopSignedIn", { alias: account.alias }));
-    else if (result.started === "otherAccount") setDesktopNote(t("desktopOtherAccount", { alias: account.alias }));
-    else if (result.started === "signedOut" || result.outcome === "signInNeeded") setDesktopNote(t("desktopSignInNow", { email }));
-    else setDesktopNote(t("desktopDone", { alias: account.alias }));
-  };
   const five = account.fiveHour;
   const week = account.sevenDay;
   const signedOut = signIn?.signedIn === false;
@@ -906,26 +579,11 @@ function AccountCard(props: {
           {desktopHere ? (
             <span className="mood">{t("desktopHere")}</span>
           ) : (
-            <button className="button where-button" disabled={desktopStep !== "idle"} onClick={() => setDesktopStep("confirm")}>
-              {account.desktopFolder ? t("desktopOpenHere") : t("desktopConnect")}
+            <button className="button where-button" onClick={() => props.onSwitchDesktop(account.alias)}>
+              {t("relaySwitch")}
             </button>
           )}
         </div>
-        {desktopStep === "confirm" && (
-          <div className="confirm">
-            <span className="small">{account.desktopFolder ? t("desktopConfirmRestore", { alias: account.alias }) : t("desktopConfirmFirst", { email })}</span>
-            <div className="actions">
-              <button className="button" onClick={() => setDesktopStep("idle")}>
-                {t("cancel")}
-              </button>
-              <button className="button button-accent" onClick={() => void switchDesktop()}>
-                {t("desktopSwitch")}
-              </button>
-            </div>
-          </div>
-        )}
-        {desktopStep === "busy" && <p className="muted small no-margin">{t("desktopSwitching")}</p>}
-        {desktopNote && desktopStep === "idle" && <p className="small no-margin tinted-text">{desktopNote}</p>}
       </div>
 
       <div className="badges">

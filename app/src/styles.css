@@ -2,30 +2,48 @@
    and a panel that takes the tint of the active account (`--accent`, set on
    `.panel`). Elements marked `.tinted` take theirs from `--c`, set inline. */
 
+/* Colors, type, radii and motion follow the Neoservice design system
+   (`bvisible/neoffice-design-system`, tokens/colors.css, radius.css,
+   typography.css, 2026-11-01): warm paper, ink for every action, the signal
+   as the single accent, Forum for titles and big numbers, Karla for the rest.
+   Relais is a public repository, so the values are copied here rather than
+   imported; the account colors stay, as data. */
+
 :root {
-  --display: "Bricolage Grotesque Variable", "Manrope Variable", system-ui, sans-serif;
-  --body: "Manrope Variable", system-ui, sans-serif;
-  --ground: #f6f8f7;
+  --display: "Forum", Georgia, serif;
+  --body: "Karla Variable", "Karla", system-ui, sans-serif;
+  --ground: #faf3ea;
   --surface: #ffffff;
-  --chip-ground: #ebf0ed;
-  --line: #dce3df;
-  --line-soft: #d3dbd7;
-  --ink: #14201b;
-  --ink-2: #3d4b45;
-  --muted: #56655e;
-  --track: rgba(20, 32, 27, 0.08);
-  --track-soft: rgba(20, 32, 27, 0.06);
-  --on-tint: #0b1110;
+  --chip-ground: #f6f3ed;
+  --line: #ece7de;
+  --line-soft: #dcd4c7;
+  --ink: #141414;
+  --ink-2: #3a342c;
+  --muted: #524b41;
+  --faint: #968c7c;
+  --track: rgba(20, 20, 20, 0.08);
+  --track-soft: rgba(20, 20, 20, 0.05);
+  --on-tint: #141414;
+  --signal: #f55d1a;
+  --signal-tint: #ffeae2;
+  --signal-soft: #ffd1c1;
+  --signal-text: #aa3700;
+  --action: #141414;
+  --action-hover: #232020;
+  --on-action: #fffdf8;
   --amber: #f2b33d;
   --amber-ink: #7a4f00;
   --amber-wash: rgba(242, 179, 61, 0.16);
   --amber-edge: rgba(242, 179, 61, 0.5);
-  --coral: #e5533f;
-  --coral-wash: rgba(255, 122, 107, 0.12);
-  --coral-edge: rgba(229, 83, 63, 0.35);
-  --halo: rgba(20, 32, 27, 0.22);
-  --ok-ink: #1d7f50;
-  --deficit: #a85500;
+  --coral: #c2410c;
+  --coral-wash: rgba(194, 65, 12, 0.1);
+  --coral-edge: rgba(194, 65, 12, 0.32);
+  --halo: rgba(40, 28, 18, 0.18);
+  --ok-ink: #2f6b3a;
+  --deficit: #aa3700;
+  --shadow-lg: 0 6px 12px rgba(40, 28, 18, 0.06), 0 16px 36px rgba(40, 28, 18, 0.1);
+  --scrim: rgba(24, 20, 16, 0.45);
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
   /* How a tint becomes readable text and the inner ring: darker on a light ground. */
   --tint-mix: black;
   --wash-amount: 10%;
@@ -36,25 +54,35 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --ground: #0f1513;
-    --surface: #151d1a;
-    --chip-ground: #151d1a;
-    --line: #1e2824;
-    --line-soft: #2a3631;
-    --ink: #eef3f0;
-    --ink-2: #c9d3ce;
-    --muted: #93a29b;
-    --track: rgba(255, 255, 255, 0.08);
-    --track-soft: rgba(255, 255, 255, 0.06);
+    --ground: #100e0d;
+    --surface: #1b1611;
+    --chip-ground: #221c16;
+    --line: rgba(255, 251, 245, 0.08);
+    --line-soft: rgba(255, 251, 245, 0.14);
+    --ink: #fffdf8;
+    --ink-2: #dcd4c7;
+    --muted: #bfb5a4;
+    --faint: #968c7c;
+    --track: rgba(255, 251, 245, 0.1);
+    --track-soft: rgba(255, 251, 245, 0.06);
+    --on-tint: #fffdf8;
+    --signal-tint: rgba(245, 93, 26, 0.14);
+    --signal-soft: rgba(245, 93, 26, 0.3);
+    --signal-text: #ff8d64;
+    --action: #fffdf8;
+    --action-hover: #ece7de;
+    --on-action: #141414;
     --amber-ink: #f5cf83;
     --amber-wash: rgba(242, 179, 61, 0.14);
     --amber-edge: rgba(242, 179, 61, 0.45);
-    --coral: #ff7a6b;
-    --coral-wash: rgba(255, 122, 107, 0.12);
-    --coral-edge: rgba(255, 122, 107, 0.4);
-    --halo: rgba(255, 255, 255, 0.32);
-    --ok-ink: #6fdca5;
-    --deficit: #ffad5c;
+    --coral: #ff8d64;
+    --coral-wash: rgba(245, 93, 26, 0.12);
+    --coral-edge: rgba(245, 93, 26, 0.4);
+    --halo: rgba(255, 251, 245, 0.28);
+    --ok-ink: #8fd19e;
+    --deficit: #ff8d64;
+    --shadow-lg: 0 6px 12px rgba(0, 0, 0, 0.3), 0 16px 36px rgba(0, 0, 0, 0.45);
+    --scrim: rgba(0, 0, 0, 0.55);
     --tint-mix: white;
     --wash-amount: 13%;
     --edge-amount: 40%;
@@ -100,8 +128,9 @@ input:focus-visible {
 }
 
 .panel {
+  position: relative;
   width: 400px;
-  height: 720px;
+  max-height: 720px;
   background: var(--ground);
   border: 1px solid var(--line);
   border-radius: 22px;
@@ -1251,5 +1280,390 @@ input:focus-visible {
   .meter-fill,
   .logo {
     transition: none;
+  }
+}
+
+
+/* ---- The one screen: every account, one button ------------------------ */
+
+/* The sheet covers the whole panel, which grows enough to hold it. */
+.relay {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.relay.has-sheet {
+  min-height: 460px;
+}
+
+.relay-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 20px 8px;
+}
+
+.relay-title {
+  margin: 0;
+  font-family: var(--display);
+  font-weight: 400;
+  font-size: 28px;
+  letter-spacing: -0.01em;
+}
+
+.relay-menu {
+  position: relative;
+}
+
+.relay-menu-button {
+  display: inline-flex;
+  gap: 3px;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  cursor: pointer;
+  transition: border-color 120ms var(--ease-standard);
+}
+
+.relay-menu-button span {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--ink);
+}
+
+.relay-menu-button:hover {
+  border-color: var(--line-soft);
+}
+
+.relay-menu-list {
+  position: absolute;
+  right: 0;
+  top: 40px;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  min-width: 180px;
+  padding: 6px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: var(--shadow-lg);
+}
+
+.relay-menu-list button {
+  padding: 9px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.relay-menu-list button:hover {
+  background: var(--chip-ground);
+}
+
+.relay-result {
+  margin: 4px 20px 6px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--signal-tint);
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.relay-empty {
+  margin: 12px 20px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.relay-list {
+  list-style: none;
+  margin: 0;
+  padding: 6px 12px 16px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.relay-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 12px 12px 14px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+}
+
+.relay-row.is-here {
+  background: var(--signal-tint);
+  border-color: var(--signal-soft);
+}
+
+.relay-row.is-paused .relay-main {
+  opacity: 0.72;
+}
+
+.relay-dot {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.relay-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.relay-name {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.relay-alias {
+  font-weight: 600;
+  font-size: 15px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.relay-chip {
+  flex: none;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--signal);
+  color: #141414;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.relay-advised {
+  flex: none;
+  color: var(--signal-text);
+  font-size: 12px;
+}
+
+.relay-usage {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.relay-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.relay-bars {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.relay-bar {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--track);
+  overflow: hidden;
+}
+
+.relay-bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--ink-2);
+  transition: width 320ms var(--ease-standard);
+}
+
+.relay-bar-fill.is-high {
+  background: var(--signal);
+}
+
+.relay-switch,
+.relay-button {
+  flex: none;
+  padding: 8px 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 120ms var(--ease-standard), border-color 120ms var(--ease-standard);
+}
+
+.relay-switch:hover,
+.relay-button:hover {
+  border-color: var(--ink);
+}
+
+.relay-switch.is-primary,
+.relay-button.is-primary {
+  border-color: var(--action);
+  background: var(--action);
+  color: var(--on-action);
+}
+
+.relay-switch.is-primary:hover,
+.relay-button.is-primary:hover {
+  background: var(--action-hover);
+}
+
+.relay-switch:active,
+.relay-button:active {
+  transform: scale(0.98);
+}
+
+.relay-switch:disabled,
+.relay-button:disabled {
+  opacity: 0.45;
+  cursor: default;
+  transform: none;
+}
+
+.relay-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: flex;
+  align-items: flex-end;
+  padding: 12px;
+  background: var(--scrim);
+  animation: relay-fade 160ms var(--ease-standard);
+}
+
+.relay-sheet {
+  width: 100%;
+  padding: 20px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  box-shadow: var(--shadow-lg);
+  animation: relay-rise 200ms var(--ease-standard);
+}
+
+.relay-sheet-title {
+  margin: 0 0 10px;
+  font-family: var(--display);
+  font-weight: 400;
+  font-size: 24px;
+}
+
+.relay-sheet p {
+  margin: 0 0 6px;
+  color: var(--ink-2);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.relay-own {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 6px 0 4px;
+}
+
+.relay-own-choice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.relay-own-choice.is-on {
+  border-color: var(--ink);
+}
+
+.relay-own-choice input {
+  accent-color: var(--signal);
+}
+
+.relay-problem {
+  color: var(--coral) !important;
+}
+
+.relay-progress {
+  position: relative;
+  height: 3px;
+  margin: 10px 0 4px;
+  border-radius: 999px;
+  background: var(--signal-tint);
+  overflow: hidden;
+}
+
+.relay-progress::after {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 35%;
+  border-radius: inherit;
+  background: var(--signal);
+  animation: relay-slide 1.1s var(--ease-standard) infinite;
+}
+
+.relay-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+@keyframes relay-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes relay-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+@keyframes relay-slide {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(300%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .relay-scrim,
+  .relay-sheet,
+  .relay-progress::after {
+    animation: none;
   }
 }
