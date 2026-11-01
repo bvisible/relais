@@ -20,7 +20,7 @@
 - Test first: write the test, watch it fail, then write the code.
 - Files that Claude Code also writes (`.claude.json`, `settings.json`) are rewritten atomically
   (temporary file and rename), never in place.
-- The repository will be public: no client names, no real account data in tests or fixtures
+- The repository is public: no client names, no real account data in tests or fixtures
   (use `example.com` addresses and made-up UUIDs).
 - Commits and pull requests carry no AI signature or co-author line.
 
