@@ -49,13 +49,21 @@ for binary in "$app/Contents/MacOS/relais-app" "$cli"; do
   grep -q '^Timestamp=' <<<"$details" || fail "$(basename "$binary") lacks a secure timestamp"
 done
 pass "both programs have the hardened runtime and a timestamp"
+widget="$app/Contents/PlugIns/RelaisWidget.appex"
+[ -d "$widget" ] || fail "the widget is missing"
+for binary in "$app/Contents/MacOS/relais-app" "$cli" "$widget/Contents/MacOS/RelaisWidget"; do
+  for arch in arm64 x86_64; do
+    grep -qw "$arch" <<<"$(lipo -archs "$binary")" || fail "$(basename "$binary") lacks $arch"
+  done
+done
+pass "the app, the command and the widget run on Apple Silicon and Intel"
 xcrun stapler validate "$app" >/dev/null || fail "the app carries no ticket"
 pass "the app carries its ticket"
 spctl -a -t exec "$app" 2>/dev/null || fail "Gatekeeper refuses the app"
 pass "Gatekeeper accepts the app"
 "$cli" --version >/dev/null || fail "the relais command does not start"
 pass "the relais command starts"
-strings -a "$app/Contents/MacOS/relais-app" "$cli" >"$work/strings"
+strings -a "$app/Contents/MacOS/relais-app" "$cli" "$widget/Contents/MacOS/RelaisWidget" >"$work/strings"
 if grep -q -E '/Users/[a-z]' "$work/strings"; then
   fail "a home folder is written in a binary"
 fi
