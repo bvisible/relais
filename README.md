@@ -1,16 +1,17 @@
 # Relais
 
-Relais lets several Claude subscriptions on one Mac work as a relay team. When one account
-reaches its limit, another one takes over: Claude Code in the terminal, the Claude desktop app
-and Claude in Chrome move together, and the conversation carries on where it stopped.
+Relais helps several Claude subscriptions on one Mac work as a relay team. When one account
+runs out, one click moves Claude Desktop and new terminals to another account, and Desktop comes
+back exactly as you left it: the same conversations, pins, folders and open panes.
 
-> **Early development.** Nothing here is ready for daily use yet.
+> **Early development.** Used daily on one Mac. The Desktop switch is tested on copies of a real
+> workspace; see the [design](docs/superpowers/specs/2026-11-01-desktop-workspace-switch-design.md).
 
 ## Why it is built this way
 
 Relais never touches a credential. It does not read, copy, refresh or store any token: you sign
 in through Anthropic's own apps, they keep and refresh their logins as usual, and Relais only
-chooses which per-account profile is active. That removes the whole class of "dead token" bugs
+moves the app's own sign-in files aside and back, by renaming them, without opening them. That removes the whole class of "dead token" bugs
 that tools copying tokens have to chase, and it follows Anthropic's rule that third-party tools
 must not collect or store Claude credentials.
 
@@ -22,11 +23,17 @@ room left; it never rotates accounts behind your back.
 
 ## How it works
 
-Each account gets its own profile everywhere: a Claude Code config directory (the setup
-Anthropic documents for several accounts), a desktop app data folder, and a Chrome profile.
-Conversations, settings, skills and MCP servers are shared between the profiles, so switching
-never loses history. The parts of `.claude.json` that are not tied to an account (MCP servers,
-per-project trust and permissions) are kept in sync across profiles.
+**Claude Desktop: one workspace, the sign-in changes.** Desktop's data folder holds your whole
+workspace; only four files in it (`config.json`, `Cookies` and their journals) make it signed in
+as one account. A switch, with Desktop closed, parks those files under the account that leaves,
+puts back the arriving account's, and carries to it what Desktop files under an account's id:
+the conversation list, the folder order, the sidebar sections, folder permissions and session
+presets. Everything else stays where it is. Each step is journaled and backed up first: a step
+that fails undoes the switch at once, and a switch cut short is undone by the next run.
+
+**Claude Code in the terminal: one profile per account**, the setup Anthropic documents for
+several accounts. Transcripts, settings, skills and MCP servers are shared between profiles, and
+the parts of `.claude.json` not tied to an account are kept in sync.
 
 ## Status
 
@@ -34,16 +41,20 @@ per-project trust and permissions) are kept in sync across profiles.
 |---|---|
 | Shared config sync, account registry, usage readings, conversation index | done, tested |
 | Terminal: `relais` command (accounts, switch, exec, continue, status line, doctor) | done, tested, in daily use on one Mac |
-| Menu bar app (Tauri, React): two rings per account (5-hour window outside, week inside), resets as durations ("in 2h 14m"), one color per account with a theme that follows the active one, the conversations running now with their account and an hour of activity, resume in Claude Desktop or the terminal | second version, in daily use on one Mac |
-| Switching the Claude desktop app's login and Chrome profiles | next |
+| Desktop switch that keeps the workspace (`relais desktop <account> [--dry-run]`) | done, tested, rehearsed on a copy of a real workspace |
+| Menu bar app (Tauri, React): one line per account with its two limits, one button to switch | done, tested |
+| Claude in Chrome | out of scope: its sign-in lives in the browser |
 
 ```bash
 relais init                         # register the account Claude Code is signed in with
 relais account add me@work.example  # add another account (signs in in its own Chrome profile)
+relais account adopt                # someone signed another account in on the default profile: keep it, and move the recorded one to a profile of its own
 relais statusline-install           # record usage, and which account runs each session
 eval "$(relais shell-init zsh)"     # make `claude` run with the active account
 relais list                         # every account, its usage and how long until each reset
-relais switch next                  # or a name, prev, best
+relais desktop work --dry-run       # what switching Claude Desktop to work would do
+relais desktop work                 # do it: Desktop closes, reopens on work, new terminals follow
+relais switch next                  # move only the terminal: a name, next, prev or best
 relais continue                     # carry the latest conversation over to the active account
 ```
 
