@@ -171,7 +171,8 @@ let previewState: Overview = {
       chromeProfile: "Relais-spare",
       color: "#4C8DFF",
       active: false,
-      fiveHour: { used: 0, resetsAt: null },
+      // A plan without the 5-hour limit: only the weekly one.
+      fiveHour: null,
       sevenDay: { used: 4, resetsAt: nowSecs() + 6 * 86400 },
       models: [],
       observedAt: nowSecs() - 600,

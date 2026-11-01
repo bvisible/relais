@@ -1,21 +1,19 @@
 // The panel's one screen: every account on a line, Claude's first, and one
 // button per account that moves Claude there with the whole workspace.
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { api, type Account, type Overview } from "./api";
 import { t, type MessageKey } from "./i18n";
-import { confirmLines, relayOrder, resultLine, usageLine, type DesktopPlan } from "./relay.ts";
+import { confirmLines, relayOrder, resultLine, ringsOf, usageLine, type DesktopPlan, type Ring } from "./relay.ts";
 
-/** What the menu opens. */
-export type MenuChoice = "accounts" | "conversations" | "refresh" | "settings" | "quit";
+/** The panel's tabs, at its foot. */
+export type Tab = "accounts" | "conversations" | "settings";
 
 type Own = "add" | "aside";
 
 /** How long the result line stays before it fades. */
 const RESULT_FOR_MS = 8_000;
-/** From this share of a window used, a bar takes the signal. */
-const HIGH_FROM = 85;
 
 export function RelayHome(props: {
   overview: Overview | null;
@@ -25,7 +23,9 @@ export function RelayHome(props: {
   pending: string | null;
   onPendingSeen: () => void;
   onOverview: (overview: Overview) => void;
-  onMenu: (choice: MenuChoice) => void;
+  refreshing: boolean;
+  onRefresh: () => void;
+  onOpenAccount: (alias: string) => void;
   onSignIn: (alias: string) => void;
   describeError: (error: unknown) => string;
 }) {
@@ -39,7 +39,6 @@ export function RelayHome(props: {
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const [result, setResult] = useState<string | null>(null);
-  const [menuOpen, setMenuOpen] = useState(false);
   const resultTimer = useRef<number | undefined>(undefined);
 
   const open = async (account: Account) => {
@@ -91,39 +90,16 @@ export function RelayHome(props: {
     }
   };
 
-  const choose = (choice: MenuChoice) => {
-    setMenuOpen(false);
-    props.onMenu(choice);
-  };
-
   return (
     <div className={`relay ${target ? "has-sheet" : ""}`}>
       <header className="relay-head">
         <h1 className="relay-title">Relais</h1>
-        <div className="relay-menu">
-          <button className="relay-menu-button" aria-label={t("relayMenu")} aria-expanded={menuOpen} onClick={() => setMenuOpen(!menuOpen)}>
-            <span />
-            <span />
-            <span />
-          </button>
-          {menuOpen && (
-            <div className="relay-menu-list" role="menu">
-              {(
-                [
-                  ["accounts", "relayMenuAccounts"],
-                  ["conversations", "relayMenuConversations"],
-                  ["refresh", "relayMenuRefresh"],
-                  ["settings", "relayMenuSettings"],
-                  ["quit", "relayMenuQuit"],
-                ] as [MenuChoice, MessageKey][]
-              ).map(([choice, label]) => (
-                <button key={choice} role="menuitem" onClick={() => choose(choice)}>
-                  {t(label)}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
+        <button className={`relay-icon-button ${props.refreshing ? "is-busy" : ""}`} aria-label={t("relayRefresh")} title={t("relayRefresh")} disabled={props.refreshing} onClick={props.onRefresh}>
+          <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" />
+            <path d="M21 3v5h-5" />
+          </svg>
+        </button>
       </header>
 
       {result && (
@@ -142,14 +118,17 @@ export function RelayHome(props: {
         {relayOrder(accounts, here, props.signedOut).map((account) => {
           const isHere = account.alias === here;
           const out = props.signedOut.has(account.alias);
+          const shown = ringsOf(account, now);
           return (
             <li key={account.alias} className={`relay-row ${isHere ? "is-here" : ""} ${account.limited ? "is-paused" : ""}`}>
-              <span className="relay-dot" style={{ background: account.color }} aria-hidden="true" />
+              <Rings rings={shown.rings} center={shown.center} tone={shown.tone} />
               <div className="relay-main">
                 <div className="relay-name">
-                  <span className="relay-alias">{account.alias}</span>
+                  <span className="relay-dot" style={{ background: account.color }} aria-hidden="true" />
+                  <button className="relay-alias" title={t("openAccount")} onClick={() => props.onOpenAccount(account.alias)}>
+                    {account.alias}
+                  </button>
                   {isHere && <span className="relay-chip">{t("relayHere")}</span>}
-                  {account.alias === advised && <span className="relay-advised">{t("relayAdvised")}</span>}
                 </div>
                 <div className="relay-usage">
                   {out ? (
@@ -163,12 +142,9 @@ export function RelayHome(props: {
                     usageLine(account, now)
                   )}
                 </div>
-                <div className="relay-bars" aria-hidden="true">
-                  <Bar used={account.fiveHour?.used ?? null} />
-                  <Bar used={account.sevenDay?.used ?? null} />
-                </div>
+                {account.alias === advised && <div className="relay-advised">{t("relayAdvised")}</div>}
               </div>
-              {!isHere && (
+              {!isHere && !account.limited && (
                 <button className={`relay-switch ${account.alias === advised ? "is-primary" : ""}`} disabled={busy} onClick={() => void open(account)}>
                   {t("relaySwitch")}
                 </button>
@@ -177,6 +153,8 @@ export function RelayHome(props: {
           );
         })}
       </ul>
+
+      {accounts.some((account) => ringsOf(account, now).rings.length === 2) && <p className="relay-legend">{t("relayRingsLegend")}</p>}
 
       {target && (
         <div className="relay-scrim" onClick={close}>
@@ -220,12 +198,72 @@ export function RelayHome(props: {
   );
 }
 
-/** A thin bar for one limit; empty when it was never measured. */
-function Bar({ used }: { used: number | null }) {
-  const share = used == null ? 0 : Math.min(100, Math.max(0, used));
+const RING_BOX = 56;
+
+/** One ring per limit the plan has, the 5-hour one outside, and what the
+ * middle says: the fuller share, or how long until a paused account is back. */
+function Rings({ rings, center, tone }: { rings: Ring[]; center: string; tone: "normal" | "high" | "paused" }) {
+  const single = rings.length < 2;
+  const width = single ? 6 : 5;
+  const radii = single ? [(RING_BOX - width) / 2] : [(RING_BOX - width) / 2, (RING_BOX - width) / 2 - width - 2];
+  const middle = RING_BOX / 2;
+  const shown = rings.length === 0 ? [{ kind: "week" as const, used: 0 }] : rings;
   return (
-    <span className="relay-bar">
-      <span className={`relay-bar-fill ${share >= HIGH_FROM ? "is-high" : ""}`} style={{ width: `${share}%` }} />
-    </span>
+    <div className={`relay-rings is-${tone} ${single ? "" : "is-double"}`} aria-hidden="true">
+      <svg width={RING_BOX} height={RING_BOX} viewBox={`0 0 ${RING_BOX} ${RING_BOX}`}>
+        {shown.map((ring, index) => {
+          const radius = radii[index];
+          const length = 2 * Math.PI * radius;
+          const used = Math.min(100, Math.max(0, ring.used));
+          return (
+            <g key={ring.kind}>
+              <circle className="relay-ring-track" cx={middle} cy={middle} r={radius} strokeWidth={width} />
+              {used > 0 && <circle className="relay-ring-fill" cx={middle} cy={middle} r={radius} strokeWidth={width} strokeDasharray={`${(length * used) / 100} ${length}`} transform={`rotate(-90 ${middle} ${middle})`} />}
+            </g>
+          );
+        })}
+      </svg>
+      <span className="relay-ring-center">{center}</span>
+    </div>
+  );
+}
+
+const TAB_ICONS: Record<Tab, ReactNode> = {
+  accounts: (
+    <>
+      <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+      <circle cx="9" cy="7" r="4" />
+      <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+      <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+    </>
+  ),
+  conversations: <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />,
+  settings: (
+    <>
+      <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+      <circle cx="12" cy="12" r="3" />
+    </>
+  ),
+};
+
+const TAB_LABELS: Record<Tab, MessageKey> = {
+  accounts: "relayTabAccounts",
+  conversations: "relayTabConversations",
+  settings: "relayTabSettings",
+};
+
+/** The panel's foot: accounts, conversations, settings. */
+export function TabBar({ tab, onSelect }: { tab: Tab; onSelect: (tab: Tab) => void }) {
+  return (
+    <nav className="relay-tabs" aria-label="Relais">
+      {(Object.keys(TAB_LABELS) as Tab[]).map((item) => (
+        <button key={item} className={item === tab ? "is-current" : ""} aria-current={item === tab ? "page" : undefined} onClick={() => onSelect(item)}>
+          <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true">
+            {TAB_ICONS[item]}
+          </svg>
+          {t(TAB_LABELS[item])}
+        </button>
+      ))}
+    </nav>
   );
 }

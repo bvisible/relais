@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { confirmLines, relayOrder, resultLine, usageLine } from "../src/relay.ts";
+import { confirmLines, relayOrder, resultLine, ringsOf, usageLine } from "../src/relay.ts";
 
 const NOW = 1_791_270_000;
 
@@ -48,11 +48,29 @@ test("the result line says where Claude is", () => {
   assert.equal(result(null, "already"), "Claude est déjà sur work.");
 });
 
-test("a usage line is short: both limits, or when the account comes back", () => {
+test("a usage line names the limits the plan has, and when the only one starts over", () => {
   assert.equal(usageLine(account("a", 12, 96), NOW), "5 h 12 % · semaine 96 %");
-  assert.equal(usageLine(account("a", null, 40), NOW), "semaine 40 %");
-  assert.equal(usageLine(account("a", 100, 50, { limited: true, limitedUntil: NOW + 2 * 3600 }), NOW), "en pause · revient dans 2 h 00");
+  assert.equal(usageLine(account("a", null, 40), NOW), "semaine 40 % · repart dans 1 j");
+  assert.equal(usageLine(account("a", 30, null), NOW), "5 h 30 %");
   assert.equal(usageLine(account("a", null, null, { observedAt: null }), NOW), "pas encore mesuré");
+});
+
+test("a paused account says when it is back", () => {
+  assert.match(usageLine(account("a", 100, 50, { limited: true, limitedUntil: NOW + 2 * 3600 }), NOW), /^en pause · revient \d{2}:\d{2}$/);
+  assert.equal(usageLine(account("a", 100, 50, { limited: true, limitedUntil: null }), NOW), "en pause");
+});
+
+test("one ring per limit the plan has, the fuller share in the middle", () => {
+  assert.deepEqual(ringsOf(account("a", 12, 96), NOW), { rings: [{ kind: "five", used: 12 }, { kind: "week", used: 96 }], center: "96 %", tone: "high" });
+  assert.deepEqual(ringsOf(account("a", null, 40), NOW), { rings: [{ kind: "week", used: 40 }], center: "40 %", tone: "normal" });
+  assert.deepEqual(ringsOf(account("a", null, null, { observedAt: null }), NOW), { rings: [], center: "—", tone: "normal" });
+});
+
+test("a paused account shows a full ring and how long until it is back", () => {
+  const paused = (secs: number) => ringsOf(account("p", 100, 50, { limited: true, limitedUntil: NOW + secs }), NOW);
+  assert.deepEqual(paused(6 * 3600 + 180), { rings: [{ kind: "week", used: 100 }], center: "6 h", tone: "paused" });
+  assert.equal(paused(33 * 3600).center, "1 j");
+  assert.equal(paused(40 * 60).center, "40 min");
 });
 
 test("Claude's account comes first, then the most room left, paused and signed out last", () => {

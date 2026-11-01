@@ -28,6 +28,7 @@
   --signal-tint: #ffeae2;
   --signal-soft: #ffd1c1;
   --signal-text: #aa3700;
+  --signal-paused: #ff8d64;
   --action: #141414;
   --action-hover: #232020;
   --on-action: #fffdf8;
@@ -69,6 +70,7 @@
     --signal-tint: rgba(245, 93, 26, 0.14);
     --signal-soft: rgba(245, 93, 26, 0.3);
     --signal-text: #ff8d64;
+    --signal-paused: #ff8d64;
     --action: #fffdf8;
     --action-hover: #ece7de;
     --on-action: #141414;
@@ -1288,6 +1290,7 @@ input:focus-visible {
 
 /* The sheet covers the whole panel, which grows enough to hold it. */
 .relay {
+  flex: 1 1 auto;
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -1304,72 +1307,43 @@ input:focus-visible {
   padding: 18px 20px 8px;
 }
 
+.relay-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.relay-icon-button svg,
+.relay-tabs svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.relay-icon-button:hover {
+  border-color: var(--line-soft);
+}
+
+.relay-icon-button.is-busy svg {
+  animation: relay-spin 1s linear infinite;
+}
+
 .relay-title {
   margin: 0;
   font-family: var(--display);
   font-weight: 400;
   font-size: 28px;
   letter-spacing: -0.01em;
-}
-
-.relay-menu {
-  position: relative;
-}
-
-.relay-menu-button {
-  display: inline-flex;
-  gap: 3px;
-  align-items: center;
-  justify-content: center;
-  width: 34px;
-  height: 34px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--surface);
-  cursor: pointer;
-  transition: border-color 120ms var(--ease-standard);
-}
-
-.relay-menu-button span {
-  width: 4px;
-  height: 4px;
-  border-radius: 50%;
-  background: var(--ink);
-}
-
-.relay-menu-button:hover {
-  border-color: var(--line-soft);
-}
-
-.relay-menu-list {
-  position: absolute;
-  right: 0;
-  top: 40px;
-  z-index: 3;
-  display: flex;
-  flex-direction: column;
-  min-width: 180px;
-  padding: 6px;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  box-shadow: var(--shadow-lg);
-}
-
-.relay-menu-list button {
-  padding: 9px 12px;
-  border: 0;
-  border-radius: 8px;
-  background: none;
-  color: var(--ink);
-  font: inherit;
-  font-size: 14px;
-  text-align: left;
-  cursor: pointer;
-}
-
-.relay-menu-list button:hover {
-  background: var(--chip-ground);
 }
 
 .relay-result {
@@ -1401,7 +1375,7 @@ input:focus-visible {
 .relay-row {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 14px;
   padding: 12px 12px 12px 14px;
   background: var(--surface);
   border: 1px solid var(--line);
@@ -1413,14 +1387,10 @@ input:focus-visible {
   border-color: var(--signal-soft);
 }
 
-.relay-row.is-paused .relay-main {
-  opacity: 0.72;
-}
-
 .relay-dot {
   flex: none;
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
 }
 
@@ -1440,11 +1410,27 @@ input:focus-visible {
 }
 
 .relay-alias {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
   font-weight: 600;
   font-size: 15px;
+  text-align: left;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  cursor: pointer;
+}
+
+.relay-alias:hover {
+  text-decoration: underline;
+}
+
+.relay-row.is-paused .relay-alias {
+  color: var(--muted);
 }
 
 .relay-chip {
@@ -1458,7 +1444,6 @@ input:focus-visible {
 }
 
 .relay-advised {
-  flex: none;
   color: var(--signal-text);
   font-size: 12px;
 }
@@ -1478,29 +1463,96 @@ input:focus-visible {
   cursor: pointer;
 }
 
-.relay-bars {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 6px;
+/* One ring per limit the plan has: the 5-hour one outside, the week inside. */
+.relay-rings {
+  position: relative;
+  flex: none;
+  width: 56px;
+  height: 56px;
 }
 
-.relay-bar {
-  height: 4px;
-  border-radius: 999px;
-  background: var(--track);
-  overflow: hidden;
-}
-
-.relay-bar-fill {
+.relay-rings svg {
   display: block;
-  height: 100%;
-  border-radius: inherit;
-  background: var(--ink-2);
-  transition: width 320ms var(--ease-standard);
 }
 
-.relay-bar-fill.is-high {
-  background: var(--signal);
+.relay-ring-track {
+  fill: none;
+  stroke: var(--track);
+}
+
+.relay-ring-fill {
+  fill: none;
+  stroke: var(--ink-2);
+  stroke-linecap: round;
+  transition: stroke-dasharray 320ms var(--ease-standard);
+}
+
+.relay-rings.is-high .relay-ring-fill {
+  stroke: var(--signal);
+}
+
+.relay-rings.is-paused .relay-ring-fill {
+  stroke: var(--signal-paused);
+}
+
+.relay-ring-center {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--display);
+  font-size: 15px;
+  white-space: nowrap;
+}
+
+.relay-rings.is-double .relay-ring-center {
+  font-size: 12px;
+}
+
+.relay-legend {
+  margin: 0;
+  padding: 0 20px 12px;
+  color: var(--faint);
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+.relay-tabs {
+  flex: none;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  padding: 8px 14px 10px;
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.relay-tabs button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  min-height: 48px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.relay-tabs button:hover {
+  color: var(--ink);
+}
+
+.relay-tabs button.is-current {
+  background: var(--signal-tint);
+  color: var(--ink);
+  font-weight: 600;
 }
 
 .relay-switch,
@@ -1638,6 +1690,12 @@ input:focus-visible {
   margin-top: 14px;
 }
 
+@keyframes relay-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 @keyframes relay-fade {
   from {
     opacity: 0;
@@ -1663,7 +1721,8 @@ input:focus-visible {
 @media (prefers-reduced-motion: reduce) {
   .relay-scrim,
   .relay-sheet,
-  .relay-progress::after {
+  .relay-progress::after,
+  .relay-icon-button.is-busy svg {
     animation: none;
   }
 }

@@ -3,6 +3,7 @@
 
 use std::time::Duration;
 
+use relais_core::claude::desktop_switch;
 use relais_core::service::Relais;
 use relais_core::usage::Availability;
 use relais_core::Layout;
@@ -60,30 +61,79 @@ fn toggle_panel(app: &AppHandle, rect: Rect) {
     panel::show(app, true);
 }
 
-/// `20 %` for the active account's 5-hour window, or how long until it comes
-/// back when it is limited. Empty without accounts or readings.
+/// The account Claude Desktop uses (the terminal's active one when that is
+/// unknown) and its usage, for the menu bar. Empty without accounts.
 pub fn title_text() -> String {
     let Ok(relais) = Layout::from_env().and_then(Relais::load) else {
         return String::new();
     };
-    let Some(active) = relais.registry.active() else {
-        return String::new();
-    };
-    let Some(reading) = relais.usage_of(&active.alias) else {
+    let alias = desktop_switch::signed_in_account(&relais.layout, &relais.registry)
+        .ok()
+        .or_else(|| relais.registry.active().map(|a| a.alias.clone()));
+    let Some(alias) = alias else {
         return String::new();
     };
     let now = chrono::Utc::now().timestamp();
-    match reading.availability(now) {
-        Availability::Limited { until, exact: true } => {
-            remaining_text(until - now, platform::prefers_french())
-        }
-        Availability::Limited { exact: false, .. } => "100 %".to_string(),
-        Availability::Available { .. } => match reading.five_hour_now(now) {
-            Some(used) if platform::prefers_french() => format!("{used:.0} %"),
-            Some(used) => format!("{used:.0}%"),
-            None => String::new(),
-        },
+    let offset = *chrono::Local::now().offset();
+    let french = platform::prefers_french();
+    let Some(reading) = relais.usage_of(&alias) else {
+        return menu_title(&alias, None, None, None, now, offset, french);
+    };
+    let back_at = match reading.availability(now) {
+        Availability::Limited { until, exact: true } => Some(until),
+        _ => None,
+    };
+    menu_title(
+        &alias,
+        reading.five_hour_now(now),
+        reading.seven_day_now(now),
+        back_at,
+        now,
+        offset,
+        french,
+    )
+}
+
+/// The menu bar title: the account Claude Desktop uses, then each limit its
+/// plan has (some plans no longer have the 5-hour one), or when it is back.
+pub fn menu_title(
+    alias: &str,
+    five_hour: Option<f64>,
+    week: Option<f64>,
+    back_at: Option<i64>,
+    now: i64,
+    offset: chrono::FixedOffset,
+    french: bool,
+) -> String {
+    if let Some(back) = back_at.filter(|back| *back > now) {
+        let when = if back - now < 24 * 3600 {
+            chrono::DateTime::from_timestamp(back, 0)
+                .map(|at| at.with_timezone(&offset).format("%H:%M").to_string())
+                .unwrap_or_default()
+        } else if french {
+            format!("dans {}", remaining_text(back - now, true))
+        } else {
+            format!("in {}", remaining_text(back - now, false))
+        };
+        let back_word = if french { "revient" } else { "back" };
+        return format!("{alias} · {back_word} {when}");
     }
+    let percent = |used: f64| {
+        if french {
+            format!("{used:.0} %")
+        } else {
+            format!("{used:.0}%")
+        }
+    };
+    let week_label = if french { "7j" } else { "7d" };
+    let mut parts = vec![alias.to_string()];
+    if let Some(used) = five_hour {
+        parts.push(format!("5h {}", percent(used)));
+    }
+    if let Some(used) = week {
+        parts.push(format!("{week_label} {}", percent(used)));
+    }
+    parts.join(" · ")
 }
 
 /// A countdown short enough for the menu bar: `45 min`, `1 h 12`, `4 j`
@@ -119,6 +169,70 @@ pub fn keep_title_fresh(app: AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 2026-11-01 10:00 UTC.
+    const NOW: i64 = 1_793_527_200;
+
+    fn utc() -> chrono::FixedOffset {
+        chrono::FixedOffset::east_opt(0).unwrap()
+    }
+
+    #[test]
+    fn the_title_names_the_account_and_the_limits_its_plan_has() {
+        assert_eq!(
+            menu_title("main", None, Some(96.6), None, NOW, utc(), true),
+            "main · 7j 97 %"
+        );
+        assert_eq!(
+            menu_title("work", Some(12.0), Some(40.0), None, NOW, utc(), true),
+            "work · 5h 12 % · 7j 40 %"
+        );
+        assert_eq!(
+            menu_title("work", Some(12.0), Some(40.0), None, NOW, utc(), false),
+            "work · 5h 12% · 7d 40%"
+        );
+        assert_eq!(menu_title("new", None, None, None, NOW, utc(), true), "new");
+    }
+
+    #[test]
+    fn a_paused_account_says_when_it_is_back() {
+        assert_eq!(
+            menu_title(
+                "hello",
+                Some(100.0),
+                Some(50.0),
+                Some(NOW + 8 * 3600),
+                NOW,
+                utc(),
+                true
+            ),
+            "hello · revient 18:00"
+        );
+        assert_eq!(
+            menu_title(
+                "hello",
+                Some(100.0),
+                Some(50.0),
+                Some(NOW + 8 * 3600),
+                NOW,
+                utc(),
+                false
+            ),
+            "hello · back 18:00"
+        );
+        assert_eq!(
+            menu_title(
+                "spare",
+                None,
+                Some(100.0),
+                Some(NOW + 2 * 86400),
+                NOW,
+                utc(),
+                true
+            ),
+            "spare · revient dans 2 j"
+        );
+    }
 
     #[test]
     fn a_limit_shows_how_long_until_the_account_is_back() {

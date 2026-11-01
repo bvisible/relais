@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState, type CSSProperties } from "re
 import { api, type Account, type AccountSignIn, type AccountStats, type Conversation, type Overview, type PaletteColor, type ResumeTarget } from "./api";
 import { age, dayLabels, inTime, isLive, margin, newlySignedIn, remaining, span, time } from "./format";
 import { isMessageKey, t, type MessageKey } from "./i18n";
-import { RelayHome, type MenuChoice } from "./RelayHome";
+import { RelayHome, TabBar, type Tab } from "./RelayHome";
 
 type View = "home" | "settings" | "add" | "accounts" | "conversations";
 
@@ -236,13 +236,8 @@ export function App() {
     setView("home");
   };
 
-  const onMenu = (choice: MenuChoice) => {
-    if (choice === "accounts") openAccounts(null);
-    else if (choice === "conversations") setView("conversations");
-    else if (choice === "refresh") void refreshUsage(true);
-    else if (choice === "settings") setView("settings");
-    else void api.quit();
-  };
+  const tab: Tab = view === "conversations" ? "conversations" : view === "settings" ? "settings" : "accounts";
+  const selectTab = (next: Tab) => setView(next === "accounts" ? "home" : next);
 
   const openAccounts = (alias: string | null) => {
     setFocus(alias);
@@ -266,7 +261,9 @@ export function App() {
           pending={pending}
           onPendingSeen={() => setPending(null)}
           onOverview={setOverview}
-          onMenu={onMenu}
+          refreshing={refreshing}
+          onRefresh={() => void refreshUsage(true)}
+          onOpenAccount={(alias) => openAccounts(alias)}
           onSignIn={(alias) => void signInAndWatch(alias)}
           describeError={describeError}
         />
@@ -275,9 +272,6 @@ export function App() {
         <div className="page">
           <div className="page-head">
             <h1 className="page-title">{t("relayMenuConversations")}</h1>
-            <button className="button" onClick={() => setView("home")}>
-              {t("back")}
-            </button>
           </div>
           <Sessions conversations={conversations} accounts={new Map((overview?.accounts ?? []).map((a) => [a.alias, a]))} now={now} onResume={(id, target) => run(() => api.resume(id, target))} />
         </div>
@@ -309,7 +303,6 @@ export function App() {
             setFollowTheme(on);
             writeFollowTheme(on);
           }}
-          onBack={() => setView("home")}
           onStatusline={(enabled) => run(() => api.setStatusline(enabled))}
           onShell={(enabled) => run(() => api.setShell(enabled))}
         />
@@ -329,6 +322,7 @@ export function App() {
           {t("error", { message: error })}
         </p>
       )}
+      {view !== "add" && <TabBar tab={tab} onSelect={selectTab} />}
     </main>
   );
 }
@@ -734,7 +728,7 @@ function planName(plan: string): string {
 
 // ---- Settings and adding an account ----------------------------------------
 
-function Settings(props: { overview: Overview; followTheme: boolean; onFollowTheme: (on: boolean) => void; onBack: () => void; onStatusline: (enabled: boolean) => void; onShell: (enabled: boolean) => void }) {
+function Settings(props: { overview: Overview; followTheme: boolean; onFollowTheme: (on: boolean) => void; onStatusline: (enabled: boolean) => void; onShell: (enabled: boolean) => void }) {
   const { overview } = props;
   const rows = [
     { id: "statusline", title: t("statuslineTitle"), detail: t("statuslineDetail"), on: overview.statusline, set: props.onStatusline },
@@ -744,9 +738,6 @@ function Settings(props: { overview: Overview; followTheme: boolean; onFollowThe
     <div className="page">
       <div className="page-head">
         <h1 className="page-title">{t("settingsTitle")}</h1>
-        <button className="button" onClick={props.onBack}>
-          {t("back")}
-        </button>
       </div>
       <div className="card list">
         {rows.map((row) => (
