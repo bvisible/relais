@@ -46,7 +46,7 @@
   "doctor.measure_setup": "{alias} : Claude Code attend une réponse avant de pouvoir mesurer (lance `relais allow-measure`)",
   "doctor.measure_failed": "{alias} : dernière mesure impossible ({reason})",
   "alert.near": "{alias} est à {share} %",
-  "alert.near_next": "{next} a le plus de marge.",
+  "alert.near_next": "{next} est le meilleur choix.",
   "alert.near_alone": "Aucun autre compte n'a de marge pour l'instant.",
   "alert.back": "{alias} est de retour",
   "alert.back_detail": "Sa limite est repartie à zéro.",

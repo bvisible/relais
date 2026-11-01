@@ -418,6 +418,48 @@ impl UsageReading {
     }
 }
 
+/// How long an account can go at `pace` (points of the week a second) before
+/// its week stops it. An account whose week starts over first never runs out.
+fn lasts(reading: Option<&UsageReading>, pace: f64, now: i64) -> f64 {
+    let Some(reading) = reading else {
+        return (100.0 - UNKNOWN_USAGE) / pace;
+    };
+    let used = reading.seven_day_now(now).unwrap_or(UNKNOWN_USAGE);
+    let until_full = (100.0 - used) / pace;
+    let reset = reading.seven_day.as_ref().and_then(|week| week.resets_at);
+    match reset.filter(|at| *at > now) {
+        Some(at) if ((at - now) as f64) < until_full => f64::INFINITY,
+        _ => until_full,
+    }
+}
+
+/// The account that will go the longest at `pace`, skipping limited ones.
+/// Those that last equally are told apart by `best_account`.
+pub fn longest_lasting<'a>(
+    candidates: &[(&'a str, Option<&UsageReading>)],
+    pace: f64,
+    now: i64,
+) -> Option<&'a str> {
+    let free = |(_, reading): &&(&'a str, Option<&UsageReading>)| {
+        !matches!(
+            reading.map(|r| r.availability(now)),
+            Some(Availability::Limited { .. })
+        )
+    };
+    let longest = candidates
+        .iter()
+        .filter(free)
+        .map(|(_, reading)| lasts(*reading, pace, now))
+        .fold(0.0, f64::max);
+    let finalists: Vec<(&'a str, Option<&UsageReading>)> = candidates
+        .iter()
+        .filter(free)
+        .filter(|(_, reading)| lasts(*reading, pace, now) >= longest)
+        .copied()
+        .collect();
+    best_account(&finalists, now)
+}
+
 /// Picks the account with the most room left among `candidates`, skipping
 /// limited ones. Ties go to the account whose weekly window resets first, so
 /// quota that would be lost at the reset is used first.
@@ -609,6 +651,50 @@ mod tests {
     fn the_account_is_available_again_after_the_reset() {
         let r = reading(Some((100.0, NOW - 1)), Some((30.0, NOW + 7200)));
         assert_eq!(r.availability(NOW), Availability::Available { used: 30.0 });
+    }
+
+    #[test]
+    fn at_a_fast_pace_the_account_with_the_most_room_lasts_longest() {
+        let roomy = reading(None, Some((40.0, NOW + 6 * 86_400)));
+        let soon = reading(None, Some((70.0, NOW + 12 * 3600)));
+
+        // Five points an hour: soon runs out in six hours, before its reset.
+        let best = longest_lasting(
+            &[("soon", Some(&soon)), ("roomy", Some(&roomy))],
+            5.0 / 3600.0,
+            NOW,
+        );
+
+        assert_eq!(best, Some("roomy"));
+    }
+
+    #[test]
+    fn an_account_that_starts_over_before_running_out_beats_more_room() {
+        let roomy = reading(None, Some((40.0, NOW + 6 * 86_400)));
+        let soon = reading(None, Some((70.0, NOW + 12 * 3600)));
+
+        // Two points an hour: roomy stops after thirty hours, soon never does.
+        let best = longest_lasting(
+            &[("roomy", Some(&roomy)), ("soon", Some(&soon))],
+            2.0 / 3600.0,
+            NOW,
+        );
+
+        assert_eq!(best, Some("soon"));
+    }
+
+    #[test]
+    fn a_limited_account_is_never_the_one_that_lasts() {
+        let full = reading(None, Some((100.0, NOW + 3600)));
+        let busy = reading(None, Some((90.0, NOW + 6 * 86_400)));
+
+        let best = longest_lasting(
+            &[("full", Some(&full)), ("busy", Some(&busy))],
+            1.0 / 3600.0,
+            NOW,
+        );
+
+        assert_eq!(best, Some("busy"));
     }
 
     #[test]

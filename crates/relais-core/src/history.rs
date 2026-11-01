@@ -232,15 +232,14 @@ const FIVE_HOUR_PACE_SPAN: i64 = 90 * 60;
 const PACE_MIN_SPAN: i64 = 20 * 60;
 const PACE_MIN_GAIN: f64 = 1.0;
 
-/// When a limit fills up at the pace of the last readings, if that comes
-/// before it starts over. `share` picks the limit out of a sample.
-fn full_at(
+/// The last reading of a limit and its pace, in points a second, from what
+/// followed its last reset. `share` picks the limit out of a sample.
+fn pace(
     samples: &[Sample],
     share: fn(&Sample) -> Option<f64>,
     span: i64,
     now: i64,
-    resets_at: Option<i64>,
-) -> Option<i64> {
+) -> Option<((i64, f64), f64)> {
     let mut points: Vec<(i64, f64)> = samples
         .iter()
         .filter(|s| s.t > now - span && s.t <= now)
@@ -254,10 +253,31 @@ fn full_at(
         .map_or(0, |index| index + 1);
     let (first, last) = (points.get(start)?, points.last()?);
     let (elapsed, gained) = (last.0 - first.0, last.1 - first.1);
-    if elapsed < PACE_MIN_SPAN || gained < PACE_MIN_GAIN || last.1 >= 100.0 {
+    if elapsed < PACE_MIN_SPAN || gained < PACE_MIN_GAIN {
         return None;
     }
-    let at = last.0 + ((100.0 - last.1) * elapsed as f64 / gained) as i64;
+    Some((*last, gained / elapsed as f64))
+}
+
+/// The points of the week an account has been using per second lately.
+pub fn week_pace(samples: &[Sample], now: i64) -> Option<f64> {
+    pace(samples, |s| s.sd, WEEK_PACE_SPAN, now).map(|(_, pace)| pace)
+}
+
+/// When a limit fills up at the pace of the last readings, if that comes
+/// before it starts over.
+fn full_at(
+    samples: &[Sample],
+    share: fn(&Sample) -> Option<f64>,
+    span: i64,
+    now: i64,
+    resets_at: Option<i64>,
+) -> Option<i64> {
+    let (last, pace) = pace(samples, share, span, now)?;
+    if last.1 >= 100.0 {
+        return None;
+    }
+    let at = last.0 + ((100.0 - last.1) / pace) as i64;
     (at > now && resets_at.is_none_or(|reset| at < reset)).then_some(at)
 }
 
@@ -295,6 +315,23 @@ mod tests {
                 sd: Some(share),
             })
             .collect()
+    }
+
+    #[test]
+    fn the_pace_of_the_week_is_read_from_the_last_readings() {
+        let samples = week(&[(3 * 3600, 70.0), (3600, 80.0)]);
+
+        let pace = week_pace(&samples, NOW).unwrap();
+
+        assert!((pace * 3600.0 - 5.0).abs() < 1e-9, "{pace}");
+    }
+
+    #[test]
+    fn a_share_that_does_not_move_has_no_pace() {
+        assert_eq!(
+            week_pace(&week(&[(3 * 3600, 70.0), (3600, 70.0)]), NOW),
+            None
+        );
     }
 
     #[test]

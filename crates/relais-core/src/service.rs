@@ -782,7 +782,8 @@ impl Relais {
         }
     }
 
-    /// The account with the most room left, other than `alias`.
+    /// The account to go to from `alias`: the one that will last the longest
+    /// at the pace `alias` has been used at, or else the one with the most room.
     pub fn best_account_other_than(&self, alias: &str, now: i64) -> Option<String> {
         let readings: Vec<(String, Option<UsageReading>)> = self
             .registry
@@ -795,10 +796,14 @@ impl Relais {
             .iter()
             .map(|(alias, reading)| (alias.as_str(), reading.as_ref()))
             .collect();
-        usage::best_account(&candidates, now).map(String::from)
+        let best = match history::week_pace(&self.usage_history(alias), now) {
+            Some(pace) => usage::longest_lasting(&candidates, pace, now),
+            None => usage::best_account(&candidates, now),
+        };
+        best.map(String::from)
     }
 
-    /// The account with the most room left, other than the active one.
+    /// The account to go to from the active one.
     pub fn best_other_account(&self, now: i64) -> Option<String> {
         let active = self.registry.active.clone().unwrap_or_default();
         self.best_account_other_than(&active, now)
@@ -973,6 +978,50 @@ mod tests {
             .unwrap();
 
         assert_eq!(relais.best_other_account(NOW).as_deref(), Some("work"));
+    }
+
+    #[test]
+    fn the_pace_of_the_account_in_use_decides_which_other_one_lasts_longest() {
+        let (_root, mut relais) = fixture();
+        relais
+            .registry
+            .add(Account {
+                alias: "soon".into(),
+                email: Some("soon@example.com".into()),
+                account_uuid: None,
+                org_id: None,
+                config_dir: Some(relais.layout.profile_dir("soon")),
+                chrome_profile: None,
+                color: None,
+            })
+            .unwrap();
+        let week = |used: f64, resets: i64| {
+            serde_json::to_vec(&json!({"session_id": "s", "rate_limits": {
+                "seven_day": {"used_percentage": used, "resets_at": resets}
+            }}))
+            .unwrap()
+        };
+        let far = NOW + 6 * 86_400;
+        // main burns two points an hour.
+        relais
+            .record_statusline(None, &week(10.0, far), NOW - 3 * 3600)
+            .unwrap();
+        relais
+            .record_statusline(None, &week(14.0, far), NOW - 3600)
+            .unwrap();
+        let work = relais.layout.profile_dir("work");
+        relais
+            .record_statusline(Some(&work), &week(40.0, far), NOW)
+            .unwrap();
+        let soon = relais.layout.profile_dir("soon");
+        relais
+            .record_statusline(Some(&soon), &week(70.0, NOW + 12 * 3600), NOW)
+            .unwrap();
+
+        assert_eq!(
+            relais.best_account_other_than("main", NOW).as_deref(),
+            Some("soon")
+        );
     }
 
     #[test]

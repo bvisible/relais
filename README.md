@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/assets/demo.gif" alt="Demo: Relais suggests the Claude account with the most room left, asks for confirmation, then switches Claude Desktop to it" width="440">
+  <img src="docs/assets/demo.gif" alt="Demo: Relais suggests the best Claude account to go to, asks for confirmation, then switches Claude Desktop to it" width="440">
 </p>
 
 ## Why Relais
@@ -26,12 +26,12 @@ Relais keeps one workspace and changes only the sign-in:
 
 - **Everything stays.** Conversations, pinned items, folder order, sidebar sections, permissions and session presets follow you to the next account.
 - **You see every limit at a glance.** Each account shows its 5-hour and weekly usage as rings, and when it comes back if it is paused. Plans without the 5-hour limit show the week alone.
-- **It tells you where to go.** The account with the most room left is marked. Relais suggests, you decide: it never switches on its own.
+- **It tells you where to go.** At your current pace, the account that will last the longest is marked, counting those whose week starts over before they run out. Relais suggests, you decide: it never switches on its own.
 - **Your credentials stay yours.** Relais never reads, copies or stores a token, a cookie or a password.
 
 ## What else it does
 
-- **Alerts before the limit.** A notification at 85% and 95% of a limit names the account with the most room, and its button opens the confirmation. Another tells you when a paused account is back.
+- **Alerts before the limit.** A notification at 85% and 95% of a limit names the best account to go to, and its button opens the confirmation. Another tells you when a paused account is back.
 - **Forecast.** At the current pace, the panel says when the account in use reaches its limit.
 - **Resume what a switch stopped.** The sessions a switch interrupted are listed afterwards, one click from running again.
 - **Switch when it's done.** With sessions running, Relais can wait, tell you when they finish, and ask again.
@@ -82,7 +82,8 @@ Relais makes no call to Anthropic either: the only request it makes itself is to
 **[Download Relais for Mac](https://github.com/bvisible/relais/releases/latest)**, open the DMG and drag Relais to Applications, or use Homebrew:
 
 ```bash
-brew install --cask bvisible/tap/relais
+brew tap bvisible/tap
+brew install --cask relais
 ```
 
 It needs macOS 13 or later, and runs on Apple Silicon and Intel. It is tested on macOS 26 and 27 on Apple Silicon, and its command and test suite also run on an Intel Mac in CI. The widget needs macOS 14. The app is signed with a Developer ID and notarized by Apple, so macOS opens it without a warning, and it offers new versions by itself.
@@ -158,7 +159,7 @@ It reads the figures Claude Code already gives its status line, the history Clau
 
 ### Does it switch automatically when I hit the limit?
 
-No. A ring turns orange as an account fills up and Relais marks the one with the most room left, but the switch is yours.
+No. A ring turns orange as an account fills up and Relais marks the best one to go to, but the switch is yours.
 
 ### Can Relais switch accounts without closing Claude Desktop?
 

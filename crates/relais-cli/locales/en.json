@@ -46,7 +46,7 @@
   "doctor.measure_setup": "{alias}: Claude Code waits for an answer before it can measure (run `relais allow-measure`)",
   "doctor.measure_failed": "{alias}: the last measure failed ({reason})",
   "alert.near": "{alias} is at {share}%",
-  "alert.near_next": "{next} has the most room left.",
+  "alert.near_next": "{next} is the best choice.",
   "alert.near_alone": "No other account has room right now.",
   "alert.back": "{alias} is back",
   "alert.back_detail": "Its limit has started over.",

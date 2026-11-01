@@ -36,7 +36,7 @@
             "image": "https://bvisible.github.io/relais/assets/social-preview.png",
             "applicationCategory": "DeveloperApplication",
             "operatingSystem": "macOS 13 or later",
-            "softwareVersion": "0.2.0",
+            "softwareVersion": "0.2.1",
             "downloadUrl": "https://github.com/bvisible/relais/releases/latest",
             "license": "https://opensource.org/licenses/MIT",
             "isAccessibleForFree": true,
@@ -401,7 +401,7 @@
               <li><strong>Pick up where you stopped</strong><span>Desktop reopens on the new account, new terminals follow.</span></li>
             </ol>
           </div>
-          <img class="shot" src="assets/demo.gif" width="440" height="650" loading="lazy" alt="Demo: Relais suggests the Claude account with the most room left, asks for confirmation, then switches Claude Desktop to it" />
+          <img class="shot" src="assets/demo.gif" width="440" height="650" loading="lazy" alt="Demo: Relais suggests the best Claude account to go to, asks for confirmation, then switches Claude Desktop to it" />
         </div>
       </section>
 
@@ -418,7 +418,7 @@
             <div>
               <img class="shot" src="assets/confirm.png" width="400" height="563" loading="lazy" alt="Relais confirmation before switching Claude accounts" />
               <h3>You decide, always</h3>
-              <p>Relais marks the account with the most room left and can wait for your sessions to finish. It never switches on its own, and what a switch stopped is one click from running again.</p>
+              <p>Relais marks the account that will last the longest and can wait for your sessions to finish. It never switches on its own, and what a switch stopped is one click from running again.</p>
             </div>
             <div>
               <img class="shot" src="assets/panel-dark.png" width="400" height="563" loading="lazy" alt="Relais in dark mode on macOS" />
@@ -441,7 +441,8 @@
         <div class="wrap">
           <h2>Install Relais</h2>
           <p class="lead">Open the DMG and drag Relais to Applications. It needs macOS 13 or later, on Apple Silicon or Intel. The app is signed with a Developer ID, notarized by Apple, and offers new versions by itself.</p>
-          <pre><code>brew install --cask bvisible/tap/relais</code></pre>
+          <pre><code>brew tap bvisible/tap
+brew install --cask relais</code></pre>
           <a class="button" href="https://github.com/bvisible/relais/releases/latest">Download Relais</a>
           <p class="assurance"><a href="https://github.com/bvisible/relais#install">Setup guide and build from source</a></p>
         </div>

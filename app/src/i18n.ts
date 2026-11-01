@@ -121,7 +121,7 @@ const fr = {
   // One screen: every account, one button to switch Claude to it.
   relayHere: "Claude",
   relaySwitch: "Passer ici",
-  relayAdvised: "le plus de marge",
+  relayAdvised: "le meilleur choix",
   relayConfirmTitle: "Passer sur {alias} ?",
   relayConfirmCloses: "Claude se ferme et se rouvre sur {alias}.",
   relayConfirmKeepsMany: "Tes {n} discussions, tes favoris et tes dossiers restent tels quels.",
@@ -328,7 +328,7 @@ const en: Dictionary = {
   idleFor: "for {d}",
   relayHere: "Claude",
   relaySwitch: "Switch here",
-  relayAdvised: "most room left",
+  relayAdvised: "best choice",
   relayConfirmTitle: "Switch to {alias}?",
   relayConfirmCloses: "Claude closes and reopens on {alias}.",
   relayConfirmKeepsMany: "Your {n} conversations, pins and folders stay as they are.",
