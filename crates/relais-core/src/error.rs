@@ -45,6 +45,14 @@ pub enum Error {
     DesktopNotOpened,
     #[error("this version of Claude Code answers /usage as a conversation")]
     UsageCommandUnavailable,
+    #[error("the Claude desktop app is signed in to an account Relais does not know ({0})")]
+    UnknownSignedInAccount(String),
+    #[error("Relais does not know the account or organization id of {0}")]
+    MissingAccountIds(String),
+    #[error("an earlier switch of the Claude desktop app was interrupted and has been undone")]
+    SwitchInterrupted,
+    #[error("the account has {0} conversations of its own: add them or put them aside")]
+    OwnConversationsNeedChoice(usize),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

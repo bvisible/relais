@@ -160,6 +160,14 @@ pub fn target_conversations(source: &Path, target: &Path) -> TargetConversations
     sorted
 }
 
+/// How many conversations a list holds.
+pub fn conversation_count(dir: &Path) -> usize {
+    entry_names(dir)
+        .iter()
+        .filter(|name| is_record(name))
+        .count()
+}
+
 /// The conversation records of a list: `local_<id>` and its transcript id.
 fn records(dir: &Path) -> Vec<(String, Option<String>)> {
     entry_names(dir)

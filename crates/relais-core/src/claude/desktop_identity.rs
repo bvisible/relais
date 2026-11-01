@@ -97,6 +97,37 @@ pub fn take_from_old_folder(layout: &Layout, alias: &str, date: &str) -> Result<
     Ok(true)
 }
 
+/// Whether `alias` still has the whole data folder of an earlier version,
+/// with a sign-in in it.
+pub fn has_old_folder(layout: &Layout, alias: &str) -> bool {
+    holds_sign_in(&layout.desktop_profile_dir(alias))
+}
+
+/// Finishes moving `alias`'s sign-in back in place after a switch was cut
+/// short: the files still parked join those already back. Only for undoing
+/// a switch, where both halves are known to be the same account's.
+pub fn rejoin_in_place(layout: &Layout, alias: &str) -> Result<usize> {
+    rejoin(&layout.identity_dir(alias), &layout.desktop_dir)
+}
+
+/// Finishes parking `alias`'s sign-in after a switch was cut short.
+pub fn rejoin_parked(layout: &Layout, alias: &str) -> Result<usize> {
+    rejoin(&layout.desktop_dir, &layout.identity_dir(alias))
+}
+
+fn rejoin(from: &Path, to: &Path) -> Result<usize> {
+    let mut moved = 0;
+    for name in IDENTITY_FILES {
+        let source = from.join(name);
+        if source.exists() && !to.join(name).exists() {
+            fs::create_dir_all(to).map_err(|e| Error::io(to, e))?;
+            fs::rename(&source, to.join(name)).map_err(|e| Error::io(&source, e))?;
+            moved += 1;
+        }
+    }
+    Ok(moved)
+}
+
 fn holds_sign_in(dir: &Path) -> bool {
     ["config.json", "Cookies"]
         .iter()

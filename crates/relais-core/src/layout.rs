@@ -81,6 +81,34 @@ impl Layout {
             .join(format!("desktop-archive-{date}"))
     }
 
+    /// The journal of a switch of the desktop app's account in progress.
+    pub fn workspace_switch_journal(&self) -> PathBuf {
+        self.relais_dir.join("workspace-switch.json")
+    }
+
+    /// The copy of what a switch of the desktop app's account changes.
+    pub fn workspace_backup_dir(&self, stamp: &str) -> PathBuf {
+        self.relais_dir
+            .join("backups")
+            .join("workspace")
+            .join(stamp)
+    }
+
+    /// Conversations a switch took out of the desktop app's list, recoverable.
+    pub fn set_aside_dir(&self, stamp: &str) -> PathBuf {
+        self.relais_dir.join("set-aside").join(stamp)
+    }
+
+    /// The desktop app's settings, including those it files under an account.
+    pub fn desktop_config_file(&self) -> PathBuf {
+        self.desktop_dir.join("claude_desktop_config.json")
+    }
+
+    /// The desktop app's session presets, filed by account.
+    pub fn desktop_presets_file(&self) -> PathBuf {
+        self.desktop_dir.join("ccd-session-presets.json")
+    }
+
     /// The desktop app's own log, outside its data folder: it says which
     /// account each start loaded.
     pub fn desktop_log_file(&self) -> PathBuf {
