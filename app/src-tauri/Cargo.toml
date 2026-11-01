@@ -19,6 +19,7 @@ chrono.workspace = true
 tauri = { version = "2", features = ["tray-icon", "image-png", "macos-private-api"] }
 tauri-plugin-updater = "2"
 tauri-plugin-global-shortcut = "2.4.1"
+tauri-plugin-dialog = "2.8.4"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 block2 = "0.6"

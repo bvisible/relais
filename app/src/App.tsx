@@ -369,6 +369,7 @@ export function App() {
           upToDate={upToDate}
           onCheckUpdate={checkUpdate}
           onBringBack={() => run(() => api.bringBack())}
+          onAddFolder={(alias) => run(() => api.addFolder(alias))}
           onRemoveFolder={(folder) => run(() => api.removeFolder(folder))}
         />
       )}
@@ -798,8 +799,9 @@ function planName(plan: string): string {
 
 // ---- Settings and adding an account ----------------------------------------
 
-function Settings(props: { overview: Overview; followTheme: boolean; onFollowTheme: (on: boolean) => void; onStatusline: (enabled: boolean) => void; onShell: (enabled: boolean) => void; onAlerts: (enabled: boolean) => void; onShortcut: (enabled: boolean) => void; upToDate: boolean | null; onCheckUpdate: () => Promise<void>; onBringBack: () => Promise<void>; onRemoveFolder: (folder: string) => void }) {
+function Settings(props: { overview: Overview; followTheme: boolean; onFollowTheme: (on: boolean) => void; onStatusline: (enabled: boolean) => void; onShell: (enabled: boolean) => void; onAlerts: (enabled: boolean) => void; onShortcut: (enabled: boolean) => void; upToDate: boolean | null; onCheckUpdate: () => Promise<void>; onBringBack: () => Promise<void>; onAddFolder: (alias: string) => void; onRemoveFolder: (folder: string) => void }) {
   const { overview } = props;
+  const [folderAccount, setFolderAccount] = useState(overview.accounts.find((a) => a.active)?.alias ?? overview.accounts[0]?.alias ?? "");
   const [checking, setChecking] = useState(false);
   const [bringing, setBringing] = useState<"idle" | "confirm" | "working">("idle");
   const bringBack = async () => {
@@ -867,6 +869,18 @@ function Settings(props: { overview: Overview; followTheme: boolean; onFollowThe
             </button>
           </div>
         ))}
+        <div className="list-row">
+          <select className="folder-account" aria-label={t("folderAccount")} value={folderAccount} onChange={(e) => setFolderAccount(e.target.value)}>
+            {overview.accounts.map((account) => (
+              <option key={account.alias} value={account.alias}>
+                {account.alias}
+              </option>
+            ))}
+          </select>
+          <button className="button" disabled={!folderAccount} onClick={() => props.onAddFolder(folderAccount)}>
+            {t("folderAdd")}
+          </button>
+        </div>
       </div>
       {overview.setAside > 0 && (
         <div className="card list">

@@ -137,6 +137,7 @@ export const api = {
   waitToSwitch: (alias: string | null) => call<Overview>("wait_to_switch", { alias }),
   bringBack: () => call<Overview>("bring_back"),
   projectUsage: () => call<ProjectUsage[]>("project_usage"),
+  addFolder: (alias: string) => call<Overview>("add_folder", { alias }),
   removeFolder: (folder: string) => call<Overview>("remove_folder", { folder }),
   hide: () => call<void>("hide"),
   quit: () => call<void>("quit"),
@@ -239,7 +240,7 @@ let previewState: Overview = {
   switchWaiting: null,
   setAside: previewMode === "aside" ? 4 : 0,
   folders: previewMode === "aside" ? { "~/Projects/website": "work" } : {},
-  version: "0.2.0",
+  version: "0.2.1",
   now: nowSecs(),
 };
 
@@ -307,6 +308,7 @@ async function preview<T>(command: string, args?: Record<string, unknown>): Prom
     const interrupted = [{ id: "s1", title: "Rings and colors in the menu bar app" }];
     return { outcome: "switched", started, undidInterrupted: false, interrupted, overview: { ...previewState, now: nowSecs() } } as T;
   }
+  if (command === "add_folder") previewState = { ...previewState, folders: { ...previewState.folders, "~/Projects/website": String(args?.alias) } };
   if (command === "remove_folder") previewState = { ...previewState, folders: {} };
   if (command === "project_usage") {
     return [

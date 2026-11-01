@@ -17,6 +17,7 @@ use relais_core::Error;
 use relais_core::Layout;
 use serde::Serialize;
 use tauri::{AppHandle, WebviewWindow};
+use tauri_plugin_dialog::DialogExt;
 
 use crate::alerts;
 use crate::measure;
@@ -466,6 +467,20 @@ pub async fn bring_back() -> Result<Overview, String> {
 #[tauri::command]
 pub fn project_usage() -> Result<Vec<ProjectUsage>, String> {
     Ok(load()?.project_usage(now()))
+}
+
+/// Asks for a folder and ties it to `alias`. The panel closes when it loses
+/// the keyboard to the dialog, so it comes back once the answer is in.
+#[tauri::command]
+pub async fn add_folder(app: AppHandle, alias: String) -> Result<Overview, String> {
+    let picked = app.dialog().file().blocking_pick_folder();
+    let relais = load()?;
+    if let Some(folder) = picked.and_then(|folder| folder.into_path().ok()) {
+        let folder = std::fs::canonicalize(&folder).unwrap_or(folder);
+        relais.set_folder(&folder, &alias).map_err(text)?;
+    }
+    tray::open_panel(&app);
+    Ok(build_overview(&relais))
 }
 
 #[tauri::command]
