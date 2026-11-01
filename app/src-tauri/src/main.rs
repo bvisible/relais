@@ -8,6 +8,7 @@ mod panel_geometry;
 mod platform;
 mod tray;
 mod updates;
+mod widget;
 
 use tauri::{AppHandle, Manager, WindowEvent};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
@@ -86,6 +87,7 @@ fn main() {
             tray::create(app.handle())?;
             tray::keep_title_fresh(app.handle().clone());
             measure::keep_measuring();
+            widget::keep_fresh();
             let shortcut = relais_core::Layout::from_env()
                 .and_then(relais_core::service::Relais::load)
                 .map(|relais| relais.shortcut_on())
