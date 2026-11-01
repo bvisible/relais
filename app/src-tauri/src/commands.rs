@@ -86,6 +86,7 @@ pub struct Overview {
     /// Claude Code waits for an answer of the user before it can measure.
     measure_waits: bool,
     alerts: bool,
+    shortcut: bool,
     /// The account to switch to once the app's sessions are done.
     switch_waiting: Option<String>,
     /// Conversations a switch set aside, ready to come back.
@@ -211,6 +212,7 @@ pub fn build_overview(relais: &Relais) -> Overview {
         best: relais.best_other_account(now),
         measure_waits: !relais.accounts_awaiting_setup().is_empty(),
         alerts: relais.alerts_on(),
+        shortcut: relais.shortcut_on(),
         switch_waiting: alerts::switch_waiting(),
         set_aside: desktop_switch::set_aside_waiting(&relais.layout, &relais.registry),
         folders: relais.folder_rules(),
@@ -470,6 +472,14 @@ pub fn project_usage() -> Result<Vec<ProjectUsage>, String> {
 pub fn remove_folder(folder: String) -> Result<Overview, String> {
     let relais = load()?;
     relais.remove_folder(Path::new(&folder)).map_err(text)?;
+    Ok(build_overview(&relais))
+}
+
+#[tauri::command]
+pub fn set_shortcut(app: AppHandle, enabled: bool) -> Result<Overview, String> {
+    let relais = load()?;
+    relais.set_shortcut(enabled).map_err(text)?;
+    crate::set_panel_shortcut(&app, enabled);
     Ok(build_overview(&relais))
 }
 

@@ -9,11 +9,27 @@ mod platform;
 mod tray;
 mod updates;
 
-use tauri::{Manager, WindowEvent};
+use tauri::{AppHandle, Manager, WindowEvent};
+use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
 /// Set to keep the panel open and centered, for screenshots and checks. The
 /// panel then does not take the keyboard from the app in front.
 const SHOW_WINDOW_ENV: &str = "RELAIS_SHOW_WINDOW";
+
+/// Control-Option-R opens the panel: Command-Option-R reloads a browser's page.
+fn panel_shortcut() -> Shortcut {
+    Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyR)
+}
+
+/// Takes or gives back the shortcut. Fail open: another app may hold it.
+pub fn set_panel_shortcut(app: &AppHandle, on: bool) {
+    let shortcuts = app.global_shortcut();
+    let _ = if on {
+        shortcuts.register(panel_shortcut())
+    } else {
+        shortcuts.unregister(panel_shortcut())
+    };
+}
 
 fn main() {
     let pinned = std::env::var_os(SHOW_WINDOW_ENV).is_some();
@@ -26,6 +42,15 @@ fn main() {
         .plugin(tauri_nspanel::init());
     builder
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, _, event| {
+                    if event.state == ShortcutState::Pressed {
+                        tray::toggle_from_keyboard(app);
+                    }
+                })
+                .build(),
+        )
         .invoke_handler(tauri::generate_handler![
             commands::overview,
             commands::switch_account,
@@ -45,6 +70,7 @@ fn main() {
             commands::set_statusline,
             commands::set_shell,
             commands::set_alerts,
+            commands::set_shortcut,
             commands::wait_to_switch,
             commands::bring_back,
             commands::project_usage,
@@ -60,6 +86,11 @@ fn main() {
             tray::create(app.handle())?;
             tray::keep_title_fresh(app.handle().clone());
             measure::keep_measuring();
+            let shortcut = relais_core::Layout::from_env()
+                .and_then(relais_core::service::Relais::load)
+                .map(|relais| relais.shortcut_on())
+                .unwrap_or(true);
+            set_panel_shortcut(app.handle(), shortcut);
             alerts::keep_watching(app.handle().clone());
             if let Some(window) = app.get_webview_window(panel::LABEL) {
                 // Fail open: as a plain window the panel still works on the desktop.

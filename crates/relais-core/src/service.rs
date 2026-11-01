@@ -558,6 +558,23 @@ impl Relais {
         fsutil::write_json_atomic(&self.alerts_file(), &json!(file))
     }
 
+    fn shortcut_file(&self) -> PathBuf {
+        self.layout.relais_dir.join("shortcut.json")
+    }
+
+    /// Whether the keyboard shortcut opens the panel. On unless turned off.
+    pub fn shortcut_on(&self) -> bool {
+        fsutil::read_json(&self.shortcut_file())
+            .ok()
+            .flatten()
+            .and_then(|value| value.get("off")?.as_bool())
+            != Some(true)
+    }
+
+    pub fn set_shortcut(&self, on: bool) -> Result<()> {
+        fsutil::write_json_atomic(&self.shortcut_file(), &json!({ "off": !on }))
+    }
+
     pub fn alerts_on(&self) -> bool {
         !self.load_alerts().off
     }
@@ -1531,9 +1548,22 @@ printf '{{"type":"result","num_turns":0,"result":"Not logged in"}}'
     #[test]
     fn a_rule_naming_a_removed_account_is_ignored() {
         let (_root, relais) = fixture();
+        fs::create_dir_all(&relais.layout.relais_dir).unwrap();
         fs::write(relais.folders_file(), json!({"/work": "gone"}).to_string()).unwrap();
 
         assert_eq!(relais.account_of_folder(Path::new("/work/app")), None);
+    }
+
+    #[test]
+    fn the_keyboard_shortcut_is_on_until_turned_off() {
+        let (_root, relais) = fixture();
+        assert!(relais.shortcut_on());
+
+        relais.set_shortcut(false).unwrap();
+        assert!(!relais.shortcut_on());
+
+        relais.set_shortcut(true).unwrap();
+        assert!(relais.shortcut_on());
     }
 
     #[test]

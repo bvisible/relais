@@ -52,6 +52,20 @@ fn toggle_panel(app: &AppHandle, rect: Rect) {
     show_panel(app, &window, rect);
 }
 
+/// The keyboard shortcut: opens the panel, or closes it.
+pub fn toggle_from_keyboard(app: &AppHandle) {
+    let visible = app
+        .get_webview_window(panel::LABEL)
+        .is_some_and(|window| window.is_visible().unwrap_or(false));
+    if visible {
+        if let Some(window) = app.get_webview_window(panel::LABEL) {
+            let _ = window.hide();
+        }
+    } else {
+        open_panel(app);
+    }
+}
+
 /// Opens the panel from anywhere: a notification, a keyboard shortcut.
 pub fn open_panel(app: &AppHandle) {
     let handle = app.clone();

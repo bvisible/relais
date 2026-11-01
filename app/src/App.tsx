@@ -365,6 +365,7 @@ export function App() {
           onStatusline={(enabled) => run(() => api.setStatusline(enabled))}
           onShell={(enabled) => run(() => api.setShell(enabled))}
           onAlerts={(enabled) => run(() => api.setAlerts(enabled))}
+          onShortcut={(enabled) => run(() => api.setShortcut(enabled))}
           upToDate={upToDate}
           onCheckUpdate={checkUpdate}
           onBringBack={() => run(() => api.bringBack())}
@@ -797,7 +798,7 @@ function planName(plan: string): string {
 
 // ---- Settings and adding an account ----------------------------------------
 
-function Settings(props: { overview: Overview; followTheme: boolean; onFollowTheme: (on: boolean) => void; onStatusline: (enabled: boolean) => void; onShell: (enabled: boolean) => void; onAlerts: (enabled: boolean) => void; upToDate: boolean | null; onCheckUpdate: () => Promise<void>; onBringBack: () => Promise<void>; onRemoveFolder: (folder: string) => void }) {
+function Settings(props: { overview: Overview; followTheme: boolean; onFollowTheme: (on: boolean) => void; onStatusline: (enabled: boolean) => void; onShell: (enabled: boolean) => void; onAlerts: (enabled: boolean) => void; onShortcut: (enabled: boolean) => void; upToDate: boolean | null; onCheckUpdate: () => Promise<void>; onBringBack: () => Promise<void>; onRemoveFolder: (folder: string) => void }) {
   const { overview } = props;
   const [checking, setChecking] = useState(false);
   const [bringing, setBringing] = useState<"idle" | "confirm" | "working">("idle");
@@ -816,6 +817,7 @@ function Settings(props: { overview: Overview; followTheme: boolean; onFollowThe
     { id: "statusline", title: t("statuslineTitle"), detail: t("statuslineDetail"), on: overview.statusline, set: props.onStatusline },
     { id: "shell", title: t("shellTitle"), detail: t("shellDetail"), on: overview.shell, set: props.onShell },
     { id: "alerts", title: t("alertsTitle"), detail: t("alertsDetail"), on: overview.alerts, set: props.onAlerts },
+    { id: "shortcut", title: t("shortcutTitle"), detail: t("shortcutDetail"), on: overview.shortcut, set: props.onShortcut },
   ];
   return (
     <div className="page">

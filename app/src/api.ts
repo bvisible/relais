@@ -46,6 +46,8 @@ export type Overview = {
   measureWaits: boolean;
   /** Notifications near a limit and when an account is back. */
   alerts: boolean;
+  /** Control-Option-R opens the panel. */
+  shortcut: boolean;
   /** The account to switch to once Claude Desktop's sessions are done. */
   switchWaiting: string | null;
   /** Conversations a switch set aside, ready to come back. */
@@ -131,6 +133,7 @@ export const api = {
   setStatusline: (enabled: boolean) => call<Overview>("set_statusline", { enabled }),
   setShell: (enabled: boolean) => call<Overview>("set_shell", { enabled }),
   setAlerts: (enabled: boolean) => call<Overview>("set_alerts", { enabled }),
+  setShortcut: (enabled: boolean) => call<Overview>("set_shortcut", { enabled }),
   waitToSwitch: (alias: string | null) => call<Overview>("wait_to_switch", { alias }),
   bringBack: () => call<Overview>("bring_back"),
   projectUsage: () => call<ProjectUsage[]>("project_usage"),
@@ -232,6 +235,7 @@ let previewState: Overview = {
   cliFound: true,
   measureWaits: previewMode === "trust",
   alerts: true,
+  shortcut: true,
   switchWaiting: null,
   setAside: previewMode === "aside" ? 4 : 0,
   folders: previewMode === "aside" ? { "~/Projects/website": "work" } : {},
@@ -324,6 +328,7 @@ async function preview<T>(command: string, args?: Record<string, unknown>): Prom
     await new Promise((resolve) => setTimeout(resolve, 1600));
     previewState = { ...previewState, setAside: 0 };
   }
+  if (command === "set_shortcut") previewState = { ...previewState, shortcut: Boolean(args?.enabled) };
   if (command === "set_alerts") previewState = { ...previewState, alerts: Boolean(args?.enabled) };
   if (command === "suggest_alias") {
     const local = String(args?.email ?? "").split("@")[0].toLowerCase().replace(/[^a-z0-9_]+/g, "-").replace(/^-+|-+$/g, "");
