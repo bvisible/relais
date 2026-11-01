@@ -10,7 +10,8 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-141414" alt="MIT license"></a>
   <img src="https://img.shields.io/badge/platform-macOS-141414" alt="Platform: macOS">
   <img src="https://img.shields.io/badge/built%20with-Rust%20%2B%20Tauri-141414" alt="Built with Rust and Tauri">
-  <a href="https://bvisible.github.io/relais/"><img src="https://img.shields.io/badge/website-relais-F55D1A" alt="Relais website"></a>
+  <a href="https://github.com/bvisible/relais/releases/latest"><img src="https://img.shields.io/github/v/release/bvisible/relais?color=F55D1A&label=download" alt="Download the latest Relais release"></a>
+  <a href="https://bvisible.github.io/relais/"><img src="https://img.shields.io/badge/website-relais-141414" alt="Relais website"></a>
 </p>
 
 <p align="center">
@@ -66,17 +67,9 @@ Relais makes no call to Anthropic either. Usage comes from what Claude Code hand
 
 ## Install
 
-Relais is built from source for now. You need macOS, [Rust](https://rustup.rs), [Node.js](https://nodejs.org), [pnpm](https://pnpm.io) and Xcode's command line tools.
+**[Download Relais for Mac](https://github.com/bvisible/relais/releases/latest)**, open the DMG and drag Relais to Applications. It needs macOS 13 or later on Apple Silicon, and is tested on macOS 26 and 27. The app is signed with a Developer ID and notarized by Apple, so macOS opens it without a warning. There are no automatic updates yet: download new versions from the same page.
 
-```bash
-git clone https://github.com/bvisible/relais.git
-cd relais
-pnpm --dir app install
-./app/scripts/build-macos.sh
-cp -R target/release/bundle/macos/Relais.app /Applications/
-```
-
-Then link the command that comes with the app and register the account you are signed in with:
+Link the command that comes with the app and register the account you are signed in with:
 
 ```bash
 mkdir -p ~/.local/bin
@@ -93,6 +86,18 @@ relais shell-install                # make `claude` run with the active account
 ```
 
 If the panel says measuring waits for your OK, click **Allow**: Claude Code asks its first-run questions once, and Relais never answers them for you.
+
+### Build from source
+
+You need [Rust](https://rustup.rs), [Node.js](https://nodejs.org), [pnpm](https://pnpm.io) and Xcode's command line tools.
+
+```bash
+git clone https://github.com/bvisible/relais.git
+cd relais
+pnpm --dir app install
+./app/scripts/build-macos.sh
+cp -R target/release/bundle/macos/Relais.app /Applications/
+```
 
 ## Commands
 
@@ -143,9 +148,13 @@ No. Desktop has to restart on the other sign-in, so sessions working inside it s
 
 It is developed and used daily on Claude Max accounts, with or without the 5-hour limit, on Claude Desktop 3.6556 and Claude Code 2.1.314. Other plans should behave the same: please [open an issue](https://github.com/bvisible/relais/issues) if yours does not. A Claude update can change what Relais relies on.
 
-### Does Relais work on Windows or Linux?
+### Does Relais work on Windows, Linux or Intel Macs?
 
-Not for now. It is built for macOS, where it lives in the menu bar.
+Not for now. The download is for Macs with Apple Silicon, and Relais lives in the macOS menu bar.
+
+### Is the Relais app signed and notarized?
+
+Yes. Each release is signed with a Developer ID and notarized by Apple, and its SHA-256 sum is published next to the download.
 
 ### What about Claude in Chrome?
 

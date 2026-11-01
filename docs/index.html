@@ -35,7 +35,9 @@
             "sameAs": "https://github.com/bvisible/relais",
             "image": "https://bvisible.github.io/relais/assets/social-preview.png",
             "applicationCategory": "DeveloperApplication",
-            "operatingSystem": "macOS",
+            "operatingSystem": "macOS 13 or later",
+            "softwareVersion": "0.1.0",
+            "downloadUrl": "https://github.com/bvisible/relais/releases/latest",
             "license": "https://opensource.org/licenses/MIT",
             "isAccessibleForFree": true,
             "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
@@ -377,8 +379,8 @@
           <h1>Claude account switcher for Mac</h1>
           <p class="display">Hit a Claude limit. Keep working.</p>
           <p class="lead">When one subscription runs out, one click moves Claude Desktop and Claude Code to another account. Your conversations, pins and folders stay exactly where they are.</p>
-          <a class="button" href="https://github.com/bvisible/relais#install">Get Relais on GitHub</a>
-          <p class="assurance">Free and open source · macOS · No credential touched</p>
+          <a class="button" href="https://github.com/bvisible/relais/releases/latest">Download for Mac</a>
+          <p class="assurance">Free and open source · Notarized by Apple · No credential touched</p>
         </div>
         <picture>
           <source srcset="assets/panel-dark.png" media="(prefers-color-scheme: dark)" />
@@ -438,13 +440,9 @@
       <section id="install">
         <div class="wrap">
           <h2>Install Relais</h2>
-          <p class="lead">Built from source for now. You need macOS, Rust, Node.js, pnpm and Xcode's command line tools.</p>
-          <pre><code>git clone https://github.com/bvisible/relais.git
-cd relais
-pnpm --dir app install
-./app/scripts/build-macos.sh
-cp -R target/release/bundle/macos/Relais.app /Applications/</code></pre>
-          <a class="button" href="https://github.com/bvisible/relais#install">Read the full guide</a>
+          <p class="lead">Open the DMG and drag Relais to Applications. It needs macOS 13 or later on Apple Silicon, and is tested on macOS 26 and 27. The app is signed with a Developer ID and notarized by Apple.</p>
+          <a class="button" href="https://github.com/bvisible/relais/releases/latest">Download Relais</a>
+          <p class="assurance"><a href="https://github.com/bvisible/relais#install">Setup guide and build from source</a></p>
         </div>
       </section>
 
