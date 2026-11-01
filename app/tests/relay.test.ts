@@ -48,16 +48,24 @@ test("the result line says where Claude is", () => {
   assert.equal(result(null, "already"), "Claude est déjà sur work.");
 });
 
+/** The line as read, its unbreakable spaces shown as plain ones. */
+const plain = (text: string) => text.replaceAll("\u00a0", " ");
+
 test("a usage line names the limits the plan has, and when the only one starts over", () => {
-  assert.equal(usageLine(account("a", 12, 96), NOW), "5 h 12 % · semaine 96 %");
-  assert.equal(usageLine(account("a", null, 40), NOW), "semaine 40 % · repart dans 1 j");
-  assert.equal(usageLine(account("a", 30, null), NOW), "5 h 30 %");
-  assert.equal(usageLine(account("a", null, null, { observedAt: null }), NOW), "pas encore mesuré");
+  assert.equal(plain(usageLine(account("a", 12, 96), NOW)), "5 h 12 % · semaine 96 %");
+  assert.equal(plain(usageLine(account("a", null, 40), NOW)), "semaine 40 % · repart dans 1 j");
+  assert.equal(plain(usageLine(account("a", 30, null), NOW)), "5 h 30 %");
+  assert.equal(plain(usageLine(account("a", null, null, { observedAt: null }), NOW)), "pas encore mesuré");
+});
+
+test("a usage line only breaks between its parts, never inside a share or a duration", () => {
+  const line = usageLine({ ...account("a", null, 40), sevenDay: { used: 40, resetsAt: NOW + 6 * 86400 + 5 * 3600 } }, NOW);
+  assert.deepEqual(line.split(" "), ["semaine\u00a040\u00a0%", "·", "repart\u00a0dans\u00a06\u00a0j\u00a05\u00a0h"]);
 });
 
 test("a paused account says when it is back", () => {
-  assert.match(usageLine(account("a", 100, 50, { limited: true, limitedUntil: NOW + 2 * 3600 }), NOW), /^en pause · revient \d{2}:\d{2}$/);
-  assert.equal(usageLine(account("a", 100, 50, { limited: true, limitedUntil: null }), NOW), "en pause");
+  assert.match(plain(usageLine(account("a", 100, 50, { limited: true, limitedUntil: NOW + 2 * 3600 }), NOW)), /^en pause · revient \d{2}:\d{2}$/);
+  assert.equal(plain(usageLine(account("a", 100, 50, { limited: true, limitedUntil: null }), NOW)), "en pause");
 });
 
 test("one ring per limit the plan has, the fuller share in the middle", () => {

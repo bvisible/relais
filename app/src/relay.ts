@@ -54,16 +54,25 @@ export function resultLine(result: SwitchResult, alias: string, email: string): 
 /** An account's usage in a few words: the limits its plan has (some no
  * longer have the 5-hour one), or when it is back. */
 export function usageLine(account: Line, now: number): string {
+  return parts(account, now).map(unbreakable).join(" · ");
+}
+
+function parts(account: Line, now: number): string[] {
   if (account.limited) {
-    return account.limitedUntil != null && account.limitedUntil > now ? t("relayPaused", { time: time(account.limitedUntil, now) }) : t("relayPausedUnknown");
+    return account.limitedUntil != null && account.limitedUntil > now ? [t("relayPaused", { time: time(account.limitedUntil, now) })] : [t("relayPausedUnknown")];
   }
   const five = account.fiveHour ? t("relayFive", { n: Math.round(account.fiveHour.used) }) : null;
   const week = account.sevenDay ? t("relayWeek", { n: Math.round(account.sevenDay.used) }) : null;
-  if (five && week) return `${five} · ${week}`;
+  if (five && week) return [five, week];
   if (week && account.sevenDay?.resetsAt != null && account.sevenDay.resetsAt > now) {
-    return `${week} · ${t("relayStartsOver", { in: inTime(account.sevenDay.resetsAt, now) })}`;
+    return [week, t("relayStartsOver", { in: inTime(account.sevenDay.resetsAt, now) })];
   }
-  return five ?? week ?? t("relayUnmeasured");
+  return [five ?? week ?? t("relayUnmeasured")];
+}
+
+/** Keeps a share or a duration on one line: `6 j 5 h` never splits. */
+function unbreakable(part: string): string {
+  return part.replaceAll(" ", "\u00a0");
 }
 
 export type Ring = { kind: "five" | "week"; used: number };
