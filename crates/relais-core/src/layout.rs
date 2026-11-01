@@ -63,6 +63,24 @@ impl Layout {
         self.relais_dir.join("accounts").join(alias).join("desktop")
     }
 
+    /// Where an account's desktop app sign-in waits while another account
+    /// uses the app.
+    pub fn identity_dir(&self, alias: &str) -> PathBuf {
+        self.relais_dir
+            .join("accounts")
+            .join(alias)
+            .join("identity")
+    }
+
+    /// What is left of an account's former data folder once its sign-in has
+    /// been taken out of it. Kept, never deleted.
+    pub fn desktop_archive_dir(&self, alias: &str, date: &str) -> PathBuf {
+        self.relais_dir
+            .join("accounts")
+            .join(alias)
+            .join(format!("desktop-archive-{date}"))
+    }
+
     /// The desktop app's own log, outside its data folder: it says which
     /// account each start loaded.
     pub fn desktop_log_file(&self) -> PathBuf {
