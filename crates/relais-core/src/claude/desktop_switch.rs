@@ -10,9 +10,11 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
+use crate::claude::desktop_app::{self, DesktopApp, DesktopSignIn, DESKTOP_QUIT_WAIT};
 use crate::claude::desktop_carry::{self, AccountIds, IndexReport, OwnConversations};
 use crate::claude::desktop_identity;
 use crate::claude::desktop_profile;
@@ -125,6 +127,10 @@ pub fn plan(layout: &Layout, registry: &Registry, to: &str) -> Result<SwitchPlan
 
 /// The account whose sign-in is in place, by the id it carries; without
 /// one, the account recorded at the last switch.
+pub fn signed_in_account(layout: &Layout, registry: &Registry) -> Result<String> {
+    source_alias(layout, registry)
+}
+
 fn source_alias(layout: &Layout, registry: &Registry) -> Result<String> {
     match desktop_identity::account_of(&layout.desktop_dir) {
         Some(uuid) => registry
@@ -387,6 +393,11 @@ impl Journal {
     }
 }
 
+/// Whether a switch was cut short and waits to be undone.
+pub fn is_interrupted(layout: &Layout) -> bool {
+    layout.workspace_switch_journal().exists()
+}
+
 /// Undoes a switch that was cut short, from its journal. Returns the account
 /// the app is back on, or `None` when no switch was in progress.
 pub fn roll_back_interrupted(layout: &Layout) -> Result<Option<String>> {
@@ -487,6 +498,69 @@ fn write_private(path: &Path, value: &serde_json::Value) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
     fsutil::write_json_atomic(path, value)?;
     fs::set_permissions(path, fs::Permissions::from_mode(0o600)).map_err(|e| Error::io(path, e))
+}
+
+/// How the app started after a switch.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Started {
+    /// Proven signed in to the arriving account.
+    SignedIn,
+    /// Open, without proof yet of the account it is on.
+    NotConfirmed,
+    /// Open on its sign-in page: the arriving account had no sign-in.
+    SignedOut,
+}
+
+/// Opens the app after `applied` and waits up to `wait` for the proof that
+/// it is signed in to the arriving account: a usage sample of its
+/// organization, or the app's log when it writes one.
+pub fn open_and_confirm(
+    layout: &Layout,
+    app: &DesktopApp,
+    applied: &Applied,
+    now: i64,
+    wait: Duration,
+) -> Result<Started> {
+    let since = chrono::Local::now().naive_local() - chrono::Duration::seconds(1);
+    app.open()?;
+    if applied.signed_out {
+        return Ok(Started::SignedOut);
+    }
+    let ids = &applied.plan.to_ids;
+    let started = Instant::now();
+    loop {
+        if signed_in_since(layout, &ids.org, now - 1) {
+            return Ok(Started::SignedIn);
+        }
+        let logged = std::fs::read(layout.desktop_log_file())
+            .ok()
+            .and_then(|log| desktop_app::sign_in_since(&String::from_utf8_lossy(&log), since));
+        if let Some(DesktopSignIn::SignedIn { account_uuid }) = logged {
+            return Ok(if account_uuid == ids.account {
+                Started::SignedIn
+            } else {
+                Started::NotConfirmed
+            });
+        }
+        if started.elapsed() > wait {
+            return Ok(Started::NotConfirmed);
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    }
+}
+
+/// Undoes a switch cut short, closing the app first since its files move.
+/// Returns whether there was one.
+pub fn undo_interrupted(layout: &Layout, app: &DesktopApp) -> Result<bool> {
+    if !is_interrupted(layout) {
+        return Ok(false);
+    }
+    if app.is_running() {
+        app.quit(DESKTOP_QUIT_WAIT)?;
+    }
+    roll_back_interrupted(layout)?;
+    Ok(true)
 }
 
 /// Whether the app, since `since` (seconds), measured the usage of `org`:

@@ -8,6 +8,7 @@ use std::ffi::OsString;
 use std::process::ExitCode;
 
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
+use relais_core::claude::desktop_carry::OwnConversations;
 
 use crate::i18n::t;
 
@@ -71,7 +72,18 @@ enum Commands {
     Doctor,
     Desktop {
         alias: Option<String>,
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long, value_enum)]
+        own: Option<Own>,
     },
+}
+
+/// What to do with the conversations the arriving account has of its own.
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum Own {
+    Add,
+    Aside,
 }
 
 #[derive(Subcommand)]
@@ -117,6 +129,11 @@ fn localized_command() -> clap::Command {
         let key = format!("help.{name}");
         command = command.mut_subcommand(name, |sub| sub.about(t(&key, &[])));
     }
+    command = command.mut_subcommand("desktop", |desktop| {
+        desktop
+            .mut_arg("dry_run", |arg| arg.help(t("help.desktop.dry_run", &[])))
+            .mut_arg("own", |arg| arg.help(t("help.desktop.own", &[])))
+    });
     command.mut_subcommand("account", |account| {
         account
             .mut_subcommand("add", |sub| sub.about(t("help.account.add", &[])))
@@ -163,7 +180,18 @@ fn main() -> ExitCode {
         Commands::ShellInstall => commands::shell_install(),
         Commands::ShellUninstall => commands::shell_uninstall(),
         Commands::Doctor => commands::doctor(),
-        Commands::Desktop { alias } => commands::desktop(alias.as_deref()),
+        Commands::Desktop {
+            alias,
+            dry_run,
+            own,
+        } => commands::desktop(
+            alias.as_deref(),
+            dry_run,
+            own.map(|own| match own {
+                Own::Add => OwnConversations::Add,
+                Own::Aside => OwnConversations::PutAside,
+            }),
+        ),
     };
     match outcome {
         Ok(code) => ExitCode::from(code.clamp(0, 255) as u8),

@@ -51,6 +51,9 @@ case "$1" in
   running) [ -f "$state" ] && exit 0; exit 1;;
   quit) printf 'quit\n' >> "$HOME/desktop.log"; rm -f "$state"; exit 0;;
   open) printf 'open\n' >> "$HOME/desktop.log"; touch "$state"
+    if [ -n "$FAKE_DESKTOP_ORG" ]; then
+      printf '{"samples":[{"t":%s000,"org":"%s"}]}' "$(date +%s)" "$FAKE_DESKTOP_ORG" > "$HOME/Library/Application Support/Claude/plan-usage-history.json"
+    fi
     log="$HOME/Library/Logs/Claude/main.log"; mkdir -p "$(dirname "$log")"
     if [ -n "$FAKE_DESKTOP_ACCOUNT" ]; then
       printf "%s [info] [ScheduledTasks] Initialized { accountId: '%s', orgId: 'org' }\n" "$(date '+%Y-%m-%d %H:%M:%S')" "$FAKE_DESKTOP_ACCOUNT" >> "$log"
@@ -102,6 +105,7 @@ impl Env {
                 self.root.path().join("bin/desktop"),
             )
             .env_remove("CLAUDE_CONFIG_DIR")
+            .env_remove("CLAUDE_CODE_ENTRYPOINT")
             .env_remove("RELAIS_HOME")
             .current_dir(self.root.path());
         command
@@ -586,61 +590,206 @@ fn desktop_folder(env: &Env) -> PathBuf {
     env.home().join("Library/Application Support/Claude")
 }
 
-#[test]
-fn desktop_switch_closes_the_app_parks_its_folder_and_opens_it_again() {
-    let env = Env::new();
+/// The desktop app's sign-in for `uuid`, as the app leaves it in a folder.
+fn desktop_sign_in(dir: &Path, uuid: &str, secret: &str) {
+    fs::create_dir_all(dir).unwrap();
+    fs::write(
+        dir.join("config.json"),
+        json!({"oauth:tokenCacheV2": secret, "lastKnownAccountUuid": uuid}).to_string(),
+    )
+    .unwrap();
+    fs::write(dir.join("Cookies"), format!("cookie-{secret}")).unwrap();
+}
+
+const WORK_ACCOUNT: &str = "acc-work@example.com";
+const WORK_ORG: &str = "org-work@example.com";
+
+/// main signed in to the desktop app with one conversation and its folder
+/// order; work's sign-in parked.
+fn desktop_workspace(env: &Env) {
     env.sign_in_default("main@example.com");
     assert_ok(&env.run(&["init"]));
     assert_ok(&env.add_account("work", "work@example.com"));
-    fs::create_dir_all(desktop_folder(&env)).unwrap();
-    fs::write(desktop_folder(&env).join("marker"), "main's data").unwrap();
+    let live = desktop_folder(env);
+    desktop_sign_in(&live, "acc-main", "main");
+    let list = live.join("claude-code-sessions/acc-main/org-main");
+    fs::create_dir_all(&list).unwrap();
     fs::write(
-        desktop_folder(&env).join("plan-usage-history.json"),
-        json!({"samples": [{"t": 1, "org": "org-main", "u": {"fh": 1}}]}).to_string(),
+        list.join("local_1.json"),
+        json!({"sessionId": "local_1", "cliSessionId": "cli-1", "lastActivityAt": 1}).to_string(),
     )
     .unwrap();
-    fs::write(env.home().join("desktop-running"), "").unwrap();
-    let active_before = env.registry()["active"].clone();
-
-    let output = env.run(&["desktop", "work"]);
-
-    assert_ok(&output);
-    let log = fs::read_to_string(env.home().join("desktop.log")).unwrap_or_default();
-    assert_eq!(log, "quit\nopen\n");
-    assert!(!desktop_folder(&env).join("marker").exists());
-    let parked = env.home().join(".relais/accounts/main/desktop/marker");
-    assert_eq!(fs::read_to_string(parked).unwrap(), "main's data");
-    assert!(
-        text(&output).contains("work@example.com"),
-        "{}",
-        text(&output)
+    fs::write(
+        live.join("claude_desktop_config.json"),
+        json!({"preferences": {"epitaxyPrefs": {"code-projects-order.acc-main": ["/w/one"]}}})
+            .to_string(),
+    )
+    .unwrap();
+    desktop_sign_in(
+        &env.home().join(".relais/accounts/work/identity"),
+        WORK_ACCOUNT,
+        "work",
     );
-    assert_eq!(env.registry()["active"], active_before);
+}
+
+/// Every file under `dir` with its content.
+fn snapshot(dir: &Path) -> Vec<(PathBuf, Vec<u8>)> {
+    let mut files = Vec::new();
+    let mut pending = vec![dir.to_path_buf()];
+    while let Some(next) = pending.pop() {
+        for entry in fs::read_dir(&next).into_iter().flatten().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                pending.push(path);
+            } else {
+                files.push((path.clone(), fs::read(&path).unwrap()));
+            }
+        }
+    }
+    files.sort();
+    files
 }
 
 #[test]
-fn desktop_switch_confirms_the_account_the_app_started_with() {
+fn desktop_switch_keeps_the_list_moves_the_sign_in_and_the_terminal() {
     let env = Env::new();
-    env.sign_in_default("main@example.com");
-    assert_ok(&env.run(&["init"]));
-    assert_ok(&env.add_account("work", "work@example.com"));
-    fs::create_dir_all(desktop_folder(&env)).unwrap();
-    fs::write(
-        env.home().join(".relais/desktop.json"),
-        r#"{"owner":"main"}"#,
-    )
-    .unwrap();
-    fs::create_dir_all(env.home().join(".relais/accounts/work/desktop")).unwrap();
+    desktop_workspace(&env);
+    fs::write(env.home().join("desktop-running"), "").unwrap();
 
     let output = env
         .relais()
         .args(["desktop", "work"])
-        .env("FAKE_DESKTOP_ACCOUNT", "acc-work@example.com")
+        .env("FAKE_DESKTOP_ORG", WORK_ORG)
         .output()
         .unwrap();
 
     assert_ok(&output);
+    let log = fs::read_to_string(env.home().join("desktop.log")).unwrap_or_default();
+    assert_eq!(log, "quit\nopen\n");
+    let live = desktop_folder(&env);
+    assert_eq!(
+        fs::read_to_string(live.join("Cookies")).unwrap(),
+        "cookie-work"
+    );
+    assert_eq!(
+        fs::read_to_string(env.home().join(".relais/accounts/main/identity/Cookies")).unwrap(),
+        "cookie-main"
+    );
+    assert!(live
+        .join(format!(
+            "claude-code-sessions/{WORK_ACCOUNT}/{WORK_ORG}/local_1.json"
+        ))
+        .is_file());
+    let config: Value =
+        serde_json::from_slice(&fs::read(live.join("claude_desktop_config.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        config["preferences"]["epitaxyPrefs"][format!("code-projects-order.{WORK_ACCOUNT}")],
+        json!(["/w/one"])
+    );
+    assert_eq!(env.registry()["active"], "work");
     assert!(text(&output).contains("signed in"), "{}", text(&output));
+}
+
+#[test]
+fn desktop_dry_run_says_what_would_move_and_changes_nothing() {
+    let env = Env::new();
+    desktop_workspace(&env);
+    let before = snapshot(&env.home());
+
+    let output = env.run(&["desktop", "work", "--dry-run"]);
+
+    assert_ok(&output);
+    assert_eq!(snapshot(&env.home()), before);
+    let said = text(&output);
+    assert!(said.contains("main"), "{said}");
+    assert!(said.contains("1 conversation"), "{said}");
+}
+
+#[test]
+fn desktop_switch_asks_what_to_do_with_the_account_s_own_conversations() {
+    let env = Env::new();
+    desktop_workspace(&env);
+    let own = desktop_folder(&env).join(format!("claude-code-sessions/{WORK_ACCOUNT}/{WORK_ORG}"));
+    fs::create_dir_all(&own).unwrap();
+    fs::write(
+        own.join("local_own.json"),
+        json!({"sessionId": "local_own", "cliSessionId": "cli-own"}).to_string(),
+    )
+    .unwrap();
+    let before = snapshot(&env.home());
+
+    let asked = env.run(&["desktop", "work"]);
+
+    assert_eq!(asked.status.code(), Some(2), "{}", text(&asked));
+    assert!(text(&asked).contains("--own"), "{}", text(&asked));
+    assert_eq!(snapshot(&env.home()), before);
+
+    assert_ok(&env.run(&["desktop", "work", "--own", "add"]));
+    assert!(own.join("local_own.json").is_file());
+    assert!(own.join("local_1.json").is_file());
+}
+
+#[test]
+fn desktop_switch_from_inside_the_desktop_app_only_previews() {
+    let env = Env::new();
+    desktop_workspace(&env);
+    let before = snapshot(&env.home());
+
+    let refused = env
+        .relais()
+        .args(["desktop", "work"])
+        .env("CLAUDE_CODE_ENTRYPOINT", "claude-desktop")
+        .output()
+        .unwrap();
+
+    assert_eq!(refused.status.code(), Some(2), "{}", text(&refused));
+    assert_eq!(snapshot(&env.home()), before);
+    let preview = env
+        .relais()
+        .args(["desktop", "work", "--dry-run"])
+        .env("CLAUDE_CODE_ENTRYPOINT", "claude-desktop")
+        .output()
+        .unwrap();
+    assert_ok(&preview);
+}
+
+#[test]
+fn desktop_switch_cut_short_is_undone_then_done() {
+    let env = Env::new();
+    desktop_workspace(&env);
+    let live = desktop_folder(&env);
+    let parked = env.home().join(".relais/accounts/main/identity");
+    fs::create_dir_all(&parked).unwrap();
+    for name in ["config.json", "Cookies"] {
+        fs::rename(live.join(name), parked.join(name)).unwrap();
+    }
+    fs::write(
+        env.home().join(".relais/workspace-switch.json"),
+        json!({
+            "version": 1, "from": "main", "to": "work",
+            "fromIds": {"account": "acc-main", "org": "org-main"},
+            "toIds": {"account": WORK_ACCOUNT, "org": WORK_ORG},
+            "backup": env.home().join(".relais/backups/workspace/1"),
+            "started": ["backup", "parkSource"]
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let output = env.run(&["desktop", "work"]);
+
+    assert_ok(&output);
+    assert!(text(&output).contains("undone"), "{}", text(&output));
+    assert_eq!(
+        fs::read_to_string(live.join("Cookies")).unwrap(),
+        "cookie-work"
+    );
+    assert_eq!(
+        fs::read_to_string(parked.join("Cookies")).unwrap(),
+        "cookie-main"
+    );
+    assert!(!env.home().join(".relais/workspace-switch.json").exists());
 }
 
 #[test]

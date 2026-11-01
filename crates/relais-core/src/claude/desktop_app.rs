@@ -19,7 +19,7 @@ pub const DESKTOP_BUNDLE_ID: &str = "com.anthropic.claudefordesktop";
 pub const DESKTOP_QUIT_WAIT: Duration = Duration::from_secs(20);
 pub const DESKTOP_CONTROL_ENV: &str = "RELAIS_DESKTOP_CONTROL";
 /// How long a fresh start gets to log the account it loaded.
-pub const DESKTOP_SIGN_IN_WAIT: Duration = Duration::from_secs(30);
+pub const DESKTOP_SIGN_IN_WAIT: Duration = Duration::from_secs(60);
 
 pub struct DesktopApp {
     script: Option<PathBuf>,

@@ -1,14 +1,9 @@
-//! One Claude desktop app data folder per account.
+//! Which account the desktop app was last switched to.
 //!
-//! The desktop app holds one signed-in account, in its data folder
-//! (`~/Library/Application Support/Claude`). Relais gives each account a
-//! folder of its own: while the app is closed, the folder in place is parked
-//! under `~/.relais/accounts/<alias>/desktop` and the target account's parked
-//! folder takes its place. Folders are only renamed, never read, copied or
-//! deleted, so the sign-in each one holds stays the app's own.
-
-use std::fs;
-use std::path::Path;
+//! The app holds one signed-in account at a time, in its data folder
+//! (`~/Library/Application Support/Claude`). Relais records the account each
+//! switch leaves in place (`~/.relais/desktop.json`); the switch itself is in
+//! [`crate::claude::desktop_switch`].
 
 use serde::{Deserialize, Serialize};
 
@@ -16,16 +11,6 @@ use crate::error::{Error, Result};
 use crate::fsutil;
 use crate::layout::Layout;
 use crate::registry::Registry;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Switch {
-    /// The app already uses that account's folder.
-    AlreadyThere,
-    /// The account's own folder is back in place, still signed in.
-    Restored,
-    /// The account has no folder yet: the app starts empty and asks to sign in.
-    SignInNeeded,
-}
 
 #[derive(Serialize, Deserialize)]
 struct State {
@@ -74,56 +59,12 @@ pub fn owner(layout: &Layout, registry: &Registry) -> Option<String> {
     })
 }
 
-/// Whether `alias` has a desktop app folder: in place or parked.
+/// Whether `alias` can use the desktop app straight away: it is the account
+/// in place, or its sign-in waits, parked or in its former folder.
 pub fn has_folder(layout: &Layout, registry: &Registry, alias: &str) -> bool {
-    let in_place = owner(layout, registry).as_deref() == Some(alias) && layout.desktop_dir.exists();
-    in_place || layout.desktop_profile_dir(alias).exists()
-}
-
-/// Puts `to`'s folder in place of the app's data folder. The app must be closed.
-/// Nothing is overwritten: a folder already parked where the current one would
-/// go stops the switch before anything moves.
-pub fn switch(layout: &Layout, registry: &Registry, to: &str) -> Result<Switch> {
-    if registry.get(to).is_none() {
-        return Err(Error::UnknownAccount(to.to_string()));
-    }
-    let current = owner(layout, registry);
-    if current.as_deref() == Some(to) {
-        return Ok(Switch::AlreadyThere);
-    }
-    let live = &layout.desktop_dir;
-    let target = layout.desktop_profile_dir(to);
-    let parked = if live.exists() {
-        let owner = current.ok_or(Error::UnknownDesktopOwner)?;
-        let destination = layout.desktop_profile_dir(&owner);
-        if destination.exists() {
-            return Err(Error::Conflict(destination));
-        }
-        rename(live, &destination)?;
-        Some(destination)
-    } else {
-        None
-    };
-    let outcome = if target.exists() {
-        if let Err(error) = rename(&target, live) {
-            if let Some(destination) = &parked {
-                let _ = fs::rename(destination, live);
-            }
-            return Err(error);
-        }
-        Switch::Restored
-    } else {
-        Switch::SignInNeeded
-    };
-    set_owner(layout, to)?;
-    Ok(outcome)
-}
-
-fn rename(from: &Path, to: &Path) -> Result<()> {
-    if let Some(parent) = to.parent() {
-        fs::create_dir_all(parent).map_err(|e| Error::io(parent, e))?;
-    }
-    fs::rename(from, to).map_err(|e| Error::io(from, e))
+    owner(layout, registry).as_deref() == Some(alias)
+        || crate::claude::desktop_identity::is_parked(layout, alias)
+        || crate::claude::desktop_identity::has_old_folder(layout, alias)
 }
 
 #[cfg(test)]
@@ -163,78 +104,6 @@ mod tests {
         fs::write(layout.desktop_dir.join("marker"), marker).unwrap();
     }
 
-    fn marker(dir: &Path) -> Option<String> {
-        fs::read_to_string(dir.join("marker")).ok()
-    }
-
-    #[test]
-    fn the_first_switch_parks_the_live_folder_and_leaves_room_for_a_sign_in() {
-        let (_root, layout, registry) = fixture();
-        live_folder(&layout, "main's data");
-        set_owner(&layout, "main").unwrap();
-
-        let outcome = switch(&layout, &registry, "work").unwrap();
-
-        assert_eq!(outcome, Switch::SignInNeeded);
-        assert!(!layout.desktop_dir.exists());
-        assert_eq!(
-            marker(&layout.desktop_profile_dir("main")).as_deref(),
-            Some("main's data")
-        );
-        assert_eq!(owner(&layout, &registry).as_deref(), Some("work"));
-    }
-
-    #[test]
-    fn switching_back_puts_the_parked_folder_in_place() {
-        let (_root, layout, registry) = fixture();
-        live_folder(&layout, "main's data");
-        set_owner(&layout, "main").unwrap();
-        switch(&layout, &registry, "work").unwrap();
-        live_folder(&layout, "work's data");
-
-        let outcome = switch(&layout, &registry, "main").unwrap();
-
-        assert_eq!(outcome, Switch::Restored);
-        assert_eq!(marker(&layout.desktop_dir).as_deref(), Some("main's data"));
-        assert_eq!(
-            marker(&layout.desktop_profile_dir("work")).as_deref(),
-            Some("work's data")
-        );
-        assert!(!layout.desktop_profile_dir("main").exists());
-        assert!(has_folder(&layout, &registry, "work"));
-        assert!(has_folder(&layout, &registry, "main"));
-    }
-
-    #[test]
-    fn switching_to_the_account_already_in_place_changes_nothing() {
-        let (_root, layout, registry) = fixture();
-        live_folder(&layout, "main's data");
-        set_owner(&layout, "main").unwrap();
-
-        assert_eq!(
-            switch(&layout, &registry, "main").unwrap(),
-            Switch::AlreadyThere
-        );
-        assert_eq!(marker(&layout.desktop_dir).as_deref(), Some("main's data"));
-    }
-
-    #[test]
-    fn a_folder_already_parked_for_the_owner_stops_the_switch_untouched() {
-        let (_root, layout, registry) = fixture();
-        live_folder(&layout, "main's data");
-        set_owner(&layout, "main").unwrap();
-        let parked = layout.desktop_profile_dir("main");
-        fs::create_dir_all(&parked).unwrap();
-        fs::write(parked.join("marker"), "older copy").unwrap();
-
-        let error = switch(&layout, &registry, "work").unwrap_err();
-
-        assert!(matches!(error, Error::Conflict(_)));
-        assert_eq!(marker(&layout.desktop_dir).as_deref(), Some("main's data"));
-        assert_eq!(marker(&parked).as_deref(), Some("older copy"));
-        assert_eq!(owner(&layout, &registry).as_deref(), Some("main"));
-    }
-
     #[test]
     fn without_a_record_the_owner_is_the_account_of_the_latest_usage_sample() {
         let (_root, layout, registry) = fixture();
@@ -249,11 +118,15 @@ mod tests {
     }
 
     #[test]
-    fn an_unknown_account_is_refused() {
+    fn an_account_is_ready_when_in_place_or_its_sign_in_waits() {
         let (_root, layout, registry) = fixture();
-        assert!(matches!(
-            switch(&layout, &registry, "nobody"),
-            Err(Error::UnknownAccount(_))
-        ));
+        live_folder(&layout, "main's workspace");
+        set_owner(&layout, "main").unwrap();
+        assert!(has_folder(&layout, &registry, "main"));
+        assert!(!has_folder(&layout, &registry, "work"));
+
+        fs::create_dir_all(layout.identity_dir("work")).unwrap();
+        fs::write(layout.identity_dir("work").join("Cookies"), "cookie").unwrap();
+        assert!(has_folder(&layout, &registry, "work"));
     }
 }

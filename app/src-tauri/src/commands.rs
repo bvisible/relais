@@ -2,9 +2,9 @@
 
 use std::path::Path;
 
-use relais_core::claude::desktop_app::{
-    self, DesktopApp, DesktopSignIn, DESKTOP_QUIT_WAIT, DESKTOP_SIGN_IN_WAIT,
-};
+use relais_core::claude::desktop_app::{DesktopApp, DESKTOP_QUIT_WAIT, DESKTOP_SIGN_IN_WAIT};
+use relais_core::claude::desktop_carry::OwnConversations;
+use relais_core::claude::desktop_switch::{self, SignIn, Started};
 use relais_core::claude::{cli as claude, desktop_profile, transcripts};
 use relais_core::history;
 use relais_core::integration;
@@ -424,12 +424,40 @@ pub fn sign_in_again(window: WebviewWindow, alias: String) -> Result<(), String>
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct DesktopPlanView {
+    /// The account in place, which the workspace leaves.
+    from: String,
+    /// Conversations that follow the user.
+    conversations: usize,
+    /// The arriving account's conversations of its own: the user chooses.
+    own: usize,
+    /// `parked`, `oldFolder` or `none` (the app will ask to sign in).
+    sign_in: SignIn,
+}
+
+/// What switching the desktop app to `alias` would do. Changes nothing.
+#[tauri::command]
+pub fn desktop_plan(alias: String) -> Result<DesktopPlanView, String> {
+    let relais = load()?;
+    let plan =
+        desktop_switch::plan(&relais.layout, &relais.registry, &alias).map_err(desktop_error)?;
+    Ok(DesktopPlanView {
+        from: plan.from,
+        conversations: plan.conversations,
+        own: plan.own.len(),
+        sign_in: plan.sign_in,
+    })
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DesktopSwitchView {
-    /// `already`, `restored` or `signInNeeded`.
+    /// `already` or `switched`.
     outcome: &'static str,
-    /// What the app logged once open: `signedIn` (on the right account),
-    /// `signedOut`, `otherAccount`, or `null` when it logged nothing in time.
-    started: Option<&'static str>,
+    /// How the app started: `signedIn`, `notConfirmed` or `signedOut`.
+    started: Option<Started>,
+    /// An earlier switch was cut short and has been undone first.
+    undid_interrupted: bool,
     overview: Overview,
 }
 
@@ -439,57 +467,75 @@ fn desktop_error(error: Error) -> String {
         Error::DesktopStillRunning => "desktop-still-running".into(),
         Error::DesktopNotOpened => "desktop-not-opened".into(),
         Error::UnknownDesktopOwner => "desktop-owner-unknown".into(),
+        Error::UnknownSignedInAccount(_) => "desktop-unknown-account".into(),
+        Error::MissingAccountIds(_) => "desktop-missing-ids".into(),
+        Error::OwnConversationsNeedChoice(_) => "desktop-own-needed".into(),
         Error::Conflict(_) => "desktop-conflict".into(),
         other => other.to_string(),
     }
 }
 
-/// Puts the Claude desktop app on `alias`: closes it, swaps its data folder
-/// and opens it again. The terminal's active account is left alone. Async,
-/// since the app may take a few seconds to close.
+/// Switches the Claude desktop app to `alias`: closes it, parks the sign-in
+/// in place, puts `alias`'s back with the workspace carried to it, and opens
+/// it again. New terminals follow. `own` is `add` or `aside` when the
+/// account has conversations of its own. Async, since the app takes a few
+/// seconds to close and to start.
 #[tauri::command]
-pub async fn switch_desktop(alias: String) -> Result<DesktopSwitchView, String> {
-    let relais = load()?;
-    if desktop_profile::owner(&relais.layout, &relais.registry).as_deref() == Some(alias.as_str()) {
+pub async fn switch_desktop(
+    app: AppHandle,
+    alias: String,
+    own: Option<String>,
+) -> Result<DesktopSwitchView, String> {
+    let mut relais = load()?;
+    let desktop = DesktopApp::from_env();
+    let undid_interrupted =
+        desktop_switch::undo_interrupted(&relais.layout, &desktop).map_err(desktop_error)?;
+    let plan =
+        desktop_switch::plan(&relais.layout, &relais.registry, &alias).map_err(desktop_error)?;
+    if plan.is_noop() {
         return Ok(DesktopSwitchView {
             outcome: "already",
             started: None,
+            undid_interrupted,
             overview: build_overview(&relais),
         });
     }
-    let app = DesktopApp::from_env();
-    if app.is_running() {
-        app.quit(DESKTOP_QUIT_WAIT).map_err(desktop_error)?;
+    let own = match own.as_deref() {
+        Some("add") => Some(OwnConversations::Add),
+        Some("aside") => Some(OwnConversations::PutAside),
+        _ => None,
+    };
+    if desktop.is_running() {
+        desktop.quit(DESKTOP_QUIT_WAIT).map_err(desktop_error)?;
     }
-    let outcome =
-        desktop_profile::switch(&relais.layout, &relais.registry, &alias).map_err(desktop_error)?;
-    let since = chrono::Local::now().naive_local() - chrono::Duration::seconds(1);
-    app.open().map_err(desktop_error)?;
-    let expected = relais
-        .registry
-        .get(&alias)
-        .and_then(|a| a.account_uuid.clone());
-    let started = desktop_app::wait_for_sign_in(
-        &relais.layout.desktop_log_file(),
-        since,
+    let applied = desktop_switch::apply(
+        &relais.layout,
+        &relais.registry,
+        &alias,
+        own,
+        desktop.is_running(),
+        now(),
+    )
+    .map_err(desktop_error)?;
+    if relais.registry.set_active(&alias).is_ok() && relais.save().is_ok() {
+        if let Some(account) = relais.registry.get(&alias).cloned() {
+            let _ = relais.prepare_profile(&account);
+            let _ = relais.sync_shared_config(now());
+        }
+    }
+    tray::refresh_title(&app);
+    let started = desktop_switch::open_and_confirm(
+        &relais.layout,
+        &desktop,
+        &applied,
+        now(),
         DESKTOP_SIGN_IN_WAIT,
     )
-    .map(|state| match state {
-        DesktopSignIn::SignedIn { account_uuid }
-            if expected.as_deref() == Some(account_uuid.as_str()) =>
-        {
-            "signedIn"
-        }
-        DesktopSignIn::SignedIn { .. } => "otherAccount",
-        DesktopSignIn::SignedOut => "signedOut",
-    });
+    .map_err(desktop_error)?;
     Ok(DesktopSwitchView {
-        started,
-        outcome: match outcome {
-            desktop_profile::Switch::AlreadyThere => "already",
-            desktop_profile::Switch::Restored => "restored",
-            desktop_profile::Switch::SignInNeeded => "signInNeeded",
-        },
+        outcome: "switched",
+        started: Some(started),
+        undid_interrupted,
         overview: build_overview(&relais),
     })
 }

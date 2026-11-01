@@ -7,10 +7,10 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
 
 use relais_core::claude::cli as claude;
-use relais_core::claude::desktop_app::{
-    self, DesktopApp, DesktopSignIn, DESKTOP_QUIT_WAIT, DESKTOP_SIGN_IN_WAIT,
-};
-use relais_core::claude::{desktop_profile, transcripts};
+use relais_core::claude::desktop_app::{DesktopApp, DESKTOP_QUIT_WAIT, DESKTOP_SIGN_IN_WAIT};
+use relais_core::claude::desktop_carry::OwnConversations;
+use relais_core::claude::desktop_switch::{self, SignIn, Started, SwitchPlan};
+use relais_core::claude::{desktop_identity, transcripts};
 use relais_core::registry::{self, Account};
 use relais_core::service::{Relais, SignedIn};
 use relais_core::usage::Availability;
@@ -1111,26 +1111,27 @@ fn doctor_account(relais: &Relais, account: &Account, binary: &Path) {
     }
 }
 
-/// Without an account: which account the Claude desktop app uses, and which
-/// accounts have a folder of their own. With one: closes the app, puts that
-/// account's folder in place and opens the app again. The terminal's active
-/// account is left alone.
-pub fn desktop(alias: Option<&str>) -> Outcome {
-    let relais = load()?;
-    let owner = desktop_profile::owner(&relais.layout, &relais.registry);
+/// Without an account: which account Claude Desktop uses, and which
+/// accounts are ready for it. With one: closes the app, parks the sign-in in
+/// place, puts that account's back with the workspace carried to it, and
+/// opens the app again; new terminals follow. `--dry-run` only says what
+/// would happen.
+pub fn desktop(alias: Option<&str>, dry_run: bool, own: Option<OwnConversations>) -> Outcome {
+    let mut relais = load()?;
     let Some(alias) = alias else {
+        let in_place = desktop_switch::signed_in_account(&relais.layout, &relais.registry).ok();
         for account in &relais.registry.accounts {
-            let marker = if owner.as_deref() == Some(account.alias.as_str()) {
-                "●"
+            let here = in_place.as_deref() == Some(account.alias.as_str());
+            let marker = if here { "●" } else { " " };
+            let state = if here {
+                t("desktop.in_place", &[])
+            } else if desktop_identity::is_parked(&relais.layout, &account.alias)
+                || desktop_identity::has_old_folder(&relais.layout, &account.alias)
+            {
+                t("desktop.ready", &[])
             } else {
-                " "
+                t("desktop.no_folder", &[])
             };
-            let state =
-                if desktop_profile::has_folder(&relais.layout, &relais.registry, &account.alias) {
-                    t("desktop.ready", &[])
-                } else {
-                    t("desktop.no_folder", &[])
-                };
             println!("{marker} {:<20}  {state}", account.alias);
         }
         return Ok(0);
@@ -1140,42 +1141,150 @@ pub fn desktop(alias: Option<&str>) -> Outcome {
         .get(alias)
         .cloned()
         .ok_or_else(|| Error::UnknownAccount(alias.to_string()))?;
-    if owner.as_deref() == Some(alias) {
+    let email = account.email.clone().unwrap_or_else(|| alias.to_string());
+    let inside_app = std::env::var("CLAUDE_CODE_ENTRYPOINT").as_deref() == Ok("claude-desktop");
+    let app = DesktopApp::from_env();
+    if desktop_switch::is_interrupted(&relais.layout) {
+        if dry_run || inside_app {
+            println!("{}", t("desktop.interrupted_pending", &[]));
+            return Ok(2);
+        }
+        if app.is_running() {
+            println!("{}", t("desktop.closing", &[]));
+        }
+        desktop_switch::undo_interrupted(&relais.layout, &app)?;
+        println!("{}", t("desktop.interrupted", &[]));
+    }
+    let plan =
+        desktop_switch::plan(&relais.layout, &relais.registry, alias).map_err(desktop_failure)?;
+    if plan.is_noop() {
         println!("{}", t("desktop.already", &[("alias", alias)]));
         return Ok(0);
     }
-    let app = DesktopApp::from_env();
+    describe_plan(&plan, &email);
+    if dry_run {
+        println!("{}", t("desktop.dry_run", &[]));
+        return Ok(0);
+    }
+    if !plan.own.is_empty() && own.is_none() {
+        let conversations = conversation_count(plan.own.len());
+        println!(
+            "{}",
+            t(
+                "desktop.need_choice",
+                &[("to", alias), ("conversations", &conversations)]
+            )
+        );
+        return Ok(2);
+    }
+    if inside_app {
+        println!("{}", t("desktop.inside_app", &[]));
+        return Ok(2);
+    }
+
     if app.is_running() {
         println!("{}", t("desktop.closing", &[]));
         app.quit(DESKTOP_QUIT_WAIT)?;
     }
-    let outcome = desktop_profile::switch(&relais.layout, &relais.registry, alias)?;
-    let since = chrono::Local::now().naive_local() - chrono::Duration::seconds(1);
-    app.open()?;
+    let applied = desktop_switch::apply(
+        &relais.layout,
+        &relais.registry,
+        alias,
+        own,
+        app.is_running(),
+        now(),
+    )
+    .map_err(desktop_failure)?;
+
+    relais.registry.set_active(alias)?;
+    relais.save()?;
+    prepare(&relais, &account);
+
     let wait = if app.is_scripted() {
         std::time::Duration::from_secs(3)
     } else {
         DESKTOP_SIGN_IN_WAIT
     };
-    let state = desktop_app::wait_for_sign_in(&relais.layout.desktop_log_file(), since, wait);
-    let email = account.email.as_deref().unwrap_or(alias);
-    let message = match state {
-        Some(DesktopSignIn::SignedIn { account_uuid })
-            if account.account_uuid.as_deref() == Some(account_uuid.as_str()) =>
-        {
-            t("desktop.signed_in", &[("alias", alias)])
-        }
-        Some(DesktopSignIn::SignedIn { .. }) => t("desktop.other_account", &[("alias", alias)]),
-        Some(DesktopSignIn::SignedOut) => {
-            t("desktop.sign_in", &[("alias", alias), ("email", email)])
-        }
-        None if outcome == desktop_profile::Switch::SignInNeeded => {
-            t("desktop.sign_in", &[("alias", alias), ("email", email)])
-        }
-        None => t("desktop.switched", &[("alias", alias)]),
-    };
+    let message =
+        match desktop_switch::open_and_confirm(&relais.layout, &app, &applied, now(), wait)? {
+            Started::SignedIn => t("desktop.signed_in", &[("alias", alias)]),
+            Started::NotConfirmed => t("desktop.switched", &[("alias", alias)]),
+            Started::SignedOut => t("desktop.sign_in", &[("alias", alias), ("email", &email)]),
+        };
     println!("{message}");
+    println!("{}", t("desktop.terminal_follows", &[("alias", alias)]));
     Ok(0)
+}
+
+fn conversation_count(count: usize) -> String {
+    let key = if count == 1 {
+        "desktop.conversations.one"
+    } else {
+        "desktop.conversations.other"
+    };
+    t(key, &[("count", &count.to_string())])
+}
+
+fn describe_plan(plan: &SwitchPlan, email: &str) {
+    let to = plan.to.as_str();
+    println!(
+        "{}",
+        t(
+            "desktop.plan",
+            &[
+                ("from", &plan.from),
+                ("to", to),
+                ("conversations", &conversation_count(plan.conversations)),
+            ],
+        )
+    );
+    let sign_in = match plan.sign_in {
+        SignIn::Parked => t("desktop.plan_sign_in.parked", &[("to", to)]),
+        SignIn::OldFolder => t("desktop.plan_sign_in.old_folder", &[("to", to)]),
+        SignIn::None => t("desktop.plan_sign_in.none", &[("to", to), ("email", email)]),
+    };
+    println!("{sign_in}");
+    if !plan.own.is_empty() {
+        println!(
+            "{}",
+            t(
+                "desktop.plan_own",
+                &[
+                    ("to", to),
+                    ("conversations", &conversation_count(plan.own.len()))
+                ],
+            )
+        );
+    }
+    if plan.duplicates > 0 {
+        println!(
+            "{}",
+            t(
+                "desktop.plan_duplicates",
+                &[
+                    ("to", to),
+                    ("conversations", &conversation_count(plan.duplicates))
+                ],
+            )
+        );
+    }
+}
+
+/// The desktop switch's refusals, in words.
+fn desktop_failure(error: Error) -> Failure {
+    match error {
+        Error::UnknownSignedInAccount(_) => {
+            Failure::Message(t("error.desktop_unknown_account", &[]))
+        }
+        Error::MissingAccountIds(alias) => {
+            Failure::Message(t("error.desktop_missing_ids", &[("alias", &alias)]))
+        }
+        Error::Conflict(path) => Failure::Message(t(
+            "error.desktop_conflict",
+            &[("path", &path.display().to_string())],
+        )),
+        other => Failure::Core(other),
+    }
 }
 
 #[cfg(test)]
