@@ -1,14 +1,18 @@
 #!/bin/bash
 # Gives the Release workflow what it signs and notarizes with. Run once, from a
-# terminal on a Mac holding the Developer ID certificate: the keychain asks you
-# before the key leaves it. Nothing is printed, and no copy stays on disk.
-#
-# Usage: app/scripts/set-ci-secrets.sh /path/to/AuthKey_XXXX.p8 KEY_ID ISSUER_ID
+# terminal on a Mac holding the Developer ID certificate and signed in to `asc`:
+# the keychain asks you before the key leaves it. Nothing is printed, and no
+# copy stays on disk. Without `asc`, set NOTARY_KEY, NOTARY_KEY_ID and
+# NOTARY_ISSUER first.
 set -euo pipefail
 
-key="$1"
-key_id="$2"
-issuer="$3"
+config="$HOME/.asc/config.json"
+read_config() {
+  python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))[sys.argv[2]])' "$config" "$1"
+}
+key_id="${NOTARY_KEY_ID:-$(read_config key_id)}"
+issuer="${NOTARY_ISSUER:-$(read_config issuer_id)}"
+key="${NOTARY_KEY:-$HOME/.config/AuthKey_$key_id.p8}"
 repo="bvisible/relais"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
