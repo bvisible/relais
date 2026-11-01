@@ -3,6 +3,7 @@
 mod commands;
 mod measure;
 mod panel;
+mod panel_geometry;
 mod platform;
 mod tray;
 

@@ -9,9 +9,10 @@ use relais_core::usage::Availability;
 use relais_core::Layout;
 use tauri::image::Image;
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Manager, PhysicalPosition, Rect};
+use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager, Monitor, Rect, WebviewWindow};
 
 use crate::panel;
+use crate::panel_geometry::{self, Bounds};
 use crate::platform;
 
 const TRAY_ID: &str = "relais";
@@ -39,7 +40,8 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
-/// Shows the panel centered under the menu bar item, or hides it.
+/// Shows the panel centered under the menu bar item, or hides it, on the
+/// screen that was clicked and whole within it.
 fn toggle_panel(app: &AppHandle, rect: Rect) {
     let Some(window) = app.get_webview_window(panel::LABEL) else {
         return;
@@ -48,17 +50,77 @@ fn toggle_panel(app: &AppHandle, rect: Rect) {
         let _ = window.hide();
         return;
     }
-    let scale = window.scale_factor().unwrap_or(1.0);
-    let position = rect.position.to_physical::<f64>(scale);
-    let size = rect.size.to_physical::<f64>(scale);
-    let width = window
-        .outer_size()
-        .map(|s| f64::from(s.width))
-        .unwrap_or(400.0 * scale);
-    let x = position.x + size.width / 2.0 - width / 2.0;
-    let y = position.y + size.height + 4.0 * scale;
-    let _ = window.set_position(PhysicalPosition::new(x, y));
+    let monitor = clicked_monitor(&window);
+    let scale = monitor
+        .as_ref()
+        .map(Monitor::scale_factor)
+        .unwrap_or_else(|| window.scale_factor().unwrap_or(1.0));
+    let position = rect.position.to_logical::<f64>(scale);
+    let size = rect.size.to_logical::<f64>(scale);
+    let preferred = app
+        .config()
+        .app
+        .windows
+        .iter()
+        .find(|config| config.label == panel::LABEL)
+        .map(|config| (config.width, config.height))
+        .unwrap_or((400.0, 720.0));
+    if let Some(monitor) = monitor {
+        let work = monitor.work_area();
+        let origin = work.position.to_logical::<f64>(scale);
+        let extent = work.size.to_logical::<f64>(scale);
+        let placement = panel_geometry::below_tray(
+            Bounds {
+                x: position.x,
+                y: position.y,
+                width: size.width,
+                height: size.height,
+            },
+            preferred,
+            Bounds {
+                x: origin.x,
+                y: origin.y,
+                width: extent.width,
+                height: extent.height,
+            },
+        );
+        // The content already scrolls within the viewport. Fit the window too,
+        // so a short screen cannot put the tab bar below the Dock.
+        let _ = window.set_size(LogicalSize::new(placement.width, placement.height));
+        let _ = window.set_position(LogicalPosition::new(placement.x, placement.y));
+    } else {
+        // Missing monitor metadata must never stop the panel from opening.
+        let _ = window.set_position(LogicalPosition::new(
+            position.x + size.width / 2.0 - preferred.0 / 2.0,
+            position.y + size.height + 4.0,
+        ));
+    }
     panel::show(app, true);
+}
+
+fn clicked_monitor(window: &WebviewWindow) -> Option<Monitor> {
+    #[cfg(target_os = "macos")]
+    {
+        use tauri_nspanel::{
+            objc2::MainThreadMarker,
+            objc2_app_kit::{NSEvent, NSScreen},
+        };
+        // AppKit mouse coordinates use logical points with a bottom-left
+        // origin. Tauri's monitor lookup uses logical, top-left coordinates
+        // on macOS, unlike the physical coordinates in the tray event.
+        if let Some(main_thread) = MainThreadMarker::new() {
+            let screens = NSScreen::screens(main_thread);
+            if let Some(primary) = screens.firstObject() {
+                let cursor = NSEvent::mouseLocation();
+                if let Ok(Some(monitor)) =
+                    window.monitor_from_point(cursor.x, primary.frame().size.height - cursor.y)
+                {
+                    return Some(monitor);
+                }
+            }
+        }
+    }
+    window.current_monitor().ok().flatten()
 }
 
 /// The account Claude Desktop uses (the terminal's active one when that is
