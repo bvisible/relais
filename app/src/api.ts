@@ -42,8 +42,12 @@ export type Overview = {
   cliFound: boolean;
   /** Claude Code waits for an answer of the user before it can measure. */
   measureWaits: boolean;
+  version: string;
   now: number;
 };
+
+/** A newer Relais on GitHub. */
+export type AvailableUpdate = { version: string };
 
 export type Conversation = {
   id: string;
@@ -98,6 +102,8 @@ export const api = {
   /** Every account's sign-in, or only `only`'s. */
   accountSignIns: (only?: string) => call<AccountSignIn[]>("account_sign_ins", { only: only ?? null }),
   allowMeasure: () => call<void>("allow_measure"),
+  checkUpdate: () => call<AvailableUpdate | null>("check_update"),
+  installUpdate: () => call<void>("install_update"),
   signInAgain: (alias: string) => call<void>("sign_in_again", { alias }),
   removeAccount: (alias: string) => call<Overview>("remove_account", { alias }),
   /** What switching Claude to `alias` would do; changes nothing. */
@@ -130,7 +136,7 @@ const PREVIEW_PALETTE: PaletteColor[] = [
   { name: "sky", hex: "#38BDF8" },
 ];
 
-// `?state=limited`, `?state=tiring`, `?state=signedOut`, `?state=connections`, `?state=trust` or `?state=showcase` (the README's screenshots) in the address previews those screens.
+// `?state=limited`, `?state=tiring`, `?state=signedOut`, `?state=connections`, `?state=trust`, `?state=update` or `?state=showcase` (the README's screenshots) in the address previews those screens.
 const previewMode = typeof location !== "undefined" ? new URLSearchParams(location.search).get("state") : null;
 
 let previewState: Overview = {
@@ -203,6 +209,7 @@ let previewState: Overview = {
   shell: false,
   cliFound: true,
   measureWaits: previewMode === "trust",
+  version: "0.2.0",
   now: nowSecs(),
 };
 
@@ -268,6 +275,11 @@ async function preview<T>(command: string, args?: Record<string, unknown>): Prom
       accounts: previewState.accounts.map((a) => ({ ...a, active: a.alias === alias, desktopFolder: a.desktopFolder || a.alias === alias })),
     };
     return { outcome: "switched", started, undidInterrupted: false, overview: { ...previewState, now: nowSecs() } } as T;
+  }
+  if (command === "check_update") return (previewMode === "update" ? { version: "0.3.0" } : null) as T;
+  if (command === "install_update") {
+    await new Promise((resolve) => setTimeout(resolve, 1600));
+    return undefined as T;
   }
   if (command === "set_statusline") previewState = { ...previewState, statusline: Boolean(args?.enabled) };
   if (command === "set_shell") previewState = { ...previewState, shell: Boolean(args?.enabled) };

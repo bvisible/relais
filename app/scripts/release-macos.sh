@@ -57,3 +57,16 @@ xcrun stapler staple "$dmg"
 
 "$root/app/scripts/verify-macos.sh" "$dmg"
 (cd "$out" && shasum -a 256 "$(basename "$dmg")" | tee "$(basename "$dmg").sha256")
+
+# What the app downloads to update itself: the notarized app, signed with the
+# updater's own key. Without that key, an app already installed refuses it.
+archive="$out/Relais.app.tar.gz"
+tar -czf "$archive" -C "$(dirname "$bundle")" Relais.app
+(cd "$root/app" && pnpm tauri signer sign -f "${RELAIS_UPDATER_KEY:-$HOME/.config/relais-updater.key}" -p "" "$archive")
+VERSION="$version" SIGNATURE="$(cat "$archive.sig")" node -e '
+const { VERSION: version, SIGNATURE: signature } = process.env;
+const url = `https://github.com/bvisible/relais/releases/download/v${version}/Relais.app.tar.gz`;
+const platforms = Object.fromEntries(["darwin-aarch64", "darwin-x86_64"].map((name) => [name, { signature, url }]));
+const manifest = { version, pub_date: new Date().toISOString(), platforms };
+process.stdout.write(JSON.stringify(manifest, null, 2) + "\n");
+' >"$out/latest.json"

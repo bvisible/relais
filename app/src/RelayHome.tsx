@@ -3,12 +3,15 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
-import { api, type Account, type AccountSignIn, type Overview } from "./api";
+import { api, type Account, type AccountSignIn, type AvailableUpdate, type Overview } from "./api";
 import { t, type MessageKey } from "./i18n";
 import { advisedOf, confirmLines, connectionOf, connectionSummary, relayOrder, resultLine, ringsOf, staleLine, usageLine, type DesktopPlan, type Ring } from "./relay.ts";
 
 /** The panel's tabs, at its foot. */
 export type Tab = "accounts" | "conversations" | "settings";
+
+/** A newer version, once found, and whether it is being installed. */
+export type UpdateState = { available: AvailableUpdate; installing: boolean } | null;
 
 type Own = "add" | "aside";
 
@@ -34,6 +37,8 @@ export function RelayHome(props: {
   onOpenAccount: (alias: string) => void;
   onSignIn: (alias: string) => void;
   onAllowMeasure: () => void;
+  update: UpdateState;
+  onInstallUpdate: () => void;
   describeError: (error: unknown) => string;
 }) {
   const { overview, now } = props;
@@ -118,6 +123,21 @@ export function RelayHome(props: {
       {summary && accounts.length > 0 && (summary.toFix > 0 || !props.full) && (
         <p className={`relay-summary ${summary.toFix > 0 ? "is-todo" : ""}`}>
           {summary.toFix === 0 ? t("relayAllConnected") : summary.toFix === 1 ? t("relayToFixOne") : t("relayToFixMany", { n: summary.toFix })}
+        </p>
+      )}
+
+      {props.update && (
+        <p className="relay-summary is-todo">
+          {props.update.installing ? (
+            t("updateInstalling", { version: props.update.available.version })
+          ) : (
+            <>
+              {t("updateAvailable", { version: props.update.available.version })} ·{" "}
+              <button className="relay-link" onClick={props.onInstallUpdate}>
+                {t("updateInstall")}
+              </button>
+            </>
+          )}
         </p>
       )}
 

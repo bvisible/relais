@@ -47,5 +47,13 @@
     "macOS": {
       "minimumSystemVersion": "13.0"
     }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDcyOEZCOEQwQTQ4QUFGNEUKUldST3I0cWswTGlQY29uTFl1dDQ3bXA3RlJ3M2tnOCtjNHk4a1h6WVlyOHBmUEpHaVU4TyttUFQK",
+      "endpoints": [
+        "https://github.com/bvisible/relais/releases/latest/download/latest.json"
+      ]
+    }
   }
 }

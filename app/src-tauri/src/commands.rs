@@ -80,6 +80,7 @@ pub struct Overview {
     cli_found: bool,
     /// Claude Code waits for an answer of the user before it can measure.
     measure_waits: bool,
+    version: &'static str,
     now: i64,
 }
 
@@ -189,6 +190,7 @@ pub fn build_overview(relais: &Relais) -> Overview {
             .or_else(|| desktop_profile::owner(&relais.layout, &relais.registry)),
         best: relais.best_other_account(now),
         measure_waits: !relais.accounts_awaiting_setup().is_empty(),
+        version: env!("CARGO_PKG_VERSION"),
         statusline: integration::statusline_installed(&relais.layout),
         shell: integration::shell_installed(&relais.layout),
         cli_found: platform::relais_cli().is_some(),

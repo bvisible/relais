@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState, type CSSProperties } from "re
 import { api, type Account, type AccountSignIn, type AccountStats, type Conversation, type Overview, type PaletteColor, type ResumeTarget } from "./api";
 import { age, dayLabels, inTime, isLive, margin, newlySignedIn, remaining, span, time } from "./format";
 import { isMessageKey, t, type MessageKey } from "./i18n";
-import { RelayHome, TabBar } from "./RelayHome";
+import { RelayHome, TabBar, type UpdateState } from "./RelayHome";
 
 type View = "accounts" | "settings" | "add" | "conversations";
 
@@ -19,6 +19,7 @@ const FULL_VIEW_KEY = "relais.fullView";
 const SHOWN_CONVERSATIONS = 5;
 const FETCHED_CONVERSATIONS = 12;
 const SIGN_IN_CHECK_EVERY_MS = 10 * 60_000;
+const UPDATE_CHECK_EVERY_MS = 6 * 3600_000;
 /** A sign-in Relais opened is checked this often, for ten minutes at most. */
 const SIGN_IN_POLL_MS = 4_000;
 const SIGN_IN_WATCH_MS = 10 * 60_000;
@@ -93,6 +94,20 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(nowSecs);
   const [followTheme, setFollowTheme] = useState(readFollowTheme);
+  const [update, setUpdate] = useState<UpdateState>(null);
+  const [upToDate, setUpToDate] = useState<boolean | null>(null);
+
+  // A newer version is offered, never installed behind the user's back. Fail
+  // open: without a network or GitHub, Relais simply stays as it is.
+  const checkUpdate = useCallback(async () => {
+    try {
+      const available = await api.checkUpdate();
+      setUpdate((current) => (current?.installing ? current : available ? { available, installing: false } : null));
+      setUpToDate(available == null);
+    } catch {
+      setUpToDate(null);
+    }
+  }, []);
 
   const refresh = useCallback(async () => {
     try {
@@ -192,7 +207,9 @@ export function App() {
   useEffect(() => {
     void refresh();
     void checkSignIns();
+    void checkUpdate();
     const timer = window.setInterval(() => void refresh(), 15_000);
+    const updateTimer = window.setInterval(() => void checkUpdate(), UPDATE_CHECK_EVERY_MS);
     const signInTimer = window.setInterval(() => void checkSignIns(), SIGN_IN_CHECK_EVERY_MS);
     const clock = window.setInterval(() => setNow(nowSecs()), 10_000);
     const onFocus = () => {
@@ -209,12 +226,13 @@ export function App() {
     window.addEventListener("keydown", onKey);
     return () => {
       window.clearInterval(timer);
+      window.clearInterval(updateTimer);
       window.clearInterval(signInTimer);
       window.clearInterval(clock);
       window.removeEventListener("focus", onFocus);
       window.removeEventListener("keydown", onKey);
     };
-  }, [refresh, checkSignIns]);
+  }, [refresh, checkSignIns, checkUpdate]);
 
   // Opens the sign-in in a terminal, then watches for it to be done.
   const signInAndWatch = async (alias: string) => {
@@ -235,6 +253,17 @@ export function App() {
       setError(null);
     } catch (e) {
       setError(describeError(e));
+    }
+  };
+
+  const installUpdate = async () => {
+    if (!update) return;
+    setUpdate({ ...update, installing: true });
+    try {
+      await api.installUpdate();
+    } catch {
+      setUpdate({ ...update, installing: false });
+      setError(t("updateFailed"));
     }
   };
 
@@ -285,6 +314,8 @@ export function App() {
           onOpenAccount={openAccount}
           onSignIn={(alias) => void signInAndWatch(alias)}
           onAllowMeasure={() => run(() => api.allowMeasure())}
+          update={update}
+          onInstallUpdate={() => void installUpdate()}
           describeError={describeError}
         >
           {overview && (
@@ -314,6 +345,8 @@ export function App() {
           }}
           onStatusline={(enabled) => run(() => api.setStatusline(enabled))}
           onShell={(enabled) => run(() => api.setShell(enabled))}
+          upToDate={upToDate}
+          onCheckUpdate={checkUpdate}
         />
       )}
       {view === "add" && (
@@ -718,8 +751,14 @@ function planName(plan: string): string {
 
 // ---- Settings and adding an account ----------------------------------------
 
-function Settings(props: { overview: Overview; followTheme: boolean; onFollowTheme: (on: boolean) => void; onStatusline: (enabled: boolean) => void; onShell: (enabled: boolean) => void }) {
+function Settings(props: { overview: Overview; followTheme: boolean; onFollowTheme: (on: boolean) => void; onStatusline: (enabled: boolean) => void; onShell: (enabled: boolean) => void; upToDate: boolean | null; onCheckUpdate: () => Promise<void> }) {
   const { overview } = props;
+  const [checking, setChecking] = useState(false);
+  const check = async () => {
+    setChecking(true);
+    await props.onCheckUpdate();
+    setChecking(false);
+  };
   const rows = [
     { id: "statusline", title: t("statuslineTitle"), detail: t("statuslineDetail"), on: overview.statusline, set: props.onStatusline },
     { id: "shell", title: t("shellTitle"), detail: t("shellDetail"), on: overview.shell, set: props.onShell },
@@ -752,6 +791,17 @@ function Settings(props: { overview: Overview; followTheme: boolean; onFollowThe
             <div className="muted small">{t("followThemeDetail")}</div>
           </div>
           <input id="follow-theme" type="checkbox" className="check" checked={props.followTheme} onChange={(e) => props.onFollowTheme(e.target.checked)} />
+        </div>
+      </div>
+      <div className="card list">
+        <div className="list-row">
+          <div className="list-text">
+            <div className="strong">{t("versionTitle", { version: overview.version })}</div>
+            {props.upToDate && <div className="muted small">{t("updateNone")}</div>}
+          </div>
+          <button className="button" disabled={checking} onClick={() => void check()}>
+            {checking ? t("updateChecking") : t("updateCheck")}
+          </button>
         </div>
       </div>
       <p className="muted small">{t("neverAlone")}</p>

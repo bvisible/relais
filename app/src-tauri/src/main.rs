@@ -6,6 +6,7 @@ mod panel;
 mod panel_geometry;
 mod platform;
 mod tray;
+mod updates;
 
 use tauri::{Manager, WindowEvent};
 
@@ -23,6 +24,7 @@ fn main() {
         .activate_ignoring_other_apps(false)
         .plugin(tauri_nspanel::init());
     builder
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             commands::overview,
             commands::switch_account,
@@ -43,6 +45,8 @@ fn main() {
             commands::set_shell,
             commands::hide,
             commands::quit,
+            updates::check_update,
+            updates::install_update,
         ])
         .setup(move |app| {
             #[cfg(target_os = "macos")]
