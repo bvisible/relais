@@ -29,6 +29,18 @@ Relais keeps one workspace and changes only the sign-in:
 - **It tells you where to go.** The account with the most room left is marked. Relais suggests, you decide: it never switches on its own.
 - **Your credentials stay yours.** Relais never reads, copies or stores a token, a cookie or a password.
 
+## What else it does
+
+- **Alerts before the limit.** A notification at 85% and 95% of a limit names the account with the most room, and its button opens the confirmation. Another tells you when a paused account is back.
+- **Forecast.** At the current pace, the panel says when the account in use reaches its limit.
+- **Resume what a switch stopped.** The sessions a switch interrupted are listed afterwards, one click from running again.
+- **Switch when it's done.** With sessions running, Relais can wait, tell you when they finish, and ask again.
+- **Where the week went.** See which projects consumed the most this week, in the panel or with `relais projects`.
+- **One account per folder.** `relais folder set work ~/Projects/client` makes Claude Code always start there on that account.
+- **A widget and a shortcut.** Put your limits on the desktop, and open the panel from anywhere with Control-Option-R.
+- **Updates in one click.** Relais tells you when a new version is out and installs it when you say so.
+- **Careful with Claude Desktop updates.** Relais checks the workspace before anything moves, refuses what it does not recognize, and warns you about a newer major version.
+
 ## Screenshots
 
 <table>
@@ -63,11 +75,17 @@ More detail in the [design document](docs/design.md).
 
 Relais does not read, copy, refresh or store any OAuth token, session cookie or Keychain secret. You sign in through Anthropic's own apps, they keep and refresh their logins as usual, and Relais only moves Desktop's sign-in files aside and back by renaming them, without opening them. That removes the whole class of "dead token" bugs that tools copying tokens have to chase.
 
-Relais makes no call to Anthropic either. Usage comes from what Claude Code hands to its status line, from the history the desktop app keeps, and from Claude Code's own `/usage` panel: every quarter of an hour the app opens the official client in a private terminal, with nothing of yours loaded, reads the panel and closes it. No prompt is sent, nothing is billed and no conversation is saved.
+Relais makes no call to Anthropic either: the only request it makes itself is to GitHub, for new versions. Usage comes from what Claude Code hands to its status line, from the history the desktop app keeps, and from Claude Code's own `/usage` panel: every quarter of an hour the app opens the official client in a private terminal, with nothing of yours loaded, reads the panel and closes it. No prompt is sent, nothing is billed and no conversation is saved.
 
 ## Install
 
-**[Download Relais for Mac](https://github.com/bvisible/relais/releases/latest)**, open the DMG and drag Relais to Applications. It needs macOS 13 or later on Apple Silicon, and is tested on macOS 26 and 27. The app is signed with a Developer ID and notarized by Apple, so macOS opens it without a warning. There are no automatic updates yet: download new versions from the same page.
+**[Download Relais for Mac](https://github.com/bvisible/relais/releases/latest)**, open the DMG and drag Relais to Applications, or use Homebrew:
+
+```bash
+brew install --cask bvisible/tap/relais
+```
+
+It needs macOS 13 or later, and runs on Apple Silicon and Intel. It is tested on macOS 26 and 27 on Apple Silicon, and its command and test suite also run on an Intel Mac in CI. The widget needs macOS 14. The app is signed with a Developer ID and notarized by Apple, so macOS opens it without a warning, and it offers new versions by itself.
 
 Link the command that comes with the app and register the account you are signed in with:
 
@@ -111,6 +129,8 @@ relais desktop --bring-back     # Desktop closed: put back the conversations a s
 relais switch next              # move only the terminal: a name, next, prev or best
 relais continue                 # carry the latest conversation over to the active account
 relais allow-measure            # answer, once, what Claude Code asks before Relais can measure
+relais projects                 # what each project consumed this week
+relais folder set work          # this folder always starts on work; `relais folder` lists them
 relais doctor                   # check sign-ins, links and integrations
 ```
 
@@ -146,11 +166,15 @@ No. Desktop has to restart on the other sign-in, so sessions working inside it s
 
 ### Which Claude plans does it work with?
 
-It is developed and used daily on Claude Max accounts, with or without the 5-hour limit, on Claude Desktop 3.6556 and Claude Code 2.1.314. Other plans should behave the same: please [open an issue](https://github.com/bvisible/relais/issues) if yours does not. A Claude update can change what Relais relies on.
+It is developed and used daily on Claude Max accounts, with or without the 5-hour limit. A real switch was last checked on Claude Desktop 3.6556 with Claude Code 2.1.314. Other plans should behave the same: please [open an issue](https://github.com/bvisible/relais/issues) if yours does not. A Claude update can change what Relais relies on, so it checks the workspace first and warns you about a newer major version.
 
-### Does Relais work on Windows, Linux or Intel Macs?
+### Does Relais work on Windows or Linux?
 
-Not for now. The download is for Macs with Apple Silicon, and Relais lives in the macOS menu bar.
+Not for now. Relais lives in the macOS menu bar.
+
+### Does Relais update itself?
+
+It tells you when a new version is out and installs it when you click. Each update is checked against a key built into the app.
 
 ### Is the Relais app signed and notarized?
 
