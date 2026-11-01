@@ -115,7 +115,7 @@ export function RelayHome(props: {
         </div>
       </header>
 
-      {summary && accounts.length > 0 && (
+      {summary && accounts.length > 0 && (summary.toFix > 0 || !props.full) && (
         <p className={`relay-summary ${summary.toFix > 0 ? "is-todo" : ""}`}>
           {summary.toFix === 0 ? t("relayAllConnected") : summary.toFix === 1 ? t("relayToFixOne") : t("relayToFixMany", { n: summary.toFix })}
         </p>
