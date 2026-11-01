@@ -817,6 +817,43 @@ fn transcript_date() -> String {
 }
 
 #[test]
+fn a_folder_tied_to_an_account_starts_on_it_and_stops_when_untied() {
+    let env = Env::new();
+    env.sign_in_default("main@example.com");
+    assert_ok(&env.run(&["init"]));
+    assert_ok(&env.add_account("work", "work@example.com"));
+    let folder = env.home().join("projects/app");
+    fs::create_dir_all(folder.join("src")).unwrap();
+    let folder_text = folder.display().to_string();
+    assert_ok(&env.run(&["folder", "set", "work", &folder_text]));
+    assert!(text(&env.run(&["folder"])).contains("work"));
+
+    let started = env
+        .relais()
+        .args(["exec", "--", "--version"])
+        .current_dir(folder.join("src"))
+        .output()
+        .unwrap();
+
+    assert_ok(&started);
+    let log = fs::read_to_string(env.root.path().join("claude.log")).unwrap();
+    let last = log.lines().last().unwrap_or_default();
+    assert!(last.contains("accounts/work"), "{last}");
+
+    assert_ok(&env.run(&["folder", "remove", &folder_text]));
+    let started = env
+        .relais()
+        .args(["exec", "--", "--version"])
+        .current_dir(folder.join("src"))
+        .output()
+        .unwrap();
+    assert_ok(&started);
+    let log = fs::read_to_string(env.root.path().join("claude.log")).unwrap();
+    let last = log.lines().last().unwrap_or_default();
+    assert!(!last.contains("accounts/work"), "{last}");
+}
+
+#[test]
 fn a_closed_pipe_ends_a_command_quietly() {
     let env = Env::new();
     env.sign_in_default("main@example.com");

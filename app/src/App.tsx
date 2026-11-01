@@ -368,6 +368,7 @@ export function App() {
           upToDate={upToDate}
           onCheckUpdate={checkUpdate}
           onBringBack={() => run(() => api.bringBack())}
+          onRemoveFolder={(folder) => run(() => api.removeFolder(folder))}
         />
       )}
       {view === "add" && (
@@ -796,7 +797,7 @@ function planName(plan: string): string {
 
 // ---- Settings and adding an account ----------------------------------------
 
-function Settings(props: { overview: Overview; followTheme: boolean; onFollowTheme: (on: boolean) => void; onStatusline: (enabled: boolean) => void; onShell: (enabled: boolean) => void; onAlerts: (enabled: boolean) => void; upToDate: boolean | null; onCheckUpdate: () => Promise<void>; onBringBack: () => Promise<void> }) {
+function Settings(props: { overview: Overview; followTheme: boolean; onFollowTheme: (on: boolean) => void; onStatusline: (enabled: boolean) => void; onShell: (enabled: boolean) => void; onAlerts: (enabled: boolean) => void; upToDate: boolean | null; onCheckUpdate: () => Promise<void>; onBringBack: () => Promise<void>; onRemoveFolder: (folder: string) => void }) {
   const { overview } = props;
   const [checking, setChecking] = useState(false);
   const [bringing, setBringing] = useState<"idle" | "confirm" | "working">("idle");
@@ -845,6 +846,25 @@ function Settings(props: { overview: Overview; followTheme: boolean; onFollowThe
           </div>
           <input id="follow-theme" type="checkbox" className="check" checked={props.followTheme} onChange={(e) => props.onFollowTheme(e.target.checked)} />
         </div>
+      </div>
+      <div className="card list">
+        <div className="list-row">
+          <div className="list-text">
+            <div className="strong">{t("foldersTitle")}</div>
+            <div className="muted small">{t("foldersDetail")}</div>
+          </div>
+        </div>
+        {Object.entries(overview.folders).map(([folder, alias]) => (
+          <div key={folder} className="list-row">
+            <div className="list-text">
+              <div className="small ellipsis">{folder}</div>
+              <div className="muted tiny">{alias}</div>
+            </div>
+            <button className="button" onClick={() => props.onRemoveFolder(folder)}>
+              {t("folderRemove")}
+            </button>
+          </div>
+        ))}
       </div>
       {overview.setAside > 0 && (
         <div className="card list">

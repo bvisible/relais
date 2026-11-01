@@ -638,12 +638,17 @@ pub fn exec(account_override: Option<&str>, args: Vec<OsString>) -> Outcome {
         Ok(relais) if !relais.registry.accounts.is_empty() => relais,
         _ => return run_claude(&binary, None, &args, None).map(exit_code),
     };
-    let alias = match account_override {
-        Some(alias) => alias.to_string(),
-        None => match relais.registry.active.clone() {
-            Some(alias) => alias,
-            None => return run_claude(&binary, None, &args, None).map(exit_code),
-        },
+    let folder_account = std::env::current_dir()
+        .ok()
+        .and_then(|cwd| relais.account_of_folder(&cwd));
+    let alias = match (
+        account_override,
+        folder_account,
+        relais.registry.active.clone(),
+    ) {
+        (Some(alias), _, _) => alias.to_string(),
+        (None, Some(alias), _) | (None, None, Some(alias)) => alias,
+        (None, None, None) => return run_claude(&binary, None, &args, None).map(exit_code),
     };
     let account = relais
         .registry
@@ -1057,6 +1062,48 @@ pub fn allow_measure() -> Outcome {
     }
     let _ = relais.sync_shared_config(now());
     refresh_usage(&load()?);
+    Ok(0)
+}
+
+fn folder_or_cwd(folder: Option<&Path>) -> Result<PathBuf, Failure> {
+    let folder = match folder {
+        Some(folder) => folder.to_path_buf(),
+        None => std::env::current_dir().map_err(|e| Error::Command(e.to_string()))?,
+    };
+    Ok(std::fs::canonicalize(&folder).unwrap_or(folder))
+}
+
+/// The folders tied to an account.
+pub fn folders() -> Outcome {
+    let rules = load()?.folder_rules();
+    if rules.is_empty() {
+        println!("{}", t("folder.none", &[]));
+    }
+    for (folder, alias) in rules {
+        println!("{folder}  {alias}");
+    }
+    Ok(0)
+}
+
+pub fn folder_set(alias: &str, folder: Option<&Path>) -> Outcome {
+    let folder = folder_or_cwd(folder)?;
+    load()?.set_folder(&folder, alias)?;
+    let shown = folder.display().to_string();
+    println!(
+        "{}",
+        t("folder.set", &[("folder", &shown), ("alias", alias)])
+    );
+    Ok(0)
+}
+
+pub fn folder_remove(folder: Option<&Path>) -> Outcome {
+    let folder = folder_or_cwd(folder)?;
+    let key = if load()?.remove_folder(&folder)? {
+        "folder.removed"
+    } else {
+        "folder.not_tied"
+    };
+    println!("{}", t(key, &[("folder", &folder.display().to_string())]));
     Ok(0)
 }
 

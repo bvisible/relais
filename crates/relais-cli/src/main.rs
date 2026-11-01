@@ -5,6 +5,7 @@ mod format;
 mod i18n;
 
 use std::ffi::OsString;
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
@@ -72,6 +73,10 @@ enum Commands {
     Doctor,
     AllowMeasure,
     Projects,
+    Folder {
+        #[command(subcommand)]
+        action: Option<FolderAction>,
+    },
     Desktop {
         alias: Option<String>,
         #[arg(long)]
@@ -88,6 +93,17 @@ enum Commands {
 enum Own {
     Add,
     Aside,
+}
+
+#[derive(Subcommand)]
+enum FolderAction {
+    Set {
+        alias: String,
+        folder: Option<PathBuf>,
+    },
+    Remove {
+        folder: Option<PathBuf>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -131,6 +147,7 @@ fn localized_command() -> clap::Command {
         "doctor",
         "allow-measure",
         "projects",
+        "folder",
     ] {
         let key = format!("help.{name}");
         command = command.mut_subcommand(name, |sub| sub.about(t(&key, &[])));
@@ -196,6 +213,13 @@ fn main() -> ExitCode {
         Commands::Doctor => commands::doctor(),
         Commands::AllowMeasure => commands::allow_measure(),
         Commands::Projects => commands::projects(),
+        Commands::Folder { action } => match action {
+            None => commands::folders(),
+            Some(FolderAction::Set { alias, folder }) => {
+                commands::folder_set(&alias, folder.as_deref())
+            }
+            Some(FolderAction::Remove { folder }) => commands::folder_remove(folder.as_deref()),
+        },
         Commands::Desktop {
             bring_back: true, ..
         } => commands::desktop_bring_back(),

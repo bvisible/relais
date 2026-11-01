@@ -50,6 +50,8 @@ export type Overview = {
   switchWaiting: string | null;
   /** Conversations a switch set aside, ready to come back. */
   setAside: number;
+  /** Folders tied to an account, by folder. */
+  folders: Record<string, string>;
   version: string;
   now: number;
 };
@@ -132,6 +134,7 @@ export const api = {
   waitToSwitch: (alias: string | null) => call<Overview>("wait_to_switch", { alias }),
   bringBack: () => call<Overview>("bring_back"),
   projectUsage: () => call<ProjectUsage[]>("project_usage"),
+  removeFolder: (folder: string) => call<Overview>("remove_folder", { folder }),
   hide: () => call<void>("hide"),
   quit: () => call<void>("quit"),
 };
@@ -231,6 +234,7 @@ let previewState: Overview = {
   alerts: true,
   switchWaiting: null,
   setAside: previewMode === "aside" ? 4 : 0,
+  folders: previewMode === "aside" ? { "~/Projects/website": "work" } : {},
   version: "0.2.0",
   now: nowSecs(),
 };
@@ -299,6 +303,7 @@ async function preview<T>(command: string, args?: Record<string, unknown>): Prom
     const interrupted = [{ id: "s1", title: "Rings and colors in the menu bar app" }];
     return { outcome: "switched", started, undidInterrupted: false, interrupted, overview: { ...previewState, now: nowSecs() } } as T;
   }
+  if (command === "remove_folder") previewState = { ...previewState, folders: {} };
   if (command === "project_usage") {
     return [
       { project: "website", tokens: 5_400_000 },

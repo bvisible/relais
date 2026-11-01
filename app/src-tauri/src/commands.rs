@@ -1,5 +1,6 @@
 //! The calls the interface makes, all built on `relais-core`.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use relais_core::claude::desktop_app::{DesktopApp, DESKTOP_QUIT_WAIT, DESKTOP_SIGN_IN_WAIT};
@@ -89,6 +90,8 @@ pub struct Overview {
     switch_waiting: Option<String>,
     /// Conversations a switch set aside, ready to come back.
     set_aside: usize,
+    /// Folders tied to an account, by folder.
+    folders: BTreeMap<String, String>,
     version: &'static str,
     now: i64,
 }
@@ -210,6 +213,7 @@ pub fn build_overview(relais: &Relais) -> Overview {
         alerts: relais.alerts_on(),
         switch_waiting: alerts::switch_waiting(),
         set_aside: desktop_switch::set_aside_waiting(&relais.layout, &relais.registry),
+        folders: relais.folder_rules(),
         version: env!("CARGO_PKG_VERSION"),
         statusline: integration::statusline_installed(&relais.layout),
         shell: integration::shell_installed(&relais.layout),
@@ -460,6 +464,13 @@ pub async fn bring_back() -> Result<Overview, String> {
 #[tauri::command]
 pub fn project_usage() -> Result<Vec<ProjectUsage>, String> {
     Ok(load()?.project_usage(now()))
+}
+
+#[tauri::command]
+pub fn remove_folder(folder: String) -> Result<Overview, String> {
+    let relais = load()?;
+    relais.remove_folder(Path::new(&folder)).map_err(text)?;
+    Ok(build_overview(&relais))
 }
 
 #[tauri::command]

@@ -48,6 +48,7 @@ fn main() {
             commands::wait_to_switch,
             commands::bring_back,
             commands::project_usage,
+            commands::remove_folder,
             commands::hide,
             commands::quit,
             updates::check_update,

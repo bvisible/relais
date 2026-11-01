@@ -15,6 +15,7 @@ use crate::claude::sync::{self, ConfigFile, SyncOutcome};
 use crate::claude::transcripts::{self, Conversation, ACTIVITY_BUCKETS};
 use crate::claude::usage_probe;
 use crate::error::{Error, Result};
+use crate::folders::{self, FolderRules};
 use crate::fsutil;
 use crate::history::{self, HistoryStore, Sample};
 use crate::layout::Layout;
@@ -614,6 +615,49 @@ impl Relais {
         }
         let _ = self.save_alerts(&file);
         due
+    }
+
+    fn folders_file(&self) -> PathBuf {
+        self.layout.relais_dir.join("folders.json")
+    }
+
+    pub fn folder_rules(&self) -> FolderRules {
+        fsutil::read_json(&self.folders_file())
+            .ok()
+            .flatten()
+            .and_then(|value| serde_json::from_value(value).ok())
+            .unwrap_or_default()
+    }
+
+    fn save_folder_rules(&self, rules: &FolderRules) -> Result<()> {
+        fsutil::write_json_atomic(&self.folders_file(), &json!(rules))
+    }
+
+    /// Ties `folder` to `alias`.
+    pub fn set_folder(&self, folder: &Path, alias: &str) -> Result<()> {
+        if self.registry.get(alias).is_none() {
+            return Err(Error::UnknownAccount(alias.to_string()));
+        }
+        let mut rules = self.folder_rules();
+        rules.insert(folder.display().to_string(), alias.to_string());
+        self.save_folder_rules(&rules)
+    }
+
+    /// Unties `folder`; tells whether it was tied.
+    pub fn remove_folder(&self, folder: &Path) -> Result<bool> {
+        let mut rules = self.folder_rules();
+        let removed = rules.remove(&folder.display().to_string()).is_some();
+        self.save_folder_rules(&rules)?;
+        Ok(removed)
+    }
+
+    /// The account tied to `cwd`. A rule naming an account that is gone counts
+    /// for nothing: Claude Code must start anyway.
+    pub fn account_of_folder(&self, cwd: &Path) -> Option<String> {
+        let rules = self.folder_rules();
+        folders::account_for(&rules, cwd)
+            .filter(|alias| self.registry.get(alias).is_some())
+            .map(String::from)
     }
 
     fn project_usage_file(&self) -> PathBuf {
@@ -1459,6 +1503,37 @@ printf '{{"type":"result","num_turns":0,"result":"Not logged in"}}'
                 next: None,
             }]
         );
+    }
+
+    #[test]
+    fn a_folder_takes_the_account_tied_to_it_until_it_is_untied() {
+        let (_root, relais) = fixture();
+        relais.set_folder(Path::new("/work"), "work").unwrap();
+
+        assert_eq!(
+            relais.account_of_folder(Path::new("/work/app")).as_deref(),
+            Some("work")
+        );
+        assert!(relais.remove_folder(Path::new("/work")).unwrap());
+        assert_eq!(relais.account_of_folder(Path::new("/work/app")), None);
+    }
+
+    #[test]
+    fn a_folder_cannot_be_tied_to_an_unknown_account() {
+        let (_root, relais) = fixture();
+
+        assert!(matches!(
+            relais.set_folder(Path::new("/work"), "nobody"),
+            Err(Error::UnknownAccount(_))
+        ));
+    }
+
+    #[test]
+    fn a_rule_naming_a_removed_account_is_ignored() {
+        let (_root, relais) = fixture();
+        fs::write(relais.folders_file(), json!({"/work": "gone"}).to_string()).unwrap();
+
+        assert_eq!(relais.account_of_folder(Path::new("/work/app")), None);
     }
 
     #[test]
