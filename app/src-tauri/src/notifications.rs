@@ -89,7 +89,8 @@ pub fn prepare(app: AppHandle, aliases: &[String]) {
     // The center keeps a weak reference: the delegate lives as long as the app.
     let delegate: &'static Delegate = Box::leak(Box::new(Delegate::new()));
     center.setDelegate(Some(ProtocolObject::from_ref(delegate)));
-    let categories: Vec<Retained<UNNotificationCategory>> = aliases.iter().map(category).collect();
+    let categories: Vec<Retained<UNNotificationCategory>> =
+        aliases.iter().map(|alias| category(alias)).collect();
     let references: Vec<&UNNotificationCategory> = categories.iter().map(|c| &**c).collect();
     center.setNotificationCategories(&NSSet::from_slice(&references));
     let asked = RcBlock::new(|_granted: Bool, _error: *mut NSError| {});
@@ -100,7 +101,7 @@ pub fn prepare(app: AppHandle, aliases: &[String]) {
 }
 
 /// The kind of notification that offers to switch to `alias`.
-fn category(alias: &String) -> Retained<UNNotificationCategory> {
+fn category(alias: &str) -> Retained<UNNotificationCategory> {
     let title = platform::text("alert.switch", &[("alias", alias)]);
     let action = UNNotificationAction::actionWithIdentifier_title_options(
         &NSString::from_str(ACTION),
