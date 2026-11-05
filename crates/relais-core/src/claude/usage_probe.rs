@@ -764,15 +764,19 @@ time.sleep(20)
         path
     }
 
+    /// What a stand-in prints once it is ready: the measure ends there, however
+    /// long the interpreter took to start.
+    const READY: &str = "print('authentication error', flush=True)";
+
     /// Runs `report` on its own thread: a measure that never returns fails
     /// the test instead of hanging the suite.
     fn measure_within(limit: Duration, binary: PathBuf, cwd: PathBuf) -> Result<String> {
         let (done, result) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            let _ = done.send(report(&binary, None, &cwd, Duration::from_secs(1)));
+            let _ = done.send(report(&binary, None, &cwd, limit));
         });
         result
-            .recv_timeout(limit)
+            .recv_timeout(limit + Duration::from_secs(30))
             .expect("the measure never returned")
     }
 
@@ -781,7 +785,7 @@ time.sleep(20)
         let dir = tempfile::tempdir().unwrap();
         let binary = client(dir.path(), "#!/bin/sh\nexec yes 'Claude Code is busy'\n");
 
-        let result = measure_within(Duration::from_secs(30), binary, dir.path().into());
+        let result = measure_within(Duration::from_secs(1), binary, dir.path().into());
 
         assert!(result.is_err());
     }
@@ -801,6 +805,7 @@ def finish(*_):
     raise SystemExit
 signal.signal(signal.SIGHUP, finish)
 signal.signal(signal.SIGTERM, finish)
+{READY}
 time.sleep(30)
 "#
         );
@@ -824,6 +829,7 @@ def finish(*_):
     writer.wait()
     sys.exit(0)
 signal.signal(signal.SIGTERM, finish)
+{READY}
 signal.pause()
 "#
         );
@@ -845,6 +851,7 @@ import os, signal, time
 signal.signal(signal.SIGHUP, signal.SIG_IGN)
 signal.signal(signal.SIGTERM, signal.SIG_IGN)
 open({pid_file:?}, 'w').write(str(os.getpid()))
+{READY}
 time.sleep(60)
 "#
         );
