@@ -8,9 +8,15 @@ dmg="$1"
 team="BT249938WK"
 work="$(mktemp -d)"
 mount="$work/mount"
+# macOS scans a fresh mount for a moment, and detaching fails until it is done.
+# Every check has run by then: a busy image must not fail the release.
 cleanup() {
-  hdiutil detach -quiet "$mount" 2>/dev/null || true
-  rm -rf "$work"
+  for _ in 1 2 3 4 5; do
+    hdiutil detach -quiet "$mount" 2>/dev/null && break
+    sleep 2
+  done
+  hdiutil detach -force -quiet "$mount" 2>/dev/null || true
+  rm -rf "$work" 2>/dev/null || true
 }
 trap cleanup EXIT
 
