@@ -405,10 +405,47 @@ impl Screen {
     }
 }
 
+/// How long a client asked to stop gets to finish what it is saving.
+const STOP_GRACE: Duration = Duration::from_secs(5);
+/// How long a killed client is waited for.
+const KILL_WAIT: Duration = Duration::from_secs(2);
+
 struct OwnedChild(Child);
 impl OwnedChild {
     fn exited(&self) -> std::io::Result<bool> {
         Ok(self.exit_success()?.is_some())
+    }
+
+    /// Asks the client to stop, and lets it. A renewed sign-in is saved after
+    /// the server has replaced the old one: a client killed in between loses
+    /// both, and the account is signed out. So only the client is signaled, not
+    /// what it started to save it, and its terminal stays open and read: closing
+    /// it hangs up all of them, and a session leader does not finish exiting
+    /// until its output is read.
+    fn stop(&self, terminal: &mut File) {
+        // SAFETY: the child is not reaped before Drop, so this pid is still its own.
+        unsafe {
+            libc::kill(self.0.id() as i32, libc::SIGTERM);
+        }
+        let deadline = Instant::now() + STOP_GRACE;
+        let mut bytes = [0; 16384];
+        while Instant::now() < deadline && matches!(self.exited(), Ok(false)) {
+            let _ = terminal.read(&mut bytes);
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    fn ended_within(&self, limit: Duration) -> bool {
+        let deadline = Instant::now() + limit;
+        loop {
+            match self.exited() {
+                Ok(true) => return true,
+                Ok(false) if Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                _ => return false,
+            }
+        }
     }
 
     fn exit_success(&self) -> std::io::Result<Option<bool>> {
@@ -436,14 +473,17 @@ impl OwnedChild {
     }
 }
 impl Drop for OwnedChild {
+    /// Kills what is left of the client. One that never ends is left behind,
+    /// so that a stuck measure cannot stop all the others.
     fn drop(&mut self) {
         // SAFETY: setsid below creates a new process group whose id is this
         // newly spawned child's pid. Never signal any existing Claude session.
         unsafe {
             libc::kill(-(self.0.id() as i32), libc::SIGKILL);
         }
-        let _ = self.0.kill();
-        let _ = self.0.wait();
+        if self.ended_within(KILL_WAIT) {
+            let _ = self.0.wait();
+        }
     }
 }
 
@@ -479,7 +519,7 @@ pub fn report(
         return Err(refused("pty-unavailable"));
     }
     // SAFETY: descriptors were freshly returned by openpty and are uniquely owned.
-    let mut terminal = unsafe { File::from_raw_fd(master) };
+    let terminal = unsafe { File::from_raw_fd(master) };
     let slave = unsafe { File::from_raw_fd(slave) };
     let mut command = sanitized_command(binary, profile);
     command.args(["--safe-mode","--permission-mode","manual","--tools","","--strict-mcp-config","--mcp-config",r#"{"mcpServers":{}}"#,"--no-chrome","--setting-sources","","--settings",r#"{"remoteControlAtStartup":false,"disableAllHooks":true,"autoContinueAtUsageLimit":false}"#,"--ax-screen-reader"])
@@ -494,10 +534,18 @@ pub fn report(
         });
     }
     let child = OwnedChild(command.spawn().map_err(|_| refused("start-failed"))?);
+    // Bound after the child, so it closes before the child is killed and waited for.
+    let mut terminal = terminal;
     // SAFETY: master is a live descriptor owned by terminal, fcntl changes its flags only.
     unsafe {
         libc::fcntl(master, libc::F_SETFL, libc::O_NONBLOCK);
     }
+    let panel = read_panel(&child, &mut terminal, timeout);
+    child.stop(&mut terminal);
+    panel
+}
+
+fn read_panel(child: &OwnedChild, terminal: &mut File, timeout: Duration) -> Result<String> {
     let deadline = Instant::now() + timeout.min(Duration::from_secs(45));
     let mut screen = Screen::new();
     let mut phase = 0;
@@ -706,6 +754,111 @@ time.sleep(20)
         assert!(report(&binary, None, dir.path(), Duration::from_secs(2)).is_err());
 
         assert!(!dir.path().join("entered").exists());
+    }
+
+    fn client(dir: &Path, script: &str) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let path = dir.join("client");
+        fs::write(&path, script).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
+        path
+    }
+
+    /// Runs `report` on its own thread: a measure that never returns fails
+    /// the test instead of hanging the suite.
+    fn measure_within(limit: Duration, binary: PathBuf, cwd: PathBuf) -> Result<String> {
+        let (done, result) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = done.send(report(&binary, None, &cwd, Duration::from_secs(1)));
+        });
+        result
+            .recv_timeout(limit)
+            .expect("the measure never returned")
+    }
+
+    #[test]
+    fn a_client_flooding_its_terminal_never_blocks_the_measure() {
+        let dir = tempfile::tempdir().unwrap();
+        let binary = client(dir.path(), "#!/bin/sh\nexec yes 'Claude Code is busy'\n");
+
+        let result = measure_within(Duration::from_secs(30), binary, dir.path().into());
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn a_stopped_client_gets_time_to_finish_what_it_is_saving() {
+        let dir = tempfile::tempdir().unwrap();
+        let saved = dir.path().join("saved");
+        let script = format!(
+            r#"#!/usr/bin/python3
+import signal, time
+def finish(*_):
+    signal.signal(signal.SIGHUP, signal.SIG_IGN)
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    time.sleep(0.5)
+    open({saved:?}, 'w').write('yes')
+    raise SystemExit
+signal.signal(signal.SIGHUP, finish)
+signal.signal(signal.SIGTERM, finish)
+time.sleep(30)
+"#
+        );
+        let binary = client(dir.path(), &script);
+
+        let result = measure_within(Duration::from_secs(30), binary, dir.path().into());
+
+        assert!(result.is_err());
+        assert!(saved.exists(), "the client was killed before it finished");
+    }
+
+    #[test]
+    fn a_stopped_client_keeps_what_it_started() {
+        let dir = tempfile::tempdir().unwrap();
+        let saved = dir.path().join("saved");
+        let script = format!(
+            r#"#!/usr/bin/python3
+import signal, subprocess, sys
+writer = subprocess.Popen(['/bin/sh', '-c', 'sleep 2; echo yes > ' + {saved:?}])
+def finish(*_):
+    writer.wait()
+    sys.exit(0)
+signal.signal(signal.SIGTERM, finish)
+signal.pause()
+"#
+        );
+        let binary = client(dir.path(), &script);
+
+        let result = measure_within(Duration::from_secs(30), binary, dir.path().into());
+
+        assert!(result.is_err());
+        assert!(saved.exists(), "what the client was writing was killed");
+    }
+
+    #[test]
+    fn a_client_refusing_to_stop_is_killed() {
+        let dir = tempfile::tempdir().unwrap();
+        let pid_file = dir.path().join("pid");
+        let script = format!(
+            r#"#!/usr/bin/python3
+import os, signal, time
+signal.signal(signal.SIGHUP, signal.SIG_IGN)
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+open({pid_file:?}, 'w').write(str(os.getpid()))
+time.sleep(60)
+"#
+        );
+        let binary = client(dir.path(), &script);
+
+        let result = measure_within(Duration::from_secs(30), binary, dir.path().into());
+
+        assert!(result.is_err());
+        let pid: i32 = fs::read_to_string(pid_file).unwrap().parse().unwrap();
+        assert_eq!(
+            unsafe { libc::kill(pid, 0) },
+            -1,
+            "the client is still alive"
+        );
     }
 
     #[test]
