@@ -4,7 +4,7 @@ Status: built, and checked by a real switch between two accounts on 2026-11-01.
 
 ## Intent
 
-When an account runs out, the user clicks one button and Claude Desktop comes back on another account
+When the user changes account, they click one button and Claude Desktop comes back on the other account
 **exactly as it was**: the same conversations in the sidebar, the same pinned ones in the same order, the
 same folders in the same order and folded the same way, the same open panes and window. Nothing to put back
 by hand, ever.

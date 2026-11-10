@@ -2,9 +2,9 @@
   <img src="docs/assets/hero.png" alt="Relais, a Claude account switcher for Mac: the menu bar panel lists four Claude accounts with their 5-hour and weekly usage limits" width="100%">
 </p>
 
-# Relais: switch Claude accounts on your Mac and keep everything
+# Relais: several Claude accounts on one Mac, one workspace
 
-**Relais is a free, open-source Claude account switcher for macOS.** When one Claude subscription hits its usage limit, one click moves Claude Desktop and Claude Code to another account, and Desktop comes back exactly as you left it: the same conversations, pins, folders and settings.
+**Relais is a free, open-source Claude account switcher for macOS.** A work account, a personal subscription, a client's organization: one click moves Claude Desktop and Claude Code to the account you need, and Desktop comes back exactly as you left it: the same conversations, pins, folders and settings. Relais shows each account's usage limits at a glance, and never reads a password, a token or a cookie.
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-141414" alt="MIT license"></a>
@@ -20,7 +20,7 @@
 
 ## Why Relais
 
-If you run several Claude accounts on one Mac (Claude Pro, Claude Max, a work account), reaching a limit normally costs you your place. Claude Desktop files its conversation list, pins and folders under the signed-in account, so signing in to another one shows you a different workspace.
+If you use more than one Claude account on the same Mac (Claude Pro, Claude Max, a work account), changing account normally costs you your place. Claude Desktop files its conversation list, pins and folders under the signed-in account, so signing in to another one shows you a different workspace.
 
 Relais keeps one workspace and changes only the sign-in:
 
@@ -157,7 +157,7 @@ No. It never opens them. The only thing it reads from a sign-in file is the acco
 
 It reads the figures Claude Code already gives its status line, the history Claude Desktop keeps, and the official `/usage` panel every quarter of an hour. A reading that stops updating says how old it is, and the advice ignores it once it is too old to go by.
 
-### Does it switch automatically when I hit the limit?
+### Does it switch accounts by itself?
 
 No. A ring turns orange as an account fills up and Relais marks the best one to go to, but the switch is yours.
 
