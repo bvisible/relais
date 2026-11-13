@@ -153,5 +153,20 @@
   "error.desktop_unknown_account": "Claude Desktop is signed in to an account Relais does not know. Add it with `relais account add <email>` first; nothing was moved.",
   "error.desktop_missing_ids": "Relais does not know {alias}'s account ids yet: run `relais account login {alias}` first.",
   "error.desktop_conflict": "{path} is in the way, so nothing was moved. Look at it before trying again.",
-  "desktop.interrupted_pending": "An earlier switch was cut short. The next switch, from the Relais panel or a Terminal, undoes it first."
+  "desktop.interrupted_pending": "An earlier switch was cut short. The next switch, from the Relais panel or a Terminal, undoes it first.",
+  "help.artifacts": "The artifacts kept on this Mac, with their account and link",
+  "help.artifacts.json": "Print every field, as JSON",
+  "help.artifacts.path": "Print the page of an artifact's latest copy",
+  "help.artifacts-install": "Keep a copy of every artifact Claude publishes, for any account to publish again",
+  "help.artifacts-uninstall": "Stop keeping artifacts (the copies stay)",
+  "artifacts.installed": "Artifacts kept: each one Claude publishes is copied to ~/.relais/artifacts, and Claude knows where to find it.",
+  "artifacts.already": "Artifacts are already kept.",
+  "artifacts.uninstalled": "Artifacts are no longer kept. The copies already made stay in ~/.relais/artifacts.",
+  "artifacts.not_installed": "Artifacts were not being kept.",
+  "artifacts.none": "No artifact kept yet.",
+  "artifacts.not_recording": "Run `relais artifacts-install` to keep every artifact Claude publishes.",
+  "artifacts.follows": "follows {url}",
+  "artifacts.not_found": "No kept artifact matches “{query}” (see `relais artifacts`).",
+  "doctor.artifacts_on": "Artifacts: kept by Relais",
+  "doctor.artifacts_off": "Artifacts: not kept (run `relais artifacts-install`)"
 }

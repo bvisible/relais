@@ -153,5 +153,20 @@
   "error.desktop_unknown_account": "Claude Desktop est connecté à un compte que Relais ne connaît pas. Ajoute-le d'abord avec `relais account add <e-mail>` ; rien n'a bougé.",
   "error.desktop_missing_ids": "Relais ne connaît pas encore les identifiants de {alias} : lance d'abord `relais account login {alias}`.",
   "error.desktop_conflict": "{path} est dans le chemin, donc rien n'a bougé. Regarde-le avant de recommencer.",
-  "desktop.interrupted_pending": "Une bascule précédente a été coupée. La prochaine bascule, depuis le panneau Relais ou un Terminal, l'annule d'abord."
+  "desktop.interrupted_pending": "Une bascule précédente a été coupée. La prochaine bascule, depuis le panneau Relais ou un Terminal, l'annule d'abord.",
+  "help.artifacts": "Les artefacts gardés sur ce Mac, avec leur compte et leur lien",
+  "help.artifacts.json": "Tout afficher, en JSON",
+  "help.artifacts.path": "Afficher la page de la dernière copie d'un artefact",
+  "help.artifacts-install": "Garder une copie de chaque artefact publié par Claude, pour le republier depuis n'importe quel compte",
+  "help.artifacts-uninstall": "Ne plus garder les artefacts (les copies restent)",
+  "artifacts.installed": "Artefacts gardés : chacun de ceux que Claude publie est copié dans ~/.relais/artifacts, et Claude sait où le retrouver.",
+  "artifacts.already": "Les artefacts sont déjà gardés.",
+  "artifacts.uninstalled": "Les artefacts ne sont plus gardés. Les copies déjà faites restent dans ~/.relais/artifacts.",
+  "artifacts.not_installed": "Les artefacts n'étaient pas gardés.",
+  "artifacts.none": "Aucun artefact gardé pour l'instant.",
+  "artifacts.not_recording": "Lance `relais artifacts-install` pour garder chaque artefact que Claude publie.",
+  "artifacts.follows": "suit {url}",
+  "artifacts.not_found": "Aucun artefact gardé ne correspond à « {query} » (voir `relais artifacts`).",
+  "doctor.artifacts_on": "Artefacts : gardés par Relais",
+  "doctor.artifacts_off": "Artefacts : pas gardés (lance `relais artifacts-install`)"
 }

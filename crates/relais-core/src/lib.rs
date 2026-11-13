@@ -6,6 +6,7 @@
 //! which per-account profile is active.
 
 pub mod alerts;
+pub mod artifacts;
 pub mod claude;
 pub mod error;
 pub mod folders;

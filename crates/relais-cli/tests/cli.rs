@@ -115,6 +115,8 @@ impl Env {
             )
             .env_remove("CLAUDE_CONFIG_DIR")
             .env_remove("CLAUDE_CODE_ENTRYPOINT")
+            .env_remove("CLAUDE_CODE_ACCOUNT_UUID")
+            .env_remove("CLAUDE_CODE_USER_EMAIL")
             .env_remove("RELAIS_HOME")
             .current_dir(self.root.path());
         command
@@ -1160,3 +1162,128 @@ fn chrono_now() -> i64 {
 
 #[allow(dead_code)]
 fn unused(_: &Path) {}
+
+fn record_artifact(env: &Env, payload: &Value, account_uuid: Option<&str>) -> Output {
+    use std::io::Write as _;
+    let mut command = env.relais();
+    command
+        .arg("artifact-record")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    if let Some(uuid) = account_uuid {
+        command.env("CLAUDE_CODE_ACCOUNT_UUID", uuid);
+    }
+    let mut child = command.spawn().unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(payload.to_string().as_bytes())
+        .unwrap();
+    child.wait_with_output().unwrap()
+}
+
+#[test]
+fn an_artifact_published_from_claude_code_is_kept_and_found_again() {
+    let env = Env::new();
+    env.sign_in_default("main@example.com");
+    assert_ok(&env.run(&["init"]));
+    assert_ok(&env.run(&["artifacts-install"]));
+    let settings: Value =
+        serde_json::from_slice(&fs::read(env.home().join(".claude/settings.json")).unwrap())
+            .unwrap();
+    let command = settings["hooks"]["PostToolUse"][0]["hooks"][0]["command"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(command.ends_with(" artifact-record"), "{command}");
+    assert!(env
+        .home()
+        .join(".claude/skills/relais-artifacts/SKILL.md")
+        .is_file());
+    let scratch = env.root.path().join("scratch");
+    fs::create_dir_all(&scratch).unwrap();
+    fs::write(
+        scratch.join("board.html"),
+        "<title>Release board</title><p>ok</p>",
+    )
+    .unwrap();
+    let payload = json!({
+        "hook_event_name": "PostToolUse",
+        "tool_name": "Artifact",
+        "cwd": "/work/app",
+        "tool_input": {"file_path": scratch.join("board.html"), "icon": "checklist"},
+        "tool_response": {"url": "https://claude.ai/artifact/GLiMJZUoZoiExtcR3FvAcc", "title": "Release board", "owned": true, "version": "1794395610-9c2c"},
+    });
+
+    let recorded = record_artifact(&env, &payload, Some("acc-main"));
+
+    assert_ok(&recorded);
+    assert!(
+        recorded.stdout.is_empty(),
+        "the hook prints nothing: {}",
+        text(&recorded)
+    );
+    let listed = env.run(&["artifacts"]);
+    assert_ok(&listed);
+    let listed = text(&listed);
+    assert!(listed.contains("Release board"), "{listed}");
+    assert!(
+        listed.contains("https://claude.ai/artifact/GLiMJZUoZoiExtcR3FvAcc"),
+        "{listed}"
+    );
+    let account = env.registry()["active"].as_str().unwrap().to_string();
+    assert!(listed.contains(&account), "{listed}");
+    let path = env.run(&["artifacts", "path", "release"]);
+    assert_ok(&path);
+    let page = PathBuf::from(String::from_utf8_lossy(&path.stdout).trim());
+    assert_eq!(
+        fs::read_to_string(&page).unwrap(),
+        "<title>Release board</title><p>ok</p>"
+    );
+    let json_list: Value =
+        serde_json::from_slice(&env.run(&["artifacts", "--json"]).stdout).unwrap();
+    assert_eq!(json_list[0]["project"], json!("/work/app"));
+    assert_eq!(json_list[0]["account"], json!(account));
+}
+
+#[test]
+fn the_artifact_hook_never_fails_and_never_speaks() {
+    let env = Env::new();
+    let mut command = env.relais();
+    command
+        .arg("artifact-record")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = command.spawn().unwrap();
+    {
+        use std::io::Write as _;
+        child.stdin.take().unwrap().write_all(b"{not json").unwrap();
+    }
+    let output = child.wait_with_output().unwrap();
+
+    assert!(output.status.success());
+    assert!(
+        output.stdout.is_empty() && output.stderr.is_empty(),
+        "{}",
+        text(&output)
+    );
+}
+
+#[test]
+fn artifacts_uninstall_takes_back_the_hook_and_the_skill() {
+    let env = Env::new();
+    assert_ok(&env.run(&["artifacts-install"]));
+
+    assert_ok(&env.run(&["artifacts-uninstall"]));
+
+    let settings: Value =
+        serde_json::from_slice(&fs::read(env.home().join(".claude/settings.json")).unwrap())
+            .unwrap();
+    assert!(settings.get("hooks").is_none(), "{settings}");
+    assert!(!env.home().join(".claude/skills/relais-artifacts").exists());
+    let missing = env.run(&["artifacts", "path", "anything"]);
+    assert!(!missing.status.success());
+}

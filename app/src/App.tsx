@@ -2,7 +2,7 @@ import { isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 
-import { api, type Account, type AccountSignIn, type AccountStats, type Conversation, type Overview, type PaletteColor, type ProjectUsage, type ResumeTarget } from "./api";
+import { api, type Account, type AccountSignIn, type AccountStats, type Artifact, type Conversation, type Overview, type PaletteColor, type ProjectUsage, type ResumeTarget } from "./api";
 import { age, dayLabels, inTime, isLive, margin, newlySignedIn, projectShares, remaining, span, time } from "./format";
 import { isMessageKey, t, type MessageKey } from "./i18n";
 import { RelayHome, TabBar, type UpdateState } from "./RelayHome";
@@ -20,6 +20,7 @@ const FOLLOW_THEME_KEY = "relais.followTheme";
 const FULL_VIEW_KEY = "relais.fullView";
 const SHOWN_CONVERSATIONS = 5;
 const SHOWN_PROJECTS = 5;
+const SHOWN_ARTIFACTS = 6;
 const FETCHED_CONVERSATIONS = 12;
 const SIGN_IN_CHECK_EVERY_MS = 10 * 60_000;
 const UPDATE_CHECK_EVERY_MS = 6 * 3600_000;
@@ -99,6 +100,7 @@ export function App() {
   const [followTheme, setFollowTheme] = useState(readFollowTheme);
   const [update, setUpdate] = useState<UpdateState>(null);
   const [projects, setProjects] = useState<ProjectUsage[]>([]);
+  const [artifacts, setArtifacts] = useState<Artifact[]>([]);
   const [upToDate, setUpToDate] = useState<boolean | null>(null);
 
   // A newer version is offered, never installed behind the user's back. Fail
@@ -282,7 +284,9 @@ export function App() {
   };
 
   useEffect(() => {
-    if (view === "conversations") void api.projectUsage().then(setProjects).catch(() => setProjects([]));
+    if (view !== "conversations") return;
+    void api.projectUsage().then(setProjects).catch(() => setProjects([]));
+    void api.artifacts().then(setArtifacts).catch(() => setArtifacts([]));
   }, [view]);
 
   // A notification's button asks to switch: the confirmation takes it from there.
@@ -316,6 +320,14 @@ export function App() {
           </div>
           <Projects usage={projects} />
           <Sessions conversations={conversations} accounts={new Map((overview?.accounts ?? []).map((a) => [a.alias, a]))} now={now} onResume={(id, target) => run(() => api.resume(id, target))} />
+          <Artifacts
+            artifacts={artifacts}
+            kept={overview?.artifacts ?? false}
+            accounts={new Map((overview?.accounts ?? []).map((a) => [a.alias, a]))}
+            now={now}
+            onOpen={(url) => run(() => api.openArtifact(url))}
+            onReveal={(key) => run(() => api.revealArtifact(key))}
+          />
         </div>
       )}
       {view === "accounts" && (
@@ -364,6 +376,7 @@ export function App() {
           }}
           onStatusline={(enabled) => run(() => api.setStatusline(enabled))}
           onShell={(enabled) => run(() => api.setShell(enabled))}
+          onArtifacts={(enabled) => run(() => api.setArtifacts(enabled))}
           onAlerts={(enabled) => run(() => api.setAlerts(enabled))}
           onShortcut={(enabled) => run(() => api.setShortcut(enabled))}
           upToDate={upToDate}
@@ -471,7 +484,71 @@ function SessionRow({ conversation: c, account, now, onResume }: { conversation:
   );
 }
 
+/** The artifacts kept on this Mac, whatever account published them. */
+function Artifacts(props: { artifacts: Artifact[]; kept: boolean; accounts: Map<string, Account>; now: number; onOpen: (url: string) => void; onReveal: (key: string) => void }) {
+  const shown = props.artifacts.slice(0, SHOWN_ARTIFACTS);
+  return (
+    <section aria-labelledby="artifacts-title">
+      <div className="section-head">
+        <h2 id="artifacts-title" className="section-title">
+          {t("artifactsSection")}
+        </h2>
+      </div>
+      {shown.length === 0 && <p className="muted small pad">{props.kept ? t("artifactsNone") : t("artifactsOff")}</p>}
+      <ul className="sessions">
+        {shown.map((a) => {
+          const account = a.account ? (props.accounts.get(a.account) ?? null) : null;
+          const project = a.project?.split("/").filter(Boolean).pop();
+          const meta = [a.account ?? a.email ?? t("unknownAccount"), project, a.continues ? t("artifactAgain") : null].filter(Boolean).join(" · ");
+          return (
+            <li key={a.key} className="session tinted" style={tint(account?.color ?? NEUTRAL)}>
+              <div className="session-main">
+                <div className="session-top">
+                  <span className="session-title">{a.title}</span>
+                </div>
+                <div className="session-bottom">
+                  <span className="session-meta">
+                    <span className="session-dot" />
+                    {meta}
+                  </span>
+                  <span className="session-time">{age(a.updated, props.now)}</span>
+                </div>
+              </div>
+              <div className="session-actions">
+                <button className="icon-button" aria-label={t("artifactOpen")} title={t("artifactOpen")} onClick={() => props.onOpen(a.url)}>
+                  <LinkIcon />
+                </button>
+                <button className="icon-button" aria-label={t("artifactReveal")} title={t("artifactReveal")} onClick={() => props.onReveal(a.key)}>
+                  <FolderIcon />
+                </button>
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
+
 // ---- Small pieces ----------------------------------------------------------
+
+function LinkIcon({ size = 15 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M14 4h6v6" />
+      <path d="M20 4l-9 9" />
+      <path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" />
+    </svg>
+  );
+}
+
+function FolderIcon({ size = 15 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+    </svg>
+  );
+}
 
 function Avatar({ color, label, size }: { color: string; label: string; size: number }) {
   return (
@@ -799,7 +876,7 @@ function planName(plan: string): string {
 
 // ---- Settings and adding an account ----------------------------------------
 
-function Settings(props: { overview: Overview; followTheme: boolean; onFollowTheme: (on: boolean) => void; onStatusline: (enabled: boolean) => void; onShell: (enabled: boolean) => void; onAlerts: (enabled: boolean) => void; onShortcut: (enabled: boolean) => void; upToDate: boolean | null; onCheckUpdate: () => Promise<void>; onBringBack: () => Promise<void>; onAddFolder: (alias: string) => void; onRemoveFolder: (folder: string) => void }) {
+function Settings(props: { overview: Overview; followTheme: boolean; onFollowTheme: (on: boolean) => void; onStatusline: (enabled: boolean) => void; onShell: (enabled: boolean) => void; onArtifacts: (enabled: boolean) => void; onAlerts: (enabled: boolean) => void; onShortcut: (enabled: boolean) => void; upToDate: boolean | null; onCheckUpdate: () => Promise<void>; onBringBack: () => Promise<void>; onAddFolder: (alias: string) => void; onRemoveFolder: (folder: string) => void }) {
   const { overview } = props;
   const [folderAccount, setFolderAccount] = useState(overview.accounts.find((a) => a.active)?.alias ?? overview.accounts[0]?.alias ?? "");
   const [checking, setChecking] = useState(false);
@@ -818,6 +895,7 @@ function Settings(props: { overview: Overview; followTheme: boolean; onFollowThe
   const rows = [
     { id: "statusline", title: t("statuslineTitle"), detail: t("statuslineDetail"), on: overview.statusline, set: props.onStatusline },
     { id: "shell", title: t("shellTitle"), detail: t("shellDetail"), on: overview.shell, set: props.onShell },
+    { id: "artifacts", title: t("artifactsTitle"), detail: t("artifactsDetail"), on: overview.artifacts, set: props.onArtifacts },
     { id: "alerts", title: t("alertsTitle"), detail: t("alertsDetail"), on: overview.alerts, set: props.onAlerts },
     { id: "shortcut", title: t("shortcutTitle"), detail: t("shortcutDetail"), on: overview.shortcut, set: props.onShortcut },
   ];

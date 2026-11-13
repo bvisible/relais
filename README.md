@@ -36,6 +36,7 @@ Relais keeps one workspace and changes only the sign-in:
 - **Resume what a switch stopped.** The sessions a switch interrupted are listed afterwards, one click from running again.
 - **Switch when it's done.** With sessions running, Relais can wait, tell you when they finish, and ask again.
 - **Where the week went.** See which projects consumed the most this week, in the panel or with `relais projects`.
+- **Your artifacts follow you.** Every artifact Claude publishes is copied to `~/.relais/artifacts` with its link and its account, so Claude finds it again from another account and publishes it once more instead of rebuilding it. Share an artifact once with your other addresses, with “Can edit”, to keep the very same link.
 - **One account per folder.** `relais folder set work ~/Projects/client` makes Claude Code always start there on that account.
 - **A widget and a shortcut.** Put your limits on the desktop, and open the panel from anywhere with Control-Option-R.
 - **Updates in one click.** Relais tells you when a new version is out and installs it when you say so.
@@ -102,6 +103,7 @@ Add your other accounts, each signing in through Anthropic's own flow:
 relais account add me@work.example  # signs in in its own Chrome profile
 relais statusline-install           # record usage, and which account runs each session
 relais shell-install                # make `claude` run with the active account
+relais artifacts-install            # keep every artifact Claude publishes
 ```
 
 If the panel says measuring waits for your OK, click **Allow**: Claude Code asks its first-run questions once, and Relais never answers them for you.
@@ -131,6 +133,8 @@ relais switch next              # move only the terminal: a name, next, prev or 
 relais continue                 # carry the latest conversation over to the active account
 relais allow-measure            # answer, once, what Claude Code asks before Relais can measure
 relais projects                 # what each project consumed this week
+relais artifacts                # the artifacts kept on this Mac, with their account and link
+relais artifacts path "<title>" # the page of an artifact's latest copy
 relais folder set work          # this folder always starts on work; `relais folder` lists them
 relais doctor                   # check sign-ins, links and integrations
 ```
@@ -168,6 +172,10 @@ No. Desktop has to restart on the other sign-in, so sessions working inside it s
 ### Which Claude plans does it work with?
 
 It is developed and used daily on Claude Max accounts, with or without the 5-hour limit. A real switch was last checked on Claude Desktop 3.6556 with Claude Code 2.1.314. Other plans should behave the same: please [open an issue](https://github.com/bvisible/relais/issues) if yours does not. A Claude update can change what Relais relies on, so it checks the workspace first and warns you about a newer major version.
+
+### What happens to my artifacts when I change account?
+
+An artifact belongs to the account that published it, and Claude writes its page to a temporary folder. With `relais artifacts-install` (or **Keep artifacts** in the settings), Relais copies every published artifact to `~/.relais/artifacts`, notes its link and account, and installs a skill that tells Claude to look there first. When the account in use cannot change an artifact, Claude publishes its copy as a new one, and Relais records that the new link follows the old one. To keep the same link, share the artifact once with your other accounts' addresses with “Can edit”. Comments and the page's stored data stay on claude.ai.
 
 ### Does Relais work on Windows or Linux?
 

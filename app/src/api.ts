@@ -41,6 +41,8 @@ export type Overview = {
   best: string | null;
   statusline: boolean;
   shell: boolean;
+  /** Every artifact Claude publishes is copied to Relais's library. */
+  artifacts: boolean;
   cliFound: boolean;
   /** Claude Code waits for an answer of the user before it can measure. */
   measureWaits: boolean;
@@ -56,6 +58,21 @@ export type Overview = {
   folders: Record<string, string>;
   version: string;
   now: number;
+};
+
+/** An artifact kept on this Mac, with the account that published it. */
+export type Artifact = {
+  key: string;
+  url: string;
+  title: string;
+  icon?: string;
+  account?: string;
+  email?: string;
+  project?: string;
+  page?: string;
+  continues?: string;
+  updated: number;
+  publishes: number;
 };
 
 /** What a project consumed this week, in tokens. */
@@ -132,6 +149,10 @@ export const api = {
   suggestAlias: (email: string) => call<string>("suggest_alias", { email }),
   setStatusline: (enabled: boolean) => call<Overview>("set_statusline", { enabled }),
   setShell: (enabled: boolean) => call<Overview>("set_shell", { enabled }),
+  setArtifacts: (enabled: boolean) => call<Overview>("set_artifacts", { enabled }),
+  artifacts: () => call<Artifact[]>("artifacts"),
+  openArtifact: (url: string) => call<void>("open_artifact", { url }),
+  revealArtifact: (key: string) => call<void>("reveal_artifact", { key }),
   setAlerts: (enabled: boolean) => call<Overview>("set_alerts", { enabled }),
   setShortcut: (enabled: boolean) => call<Overview>("set_shortcut", { enabled }),
   waitToSwitch: (alias: string | null) => call<Overview>("wait_to_switch", { alias }),
@@ -233,6 +254,7 @@ let previewState: Overview = {
   best: "spare",
   statusline: true,
   shell: false,
+  artifacts: true,
   cliFound: true,
   measureWaits: previewMode === "trust",
   alerts: true,
@@ -325,6 +347,16 @@ async function preview<T>(command: string, args?: Record<string, unknown>): Prom
   }
   if (command === "set_statusline") previewState = { ...previewState, statusline: Boolean(args?.enabled) };
   if (command === "set_shell") previewState = { ...previewState, shell: Boolean(args?.enabled) };
+  if (command === "set_artifacts") previewState = { ...previewState, artifacts: Boolean(args?.enabled) };
+  if (command === "open_artifact" || command === "reveal_artifact") return undefined as T;
+  if (command === "artifacts") {
+    const now = nowSecs();
+    return [
+      { key: "a1", url: "https://claude.ai/artifact/a1", title: "Release checklist", icon: "checklist", account: "spare", project: "~/GitHub/mobile", page: "checklist.html", continues: "a3", updated: now - 25 * 60, publishes: 3 },
+      { key: "a2", url: "https://claude.ai/artifact/a2", title: "Pricing page options", icon: "layout", account: "main", project: "~/GitHub/website", page: "options.html", updated: now - 3 * 3600, publishes: 1 },
+      { key: "a3", url: "https://claude.ai/artifact/a3", title: "Release checklist", icon: "checklist", account: "work", project: "~/GitHub/mobile", page: "checklist.html", updated: now - 2 * 86400, publishes: 6 },
+    ] as T;
+  }
   if (command === "wait_to_switch") previewState = { ...previewState, switchWaiting: (args?.alias as string | null) ?? null };
   if (command === "bring_back") {
     await new Promise((resolve) => setTimeout(resolve, 1600));

@@ -73,6 +73,18 @@ enum Commands {
     Doctor,
     AllowMeasure,
     Projects,
+    Artifacts {
+        #[command(subcommand)]
+        action: Option<ArtifactsAction>,
+        /// Print every field, as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    ArtifactsInstall,
+    ArtifactsUninstall,
+    /// Called by Claude Code's hook after each use of its Artifact tool.
+    #[command(hide = true)]
+    ArtifactRecord,
     Folder {
         #[command(subcommand)]
         action: Option<FolderAction>,
@@ -93,6 +105,12 @@ enum Commands {
 enum Own {
     Add,
     Aside,
+}
+
+#[derive(Subcommand)]
+enum ArtifactsAction {
+    /// Print the page of an artifact's latest copy.
+    Path { query: String },
 }
 
 #[derive(Subcommand)]
@@ -147,11 +165,19 @@ fn localized_command() -> clap::Command {
         "doctor",
         "allow-measure",
         "projects",
+        "artifacts",
+        "artifacts-install",
+        "artifacts-uninstall",
         "folder",
     ] {
         let key = format!("help.{name}");
         command = command.mut_subcommand(name, |sub| sub.about(t(&key, &[])));
     }
+    command = command.mut_subcommand("artifacts", |artifacts| {
+        artifacts
+            .mut_arg("json", |arg| arg.help(t("help.artifacts.json", &[])))
+            .mut_subcommand("path", |sub| sub.about(t("help.artifacts.path", &[])))
+    });
     command = command.mut_subcommand("desktop", |desktop| {
         desktop
             .mut_arg("dry_run", |arg| arg.help(t("help.desktop.dry_run", &[])))
@@ -213,6 +239,13 @@ fn main() -> ExitCode {
         Commands::Doctor => commands::doctor(),
         Commands::AllowMeasure => commands::allow_measure(),
         Commands::Projects => commands::projects(),
+        Commands::Artifacts { action, json } => match action {
+            None => commands::artifacts(json),
+            Some(ArtifactsAction::Path { query }) => commands::artifacts_path(&query),
+        },
+        Commands::ArtifactsInstall => commands::artifacts_install(),
+        Commands::ArtifactsUninstall => commands::artifacts_uninstall(),
+        Commands::ArtifactRecord => commands::artifact_record(),
         Commands::Folder { action } => match action {
             None => commands::folders(),
             Some(FolderAction::Set { alias, folder }) => {

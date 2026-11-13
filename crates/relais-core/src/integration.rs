@@ -213,6 +213,156 @@ pub fn uninstall_shell(layout: &Layout, now: i64) -> Result<Change> {
     Ok(Change::Done)
 }
 
+/// What [`install_artifacts`] adds to `PostToolUse`: Claude Code hands every
+/// use of its `Artifact` tool to this command, in the background.
+const ARTIFACT_RECORD: &str = " artifact-record";
+
+fn artifact_skill_dir(layout: &Layout) -> PathBuf {
+    layout.claude_dir.join("skills").join("relais-artifacts")
+}
+
+fn is_artifact_hook(hook: &Value) -> bool {
+    hook.get("command")
+        .and_then(Value::as_str)
+        .is_some_and(|command| command.ends_with(ARTIFACT_RECORD))
+}
+
+/// Whether Claude Code hands its artifacts to Relais.
+pub fn artifacts_installed(layout: &Layout) -> bool {
+    let hooked = fsutil::read_json(&settings_path(layout))
+        .ok()
+        .flatten()
+        .and_then(|settings| settings.pointer("/hooks/PostToolUse").cloned())
+        .and_then(|entries| entries.as_array().cloned())
+        .is_some_and(|entries| {
+            entries.iter().any(|entry| {
+                entry
+                    .get("hooks")
+                    .and_then(Value::as_array)
+                    .is_some_and(|hooks| hooks.iter().any(is_artifact_hook))
+            })
+        });
+    hooked && artifact_skill_dir(layout).join("SKILL.md").is_file()
+}
+
+/// Adds the hook that records artifacts, in the background, and the skill
+/// that uses them. Settings are backed up first. A hook already there is
+/// pointed at `relais` when the command moved.
+pub fn install_artifacts(layout: &Layout, relais: &Path, now: i64) -> Result<Change> {
+    let quoted = shell_quote(&relais.display().to_string());
+    let command = format!("{quoted}{ARTIFACT_RECORD}");
+    let skill_path = artifact_skill_dir(layout).join("SKILL.md");
+    let skill = crate::artifacts::skill(&quoted);
+    let path = settings_path(layout);
+    let mut settings = fsutil::read_json(&path)?.unwrap_or_else(|| json!({}));
+    if !settings.is_object() {
+        settings = json!({});
+    }
+    let hook = json!({"type": "command", "command": command, "async": true});
+    let mut changed = false;
+    let mut found = false;
+    {
+        let hooks = settings
+            .as_object_mut()
+            .expect("settings is an object")
+            .entry("hooks")
+            .or_insert_with(|| json!({}));
+        if !hooks.is_object() {
+            *hooks = json!({});
+        }
+        let post = hooks
+            .as_object_mut()
+            .expect("hooks is an object")
+            .entry("PostToolUse")
+            .or_insert_with(|| json!([]));
+        if !post.is_array() {
+            *post = json!([]);
+        }
+        let entries = post.as_array_mut().expect("PostToolUse is a list");
+        for entry in entries.iter_mut() {
+            if let Some(list) = entry.get_mut("hooks").and_then(Value::as_array_mut) {
+                for existing in list.iter_mut().filter(|h| is_artifact_hook(h)) {
+                    found = true;
+                    if *existing != hook {
+                        *existing = hook.clone();
+                        changed = true;
+                    }
+                }
+            }
+        }
+        if !found {
+            entries.push(json!({"matcher": "Artifact", "hooks": [hook]}));
+            changed = true;
+        }
+    }
+    let skill_current = fs::read_to_string(&skill_path).is_ok_and(|text| text == skill);
+    if !changed && skill_current {
+        return Ok(Change::AlreadyDone);
+    }
+    if changed {
+        backup(&path, &layout.backups_dir().join("settings"), "json", now)?;
+        fsutil::write_json_atomic(&path, &settings)?;
+    }
+    if !skill_current {
+        fsutil::write_atomic(&skill_path, skill.as_bytes())?;
+    }
+    Ok(Change::Done)
+}
+
+/// Removes what [`install_artifacts`] added, and nothing else: a hook list
+/// left empty goes, the user's hooks stay.
+pub fn uninstall_artifacts(layout: &Layout, now: i64) -> Result<Change> {
+    let path = settings_path(layout);
+    let skill_dir = artifact_skill_dir(layout);
+    let mut changed = false;
+    if let Some(mut settings) = fsutil::read_json(&path)? {
+        let mut removed = false;
+        if let Some(hooks) = settings.get_mut("hooks").and_then(Value::as_object_mut) {
+            if let Some(entries) = hooks.get_mut("PostToolUse").and_then(Value::as_array_mut) {
+                for entry in entries.iter_mut() {
+                    if let Some(list) = entry.get_mut("hooks").and_then(Value::as_array_mut) {
+                        let before = list.len();
+                        list.retain(|h| !is_artifact_hook(h));
+                        removed |= list.len() != before;
+                    }
+                }
+                if removed {
+                    entries.retain(|entry| {
+                        entry
+                            .get("hooks")
+                            .and_then(Value::as_array)
+                            .is_none_or(|list| !list.is_empty())
+                    });
+                }
+                if removed && entries.is_empty() {
+                    hooks.remove("PostToolUse");
+                }
+            }
+            if removed && hooks.is_empty() {
+                settings.as_object_mut().map(|s| s.remove("hooks"));
+            }
+        }
+        if removed {
+            backup(&path, &layout.backups_dir().join("settings"), "json", now)?;
+            fsutil::write_json_atomic(&path, &settings)?;
+            changed = true;
+        }
+    }
+    let skill = skill_dir.join("SKILL.md");
+    if fs::read_to_string(&skill)
+        .is_ok_and(|text| text.starts_with("---\nname: relais-artifacts\n"))
+    {
+        fs::remove_file(&skill).map_err(|e| Error::io(&skill, e))?;
+        let _ = fs::remove_dir(&skill_dir);
+        changed = true;
+    }
+    Ok(if changed {
+        Change::Done
+    } else {
+        Change::AlreadyDone
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -342,5 +492,108 @@ mod tests {
             fs::read_to_string(settings_path(&layout)).unwrap(),
             "{not json"
         );
+    }
+
+    #[test]
+    fn artifacts_install_adds_its_hook_and_skill_and_keeps_the_others() {
+        let (_root, layout) = layout();
+        fs::write(
+            settings_path(&layout),
+            r#"{"model":"x","hooks":{"PostToolUse":[{"matcher":"Write","hooks":[{"type":"command","command":"lint.sh"}]}],"SessionStart":[{"hooks":[{"type":"command","command":"hello.sh"}]}]}}"#,
+        )
+        .unwrap();
+        let relais = Path::new("/Applications/Relais.app/Contents/MacOS/relais");
+
+        assert_eq!(install_artifacts(&layout, relais, 1).unwrap(), Change::Done);
+
+        let after = settings(&layout);
+        assert_eq!(after["model"], json!("x"));
+        assert_eq!(
+            after["hooks"]["SessionStart"][0]["hooks"][0]["command"],
+            json!("hello.sh")
+        );
+        let post = after["hooks"]["PostToolUse"].as_array().unwrap();
+        assert_eq!(post.len(), 2);
+        assert_eq!(post[0]["hooks"][0]["command"], json!("lint.sh"));
+        assert_eq!(post[1]["matcher"], json!("Artifact"));
+        assert_eq!(
+            post[1]["hooks"][0]["command"],
+            json!("/Applications/Relais.app/Contents/MacOS/relais artifact-record")
+        );
+        assert_eq!(post[1]["hooks"][0]["async"], json!(true));
+        let skill = fs::read_to_string(artifact_skill_dir(&layout).join("SKILL.md")).unwrap();
+        assert!(
+            skill.starts_with("---\nname: relais-artifacts\n"),
+            "{skill}"
+        );
+        assert!(
+            skill.contains("/Applications/Relais.app/Contents/MacOS/relais artifacts"),
+            "{skill}"
+        );
+        assert!(artifacts_installed(&layout));
+        assert_eq!(
+            install_artifacts(&layout, relais, 2).unwrap(),
+            Change::AlreadyDone
+        );
+        assert_eq!(
+            settings(&layout)["hooks"]["PostToolUse"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+    }
+
+    #[test]
+    fn artifacts_install_follows_the_command_when_it_moves() {
+        let (_root, layout) = layout();
+        install_artifacts(&layout, Path::new("/old/relais"), 1).unwrap();
+
+        assert_eq!(
+            install_artifacts(&layout, Path::new("/new/relais"), 2).unwrap(),
+            Change::Done
+        );
+
+        let post = settings(&layout)["hooks"]["PostToolUse"].clone();
+        assert_eq!(post.as_array().unwrap().len(), 1);
+        assert_eq!(
+            post[0]["hooks"][0]["command"],
+            json!("/new/relais artifact-record")
+        );
+    }
+
+    #[test]
+    fn artifacts_uninstall_removes_only_what_it_added() {
+        let (_root, layout) = layout();
+        fs::write(
+            settings_path(&layout),
+            r#"{"hooks":{"PostToolUse":[{"matcher":"Write","hooks":[{"type":"command","command":"lint.sh"}]}]}}"#,
+        )
+        .unwrap();
+        install_artifacts(&layout, Path::new("/usr/local/bin/relais"), 1).unwrap();
+
+        assert_eq!(uninstall_artifacts(&layout, 2).unwrap(), Change::Done);
+
+        assert_eq!(
+            settings(&layout),
+            json!({"hooks":{"PostToolUse":[{"matcher":"Write","hooks":[{"type":"command","command":"lint.sh"}]}]}})
+        );
+        assert!(!artifact_skill_dir(&layout).exists());
+        assert!(!artifacts_installed(&layout));
+        assert_eq!(
+            uninstall_artifacts(&layout, 3).unwrap(),
+            Change::AlreadyDone
+        );
+    }
+
+    #[test]
+    fn artifacts_uninstall_leaves_no_empty_hook_list_behind() {
+        let (_root, layout) = layout();
+        fs::write(settings_path(&layout), r#"{"model":"x"}"#).unwrap();
+        install_artifacts(&layout, Path::new("/usr/local/bin/relais"), 1).unwrap();
+
+        uninstall_artifacts(&layout, 2).unwrap();
+
+        assert_eq!(settings(&layout), json!({"model":"x"}));
     }
 }

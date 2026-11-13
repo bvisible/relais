@@ -2,7 +2,9 @@
 
 use std::collections::BTreeMap;
 use std::path::Path;
+use std::process::Command;
 
+use relais_core::artifacts;
 use relais_core::claude::desktop_app::{DesktopApp, DESKTOP_QUIT_WAIT, DESKTOP_SIGN_IN_WAIT};
 use relais_core::claude::desktop_carry::OwnConversations;
 use relais_core::claude::desktop_switch::{self, SignIn, Started};
@@ -83,6 +85,8 @@ pub struct Overview {
     best: Option<String>,
     statusline: bool,
     shell: bool,
+    /// Every artifact Claude publishes is copied to the library.
+    artifacts: bool,
     cli_found: bool,
     /// Claude Code waits for an answer of the user before it can measure.
     measure_waits: bool,
@@ -220,6 +224,7 @@ pub fn build_overview(relais: &Relais) -> Overview {
         version: env!("CARGO_PKG_VERSION"),
         statusline: integration::statusline_installed(&relais.layout),
         shell: integration::shell_installed(&relais.layout),
+        artifacts: integration::artifacts_installed(&relais.layout),
         cli_found: platform::relais_cli().is_some(),
         now,
     }
@@ -713,6 +718,65 @@ pub fn set_shell(enabled: bool) -> Result<Overview, String> {
         integration::uninstall_shell(&layout, now()).map_err(text)?;
     }
     overview()
+}
+
+#[tauri::command]
+pub fn set_artifacts(enabled: bool) -> Result<Overview, String> {
+    let layout = layout()?;
+    if enabled {
+        let cli = platform::relais_cli().ok_or("relais command not found")?;
+        integration::install_artifacts(&layout, &cli, now()).map_err(text)?;
+    } else {
+        integration::uninstall_artifacts(&layout, now()).map_err(text)?;
+    }
+    overview()
+}
+
+/// The artifacts kept on this Mac, the latest first.
+#[tauri::command]
+pub fn artifacts() -> Result<Vec<artifacts::Entry>, String> {
+    let layout = layout()?;
+    let mut list = artifacts::Library::new(&layout).list().map_err(text)?;
+    list.truncate(40);
+    Ok(list)
+}
+
+/// Opens a kept artifact's link in the browser: claude.ai links only.
+#[tauri::command]
+pub fn open_artifact(url: String) -> Result<(), String> {
+    if !url.starts_with("https://claude.ai/") {
+        return Err("not a claude.ai link".into());
+    }
+    Command::new("open")
+        .arg(&url)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+/// Shows an artifact's latest copy in the Finder.
+#[tauri::command]
+pub fn reveal_artifact(key: String) -> Result<(), String> {
+    let layout = layout()?;
+    let library = artifacts::Library::new(&layout);
+    let entry = library
+        .list()
+        .map_err(text)?
+        .into_iter()
+        .find(|e| e.key == key)
+        .ok_or("unknown artifact")?;
+    let folder = library.current_dir(&entry);
+    let target = entry
+        .page
+        .as_ref()
+        .map(|page| folder.join(page))
+        .unwrap_or(folder);
+    Command::new("open")
+        .arg("-R")
+        .arg(&target)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]

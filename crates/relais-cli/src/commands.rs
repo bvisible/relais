@@ -6,6 +6,7 @@ use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
 
+use relais_core::artifacts::{Library, Publisher};
 use relais_core::claude::cli as claude;
 use relais_core::claude::desktop_app::{DesktopApp, DESKTOP_QUIT_WAIT, DESKTOP_SIGN_IN_WAIT};
 use relais_core::claude::desktop_carry::OwnConversations;
@@ -1034,6 +1035,11 @@ pub fn doctor() -> Outcome {
     } else {
         println!("✗ {}", t("doctor.shell_off", &[]));
     }
+    if integration::artifacts_installed(&relais.layout) {
+        println!("✓ {}", t("doctor.artifacts_on", &[]));
+    } else {
+        println!("✗ {}", t("doctor.artifacts_off", &[]));
+    }
     Ok(0)
 }
 
@@ -1105,6 +1111,106 @@ pub fn folder_remove(folder: Option<&Path>) -> Outcome {
     };
     println!("{}", t(key, &[("folder", &folder.display().to_string())]));
     Ok(0)
+}
+
+/// Records what Claude Code's Artifact tool just published: its hook runs
+/// this in the background. It never fails and prints nothing, so Claude never
+/// hears about Relais; a problem goes to `~/.relais/logs/artifacts.log`.
+pub fn artifact_record() -> Outcome {
+    let mut input = Vec::new();
+    let _ = std::io::stdin()
+        .take(64 * 1024 * 1024)
+        .read_to_end(&mut input);
+    let Ok(layout) = Layout::from_env() else {
+        return Ok(0);
+    };
+    let recorded = serde_json::from_slice::<serde_json::Value>(&input)
+        .map_err(|e| e.to_string())
+        .and_then(|event| {
+            let registry =
+                registry::Registry::load(&layout.accounts_file()).map_err(|e| e.to_string())?;
+            Library::new(&layout)
+                .record(&registry, &event, &Publisher::from_env(), now())
+                .map_err(|e| e.to_string())
+        });
+    if let Err(error) = recorded {
+        log_line(&layout, "artifacts", &error);
+    }
+    Ok(0)
+}
+
+/// The artifacts kept on this Mac, the latest first.
+pub fn artifacts(json: bool) -> Outcome {
+    let layout = Layout::from_env()?;
+    let entries = Library::new(&layout).list()?;
+    if json {
+        let text =
+            serde_json::to_string_pretty(&entries).map_err(|e| Failure::Message(e.to_string()))?;
+        println!("{text}");
+        return Ok(0);
+    }
+    if entries.is_empty() {
+        println!("{}", t("artifacts.none", &[]));
+        if !integration::artifacts_installed(&layout) {
+            println!("{}", t("artifacts.not_recording", &[]));
+        }
+        return Ok(0);
+    }
+    let now = now();
+    for entry in &entries {
+        let account = entry
+            .account
+            .clone()
+            .or_else(|| entry.email.clone())
+            .unwrap_or_else(|| "?".into());
+        println!(
+            "{}  {}  [{account}]",
+            format::age(entry.updated, now),
+            entry.title
+        );
+        println!("    {}", entry.url);
+        if let Some(earlier) = entry
+            .continues
+            .as_deref()
+            .and_then(|key| entries.iter().find(|e| e.key == key))
+        {
+            println!("    {}", t("artifacts.follows", &[("url", &earlier.url)]));
+        }
+    }
+    Ok(0)
+}
+
+/// The page of the latest copy of the artifact matching `query`.
+pub fn artifacts_path(query: &str) -> Outcome {
+    let layout = Layout::from_env()?;
+    let library = Library::new(&layout);
+    let Some(entry) = library.find(query)? else {
+        return Err(Failure::Message(t(
+            "artifacts.not_found",
+            &[("query", query)],
+        )));
+    };
+    let folder = library.current_dir(&entry);
+    let path = entry
+        .page
+        .as_ref()
+        .map(|page| folder.join(page))
+        .unwrap_or(folder);
+    println!("{}", path.display());
+    Ok(0)
+}
+
+/// Has Claude Code hand every published artifact to Relais, and installs the skill.
+pub fn artifacts_install() -> Outcome {
+    let layout = Layout::from_env()?;
+    let change = integration::install_artifacts(&layout, &own_executable(), now())?;
+    report(change, "artifacts.installed", "artifacts.already")
+}
+
+pub fn artifacts_uninstall() -> Outcome {
+    let layout = Layout::from_env()?;
+    let change = integration::uninstall_artifacts(&layout, now())?;
+    report(change, "artifacts.uninstalled", "artifacts.not_installed")
 }
 
 /// What each project consumed this week, from the transcripts on this Mac.
