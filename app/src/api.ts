@@ -285,7 +285,7 @@ let previewState: Overview = {
   switchWaiting: null,
   setAside: previewMode === "aside" ? 4 : 0,
   folders: previewMode === "aside" ? { "~/Projects/website": "work" } : {},
-  version: "0.3.0",
+  version: "0.3.1",
   now: nowSecs(),
 };
 

@@ -1,7 +1,7 @@
 #!/bin/bash
 # Points the Homebrew cask at the release just published. Run after the DMG is
 # on GitHub: Homebrew checks its download against the sum written here.
-# Usage: app/scripts/update-cask.sh 0.3.0
+# Usage: app/scripts/update-cask.sh 0.3.1
 set -euo pipefail
 
 version="$1"
