@@ -1,6 +1,7 @@
 //! Turns readings and timestamps into short translated text.
 
 use chrono::{Datelike, Local, TimeZone};
+use relais_core::resets::{AccountResets, ResetKind, SESSION, WEEK};
 use relais_core::usage::{Availability, UsageReading};
 
 use crate::i18n::t;
@@ -122,6 +123,87 @@ pub fn usage(reading: Option<&UsageReading>, now: i64) -> String {
     }
     parts.push(freshness);
     parts.join(" · ")
+}
+
+/// How long resets taken are told: the length of a week.
+const RESETS_TAKEN_SHOWN_FOR: i64 = 7 * 86_400;
+
+/// What is known of an account's resets, a line each: the last ones taken
+/// this week (`↺ reset 2 h ago: week 100% → 5%`), and those left to use
+/// (`↺ to use: 2 Fable (until 21.02.)`), as Claude Code last learned them.
+pub fn resets(resets: &AccountResets, now: i64) -> Vec<String> {
+    let mut lines: Vec<String> = resets
+        .taken_since(now - RESETS_TAKEN_SHOWN_FOR)
+        .into_iter()
+        .take(2)
+        .map(|reset| {
+            let limit = match reset.limit.as_str() {
+                SESSION => t("resets.limit.session", &[]),
+                WEEK => t("resets.limit.week", &[]),
+                model => model.to_string(),
+            };
+            t(
+                "resets.taken",
+                &[
+                    ("age", &age(reset.seen_at, now)),
+                    ("limit", &limit),
+                    ("from", &percent(reset.from)),
+                    ("to", &percent(reset.to)),
+                ],
+            )
+        })
+        .collect();
+    let Some(held) = resets.held.as_ref().filter(|held| held.any_usable(now)) else {
+        return lines;
+    };
+    let usable = held.usable(now);
+    let mut line = if usable.is_empty() {
+        t("resets.held_unknown", &[])
+    } else {
+        let list: Vec<String> = usable
+            .iter()
+            .map(|grant| {
+                let mut item = format!("{} {}", grant.left, reset_kind(grant.kind));
+                if let Some(end) = grant.ends_at {
+                    item.push_str(&format!(
+                        " ({})",
+                        t("resets.until", &[("date", &date(end))])
+                    ));
+                }
+                item
+            })
+            .collect();
+        t("resets.held", &[("list", &list.join(", "))])
+    };
+    if now - held.observed_at >= 86_400 {
+        line.push_str(&format!(
+            " · {}",
+            t("resets.seen", &[("age", &age(held.observed_at, now))])
+        ));
+    }
+    lines.push(line);
+    lines
+}
+
+fn reset_kind(kind: ResetKind) -> String {
+    t(
+        match kind {
+            ResetKind::Session => "resets.kind.session",
+            ResetKind::Weekly => "resets.kind.weekly",
+            ResetKind::Fable => "resets.kind.fable",
+            ResetKind::Full => "resets.kind.full",
+        },
+        &[],
+    )
+}
+
+/// `21.02.`, in the machine's time zone.
+pub fn date(ts: i64) -> String {
+    Local
+        .timestamp_opt(ts, 0)
+        .single()
+        .map(|at| at.format("%d.%m.").to_string())
+        .unwrap_or_default()
 }
 
 /// The percentage an account has used now, for prompts.

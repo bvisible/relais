@@ -13,6 +13,7 @@ use crate::claude::profile::{self, LinkReport};
 use crate::claude::project_usage::{self, ProjectUsage};
 use crate::claude::sync::{self, ConfigFile, SyncOutcome};
 use crate::claude::transcripts::{self, Conversation, ACTIVITY_BUCKETS};
+use crate::claude::usage_cache;
 use crate::claude::usage_probe;
 use crate::error::{Error, Result};
 use crate::folders::{self, FolderRules};
@@ -20,6 +21,7 @@ use crate::fsutil;
 use crate::history::{self, HistoryStore, Sample};
 use crate::layout::Layout;
 use crate::registry::{self, Account, Registry};
+use crate::resets::{self, AccountResets, ResetStore};
 use crate::sessions::SessionAccounts;
 use crate::usage::{self, ModelLimits, UsageReading, UsageStore};
 
@@ -305,11 +307,45 @@ impl Relais {
         let Some(reading) = usage::reading_from_statusline(&value, now) else {
             return Ok(None);
         };
-        UsageStore::new(&self.layout.usage_dir()).save(&account.alias, &reading)?;
+        self.store_reading(&account.alias, &reading, None)?;
+        Ok(Some(account.alias.clone()))
+    }
+
+    /// Stores a reading unless a newer one is stored, with the per-model
+    /// limits it came with, and notes the limits that emptied before their
+    /// time since the last one: resets the user took. Returns whether it was
+    /// stored.
+    fn store_reading(
+        &self,
+        alias: &str,
+        reading: &UsageReading,
+        models: Option<&ModelLimits>,
+    ) -> Result<bool> {
+        let store = UsageStore::new(&self.layout.usage_dir());
+        let previous = store.load(alias).ok().flatten();
+        if previous
+            .as_ref()
+            .is_some_and(|previous| previous.observed_at > reading.observed_at)
+        {
+            return Ok(false);
+        }
+        store.save(alias, reading)?;
+        let mut taken = previous
+            .map(|previous| resets::taken_between(&previous, reading))
+            .unwrap_or_default();
+        if let Some(models) = models {
+            if let Ok(Some(before)) = store.load_models(alias) {
+                taken.extend(resets::models_taken_between(&before, models));
+            }
+            // Best effort: without them, the account shows its overall limits only.
+            let _ = store.save_models(alias, models);
+        }
+        // Best effort: a reset not noted changes no figure.
+        let _ = ResetStore::new(&self.layout.usage_dir()).note_taken(alias, &taken);
         // Best effort: a missed sample leaves a gap in the figures, nothing more.
         let _ = HistoryStore::new(&self.layout.usage_dir())
-            .record(&account.alias, Sample::from_reading(&reading));
-        Ok(Some(account.alias.clone()))
+            .record(alias, Sample::from_reading(reading));
+        Ok(true)
     }
 
     /// Every session Relais can place, by transcript id, with the alias of the
@@ -482,10 +518,19 @@ impl Relais {
     }
 
     /// Whether Claude Code should be asked for `alias`'s limits in the
-    /// background: the status line did not measure it lately, and it was not
-    /// asked in the last quarter of an hour.
+    /// background: the status line did not measure it lately, no reading came
+    /// in the last quarter of an hour (Claude Code's own fetches count), and
+    /// it was not asked in that time either.
     pub fn needs_usage_refresh(&self, alias: &str, now: i64) -> bool {
         if self.measured_lately(alias, now) {
+            return false;
+        }
+        let recent = UsageStore::new(&self.layout.usage_dir())
+            .load(alias)
+            .ok()
+            .flatten()
+            .is_some_and(|reading| now - reading.observed_at < USAGE_EVERY);
+        if recent {
             return false;
         }
         self.usage_attempts()
@@ -742,13 +787,40 @@ impl Relais {
         let Some(reading) = usage::parse_usage_report(&text, now.clone()) else {
             return Ok(None);
         };
-        let store = UsageStore::new(&self.layout.usage_dir());
-        store.save(alias, &reading)?;
-        // Best effort: without them, the account shows its overall limits only.
-        let _ = store.save_models(alias, &usage::parse_model_limits(&text, now));
-        let _ = HistoryStore::new(&self.layout.usage_dir())
-            .record(alias, Sample::from_reading(&reading));
+        let models = usage::parse_model_limits(&text, now);
+        self.store_reading(alias, &reading, Some(&models))?;
+        // What Claude Code learned of the resets while it measured.
+        let _ = self.adopt_cached_usage(alias);
         Ok(Some(reading))
+    }
+
+    /// The resets an account took and holds, as far as Relais saw them.
+    pub fn resets_of(&self, alias: &str) -> AccountResets {
+        ResetStore::new(&self.layout.usage_dir()).load(alias)
+    }
+
+    /// Takes the figures Claude Code fetched for `alias` on its own, when they
+    /// are newer than Relais's: they need not be asked for again. Keeps what
+    /// Claude Code learned of the resets held. Returns the reading taken.
+    pub fn adopt_cached_usage(&self, alias: &str) -> Option<UsageReading> {
+        let account = self.registry.get(alias)?;
+        let uuid = account.account_uuid.as_deref()?;
+        let config = usage_cache::read_config(&self.global_config_of(account))?;
+        if let Some(held) = usage_cache::held(&config, uuid) {
+            // Best effort: the resets held show again at the next look.
+            let _ = ResetStore::new(&self.layout.usage_dir()).note_held(alias, &held);
+        }
+        let (reading, models) = usage_cache::usage(&config, uuid)?;
+        let stored = UsageStore::new(&self.layout.usage_dir())
+            .load(alias)
+            .ok()
+            .flatten();
+        if stored.is_some_and(|stored| stored.observed_at >= reading.observed_at) {
+            return None;
+        }
+        self.store_reading(alias, &reading, Some(&models))
+            .ok()?
+            .then_some(reading)
     }
 
     /// The limits on single models (`Fable`) Claude Code last reported for an account.
@@ -1711,6 +1783,139 @@ printf '{{"type":"result","num_turns":0,"result":"Not logged in"}}'
         let reading = relais.refresh_usage("work", &binary, zurich(NOW)).unwrap();
 
         assert!(reading.is_some());
+    }
+
+    fn week_input(used: f64) -> Vec<u8> {
+        serde_json::to_vec(&json!({
+            "session_id": "s-1",
+            "rate_limits": {"seven_day": {"used_percentage": used, "resets_at": NOW + 86_400}}
+        }))
+        .unwrap()
+    }
+
+    /// What Claude Code keeps in a profile after fetching its usage.
+    fn cached_usage(relais: &Relais, alias: &str, fetched_at: i64, week: f64, extra: Value) {
+        let account = relais.registry.get(alias).unwrap().clone();
+        let path = relais.global_config_of(&account);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let reset = chrono::DateTime::from_timestamp(NOW + 86_400, 0)
+            .unwrap()
+            .to_rfc3339();
+        let mut config = json!({
+            "cachedUsageUtilization": {
+                "fetchedAtMs": fetched_at * 1000,
+                "accountUuid": account.account_uuid,
+                "utilization": {
+                    "five_hour": null,
+                    "seven_day": {"utilization": week, "resets_at": reset},
+                    "limits": [{"kind": "weekly_scoped", "percent": 3, "resets_at": reset,
+                                "scope": {"model": {"display_name": "Fable"}}}]
+                }
+            }
+        });
+        if let (Some(config), Some(extra)) = (config.as_object_mut(), extra.as_object()) {
+            config.extend(extra.clone());
+        }
+        fs::write(path, config.to_string()).unwrap();
+    }
+
+    #[test]
+    fn a_week_that_empties_before_its_end_is_noted_as_a_reset() {
+        let (_root, relais) = fixture();
+        relais
+            .record_statusline(None, &week_input(100.0), NOW - 600)
+            .unwrap();
+
+        relais
+            .record_statusline(None, &week_input(5.0), NOW)
+            .unwrap();
+
+        let taken = relais.resets_of("main").taken;
+        assert_eq!(taken.len(), 1);
+        assert_eq!(taken[0].limit, crate::resets::WEEK);
+        assert_eq!((taken[0].from, taken[0].to), (100.0, 5.0));
+        assert_eq!(
+            relais.usage_of("main").unwrap().availability(NOW),
+            usage::Availability::Available { used: 5.0 }
+        );
+    }
+
+    #[test]
+    fn the_usage_claude_code_fetched_itself_is_taken_when_newer() {
+        let (_root, relais) = fixture();
+        relais
+            .record_statusline(None, &week_input(100.0), NOW - 3600)
+            .unwrap();
+        cached_usage(&relais, "main", NOW, 6.0, json!({}));
+
+        let adopted = relais.adopt_cached_usage("main");
+
+        assert_eq!(adopted.unwrap().observed_at, NOW);
+        assert_eq!(
+            relais.usage_of("main").unwrap().seven_day_now(NOW),
+            Some(6.0)
+        );
+        assert_eq!(
+            relais.model_limits_of("main").unwrap().windows[0].model,
+            "Fable"
+        );
+        assert_eq!(relais.resets_of("main").taken.len(), 1);
+    }
+
+    #[test]
+    fn older_figures_of_claude_code_change_nothing() {
+        let (_root, relais) = fixture();
+        relais
+            .record_statusline(None, &week_input(40.0), NOW)
+            .unwrap();
+        cached_usage(&relais, "main", NOW - 60, 6.0, json!({}));
+
+        assert!(relais.adopt_cached_usage("main").is_none());
+        assert_eq!(
+            relais.usage_of("main").unwrap().seven_day_now(NOW),
+            Some(40.0)
+        );
+        assert!(relais.adopt_cached_usage("work").is_none());
+    }
+
+    #[test]
+    fn the_resets_an_account_holds_are_kept_from_claude_codes_answer() {
+        let (_root, relais) = fixture();
+        relais
+            .record_statusline(
+                Some(&relais.layout.profile_dir("work")),
+                &week_input(40.0),
+                NOW,
+            )
+            .unwrap();
+        cached_usage(
+            &relais,
+            "work",
+            NOW - 60,
+            40.0,
+            json!({"unusedLimitResetStatusCache": {
+                "accountUuid": "acc-work", "holdsUnusedReset": true,
+                "checkedAt": (NOW - 60) * 1000, "validUntil": (NOW + 3600) * 1000
+            }}),
+        );
+
+        relais.adopt_cached_usage("work");
+
+        let held = relais.resets_of("work").held.unwrap();
+        assert!(held.any_usable(NOW));
+        assert!(relais.resets_of("main").held.is_none());
+    }
+
+    #[test]
+    fn an_account_whose_figures_claude_code_just_fetched_is_not_asked_again() {
+        let (_root, relais) = fixture();
+        cached_usage(&relais, "work", NOW - 60, 12.0, json!({}));
+
+        relais.adopt_cached_usage("work");
+
+        assert!(!relais.needs_usage_refresh("work", NOW));
+        assert!(relais.needs_usage_refresh("work", NOW + USAGE_EVERY));
+        assert!(relais.needs_usage_refresh("main", NOW));
     }
 
     #[test]

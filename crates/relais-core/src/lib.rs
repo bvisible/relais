@@ -15,6 +15,7 @@ pub mod history;
 pub mod integration;
 pub mod layout;
 pub mod registry;
+pub mod resets;
 pub mod service;
 pub mod sessions;
 pub mod usage;

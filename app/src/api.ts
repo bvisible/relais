@@ -29,7 +29,21 @@ export type Account = {
   limitedUntil: number | null;
   /** When the account reaches a limit at its current pace. */
   fullAt: number | null;
+  /** The resets taken this week, newest first. */
+  resetsTaken: ResetTaken[];
+  /** The resets left to use, when Claude Code learned them. */
+  resetsHeld: HeldResets | null;
 };
+
+/** A limit that emptied before its time: a reset the user took. `limit` is
+ * `session`, `week`, or the model of a weekly limit (`Fable`). */
+export type ResetTaken = { limit: string; from: number; to: number; seenAt: number };
+
+export type ResetKind = "session" | "weekly" | "fable" | "full";
+
+/** The resets left to use, as Claude Code last learned them. No grants when
+ * it only learned that one is held. */
+export type HeldResets = { grants: { kind: ResetKind; left: number; endsAt: number | null }[]; observedAt: number };
 
 export type PaletteColor = { name: string; hex: string };
 
@@ -201,6 +215,8 @@ let previewState: Overview = {
       limited: previewMode === "limited",
       limitedUntil: previewMode === "limited" ? nowSecs() + 72 * 60 : null,
       fullAt: previewMode === "tiring" || previewMode === "showcase" ? nowSecs() + 95 * 60 : null,
+      resetsTaken: [],
+      resetsHeld: null,
     },
     {
       alias: "studio",
@@ -216,6 +232,8 @@ let previewState: Overview = {
       limited: true,
       limitedUntil: nowSecs() + 4 * 86400 + 22 * 3600,
       fullAt: null,
+      resetsTaken: [],
+      resetsHeld: { grants: [{ kind: "fable", left: 2, endsAt: nowSecs() + 115 * 86400 }], observedAt: nowSecs() - 3600 },
     },
     {
       alias: "spare",
@@ -232,6 +250,9 @@ let previewState: Overview = {
       limited: false,
       limitedUntil: null,
       fullAt: null,
+      // Reset two hours ago: the week had filled up.
+      resetsTaken: [{ limit: "week", from: 100, to: 2, seenAt: nowSecs() - 2 * 3600 }],
+      resetsHeld: null,
     },
     {
       alias: "work",
@@ -247,6 +268,8 @@ let previewState: Overview = {
       limited: false,
       limitedUntil: null,
       fullAt: null,
+      resetsTaken: [],
+      resetsHeld: null,
     },
   ],
   palette: PREVIEW_PALETTE,

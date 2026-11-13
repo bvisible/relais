@@ -33,6 +33,7 @@ Relais keeps one workspace and changes only the sign-in:
 
 - **Alerts before the limit.** A notification at 85% and 95% of a limit names the best account to go to, and its button opens the confirmation. Another tells you when a paused account is back.
 - **Forecast.** At the current pace, the panel says when the account in use reaches its limit.
+- **Usage resets.** When you reset a limit on claude.ai, Relais notes it and the account is no longer shown as paused. It shows the resets an account has left, Fable ones included, when Claude Code has learned them.
 - **Resume what a switch stopped.** The sessions a switch interrupted are listed afterwards, one click from running again.
 - **Switch when it's done.** With sessions running, Relais can wait, tell you when they finish, and ask again.
 - **Where the week went.** See which projects consumed the most this week, in the panel or with `relais projects`.
@@ -76,7 +77,7 @@ More detail in the [design document](docs/design.md).
 
 Relais does not read, copy, refresh or store any OAuth token, session cookie or Keychain secret. You sign in through Anthropic's own apps, they keep and refresh their logins as usual, and Relais only moves Desktop's sign-in files aside and back by renaming them, without opening them. That removes the whole class of "dead token" bugs that tools copying tokens have to chase.
 
-Relais makes no call to Anthropic either: the only request it makes itself is to GitHub, for new versions. Usage comes from what Claude Code hands to its status line, from the history the desktop app keeps, and from Claude Code's own `/usage` panel: every quarter of an hour the app opens the official client in a private terminal, with nothing of yours loaded, reads the panel and closes it. No prompt is sent, nothing is billed and no conversation is saved.
+Relais makes no call to Anthropic either: the only request it makes itself is to GitHub, for new versions. Usage comes from what Claude Code hands to its status line, from the history the desktop app keeps, from the figures Claude Code keeps in its own config after fetching them, and from Claude Code's own `/usage` panel: every quarter of an hour the app opens the official client in a private terminal, with nothing of yours loaded, reads the panel and closes it. No prompt is sent, nothing is billed and no conversation is saved.
 
 ## Install
 

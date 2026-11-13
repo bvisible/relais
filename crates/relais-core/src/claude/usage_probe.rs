@@ -545,6 +545,32 @@ pub fn report(
     panel
 }
 
+/// Why the panel holds no figures to take: none came, or those shown are not
+/// new. Anthropic sometimes holds back requests to the usage page for a
+/// while; Claude Code then shows the last figures it had, which must not be
+/// stored as if they had just been read.
+fn panel_refusal(text: &str) -> Option<&'static str> {
+    let lower = text.to_ascii_lowercase();
+    let says = |phrases: &[&str]| phrases.iter().any(|phrase| lower.contains(phrase));
+    if says(&[
+        "limiting requests to the usage page",
+        "showing last-known usage",
+        "could not refresh usage",
+    ]) {
+        Some("usage-rate-limited")
+    } else if says(&[
+        "failed to load usage",
+        "usage data is unavailable",
+        "unknown command",
+        "invalid api key",
+        "authentication error",
+    ]) {
+        Some("usage-unavailable")
+    } else {
+        None
+    }
+}
+
 fn read_panel(child: &OwnedChild, terminal: &mut File, timeout: Duration) -> Result<String> {
     let deadline = Instant::now() + timeout.min(Duration::from_secs(45));
     let mut screen = Screen::new();
@@ -581,17 +607,8 @@ fn read_panel(child: &OwnedChild, terminal: &mut File, timeout: Duration) -> Res
             return Err(refused(reason));
         }
         let lower = text.to_ascii_lowercase();
-        if [
-            "failed to load usage",
-            "usage data is unavailable",
-            "unknown command",
-            "invalid api key",
-            "authentication error",
-        ]
-        .iter()
-        .any(|x| lower.contains(x))
-        {
-            return Err(refused("usage-unavailable"));
+        if let Some(reason) = panel_refusal(&text) {
+            return Err(refused(reason));
         }
         if phase == 0
             && stable.elapsed() >= Duration::from_millis(200)
@@ -652,6 +669,29 @@ mod tests {
         assert!(builtin_usage_selected(
             "❯ /usage\n  /usage  Show plan usage limits"
         ));
+    }
+
+    #[test]
+    fn figures_claude_code_could_not_refresh_are_never_taken_for_new_ones() {
+        for (text, reason) in [
+            (
+                "Claude is temporarily limiting requests to the usage page (not your usage limit). Try again in a moment.",
+                "usage-rate-limited",
+            ),
+            (
+                "Current week (all models)\n100% used\nShowing last-known usage (could not refresh)",
+                "usage-rate-limited",
+            ),
+            ("Could not refresh usage data", "usage-rate-limited"),
+            ("Failed to load usage data", "usage-unavailable"),
+            ("Unknown command: /usage", "usage-unavailable"),
+        ] {
+            assert_eq!(panel_refusal(text), Some(reason), "{text}");
+        }
+        assert_eq!(
+            panel_refusal("Current week (all models)\n5% used\nPartial usage data"),
+            None
+        );
     }
 
     #[test]

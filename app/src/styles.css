@@ -1500,3 +1500,12 @@ input:focus-visible {
   font: inherit;
   font-size: 13px;
 }
+
+.resets {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px;
+  border-radius: 12px;
+  background: var(--ground);
+}

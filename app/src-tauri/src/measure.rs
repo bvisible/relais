@@ -4,7 +4,7 @@
 use std::sync::Mutex;
 use std::time::Duration;
 
-use relais_core::service::Relais;
+use relais_core::service::{Relais, MEASURED_LATELY};
 use relais_core::Layout;
 
 use crate::platform;
@@ -28,7 +28,13 @@ pub fn measure(force: bool) {
     };
     for account in &relais.registry.accounts {
         let now = chrono::Utc::now().timestamp();
-        let wanted = if force {
+        // Figures Claude Code fetched itself are taken first: no need to ask again.
+        let fetched = relais
+            .adopt_cached_usage(&account.alias)
+            .is_some_and(|reading| now - reading.observed_at < MEASURED_LATELY);
+        let wanted = if fetched {
+            false
+        } else if force {
             !relais.measured_lately(&account.alias, now)
         } else {
             relais.needs_usage_refresh(&account.alias, now)

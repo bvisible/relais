@@ -13,6 +13,7 @@ use relais_core::claude::{cli as claude, desktop_profile, transcripts};
 use relais_core::history;
 use relais_core::integration;
 use relais_core::registry;
+use relais_core::resets::ResetKind;
 use relais_core::service::{LiveSession, Relais};
 use relais_core::usage::{Availability, UsageReading, Window};
 use relais_core::Error;
@@ -65,7 +66,43 @@ pub struct AccountView {
     limited_until: Option<i64>,
     /// When the account reaches a limit at its current pace.
     full_at: Option<i64>,
+    /// The resets taken this week, newest first.
+    resets_taken: Vec<ResetTakenView>,
+    /// The resets left to use, when Claude Code learned them.
+    resets_held: Option<HeldResetsView>,
 }
+
+/// A limit that emptied before its time: a reset the user took.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResetTakenView {
+    /// `session`, `week`, or the model of a weekly limit (`Fable`).
+    limit: String,
+    from: f64,
+    to: f64,
+    seen_at: i64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResetGrantView {
+    /// `session`, `weekly`, `fable` or `full`.
+    kind: ResetKind,
+    left: u32,
+    ends_at: Option<i64>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HeldResetsView {
+    /// The resets that can be used, by kind. Empty when Claude Code only
+    /// learned that one is held.
+    grants: Vec<ResetGrantView>,
+    observed_at: i64,
+}
+
+/// How long resets taken are told: the length of a week.
+const RESETS_TAKEN_SHOWN_FOR: i64 = 7 * 86_400;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -152,6 +189,7 @@ pub fn build_overview(relais: &Relais) -> Overview {
         .iter()
         .map(|account| {
             let reading: Option<UsageReading> = relais.usage_of(&account.alias);
+            let resets = relais.resets_of(&account.alias);
             let limit = reading.as_ref().and_then(|r| match r.availability(now) {
                 Availability::Limited { until, exact } => Some(exact.then_some(until)),
                 Availability::Available { .. } => None,
@@ -202,6 +240,32 @@ pub fn build_overview(relais: &Relais) -> Overview {
                 }),
                 limited: limit.is_some(),
                 limited_until: limit.flatten(),
+                resets_taken: resets
+                    .taken_since(now - RESETS_TAKEN_SHOWN_FOR)
+                    .into_iter()
+                    .map(|reset| ResetTakenView {
+                        limit: reset.limit.clone(),
+                        from: reset.from,
+                        to: reset.to,
+                        seen_at: reset.seen_at,
+                    })
+                    .collect(),
+                resets_held: resets
+                    .held
+                    .as_ref()
+                    .filter(|held| held.any_usable(now))
+                    .map(|held| HeldResetsView {
+                        grants: held
+                            .usable(now)
+                            .into_iter()
+                            .map(|grant| ResetGrantView {
+                                kind: grant.kind,
+                                left: grant.left,
+                                ends_at: grant.ends_at,
+                            })
+                            .collect(),
+                        observed_at: held.observed_at,
+                    }),
             }
         })
         .collect();

@@ -14,6 +14,8 @@ type Line = {
   limitedUntil: number | null;
   observedAt: number | null;
   fullAt?: number | null;
+  resetsTaken?: { seenAt: number }[];
+  resetsHeld?: unknown | null;
 };
 
 /** What a switch would do, as the Rust side plans it. */
@@ -68,16 +70,22 @@ export function usageLine(account: Line, now: number): string {
 
 function parts(account: Line, now: number): string[] {
   if (account.limited) {
-    return account.limitedUntil != null && account.limitedUntil > now ? [t("relayPaused", { time: time(account.limitedUntil, now) })] : [t("relayPausedUnknown")];
+    const back = account.limitedUntil != null && account.limitedUntil > now ? t("relayPaused", { time: time(account.limitedUntil, now) }) : t("relayPausedUnknown");
+    return account.resetsHeld ? [back, t("relayResetToUse")] : [back];
   }
+  // A reset taken lately is told, so a figure that fell is not a mystery.
+  const reset = account.resetsTaken?.find((taken) => now - taken.seenAt < RESET_TOLD_FOR);
+  const told = reset ? [t("relayResetTaken", { time: time(reset.seenAt, now) })] : [];
   const five = account.fiveHour ? t("relayFive", { n: Math.round(account.fiveHour.used) }) : null;
   const week = account.sevenDay ? t("relayWeek", { n: Math.round(account.sevenDay.used) }) : null;
-  if (five && week) return [five, week];
+  if (five && week) return [five, week, ...told];
   if (week && account.sevenDay?.resetsAt != null && account.sevenDay.resetsAt > now) {
-    return [week, t("relayStartsOver", { in: inTime(account.sevenDay.resetsAt, now) })];
+    return [week, ...(told.length > 0 ? told : [t("relayStartsOver", { in: inTime(account.sevenDay.resetsAt, now) })])];
   }
-  return [five ?? week ?? t("relayUnmeasured")];
+  return [five ?? week ?? t("relayUnmeasured"), ...told];
 }
+
+const RESET_TOLD_FOR = 24 * 3600;
 
 /** When the account in use reaches a limit at this pace, if that is soon
  * enough to plan around. */

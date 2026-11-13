@@ -7,7 +7,8 @@
   (`claude auth login`, the desktop app, claude.ai in Chrome). Reading non-secret metadata is fine:
   account UUIDs, emails, the modification date of a Keychain entry.
 - **Never call Anthropic's servers.** Usage comes from the status line input, the desktop app's
-  own history file and the official client's `/usage` panel, opened in a private terminal.
+  own history file, the official client's `/usage` panel, opened in a private terminal, and what
+  Claude Code keeps in a profile's `.claude.json` after fetching it (`cachedUsageUtilization`).
 - **Never switch silently.** Relais suggests; the user decides.
 - **Fail open.** A Relais failure must never stop Claude from starting or the user's status line from
   rendering.

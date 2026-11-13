@@ -2,8 +2,8 @@ import { isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 
-import { api, type Account, type AccountSignIn, type AccountStats, type Artifact, type Conversation, type Overview, type PaletteColor, type ProjectUsage, type ResumeTarget } from "./api";
-import { age, dayLabels, inTime, isLive, margin, newlySignedIn, projectShares, remaining, span, time } from "./format";
+import { api, type Account, type AccountSignIn, type AccountStats, type Artifact, type Conversation, type Overview, type PaletteColor, type ProjectUsage, type ResetKind, type ResumeTarget } from "./api";
+import { age, date, dayLabels, inTime, isLive, margin, newlySignedIn, projectShares, remaining, span, time } from "./format";
 import { isMessageKey, t, type MessageKey } from "./i18n";
 import { RelayHome, TabBar, type UpdateState } from "./RelayHome";
 
@@ -770,6 +770,8 @@ function AccountCard(props: {
         </div>
       </div>
 
+      <Resets account={account} now={now} />
+
       {stats && (hasDays || stats.weeks.some((w) => w != null)) ? (
         <>
           <div className="chart">
@@ -860,6 +862,35 @@ function AccountCard(props: {
         </div>
       )}
     </article>
+  );
+}
+
+/** The resets an account took this week and those it has left, when Claude
+ * Code learned them. A paused account with nothing known says where to look. */
+function Resets(props: { account: Account; now: number }) {
+  const { account, now } = props;
+  const taken = account.resetsTaken.slice(0, 3);
+  const held = account.resetsHeld;
+  if (taken.length === 0 && held == null && !account.limited) return null;
+  const limitName = (limit: string) => (limit === "session" ? t("resetLimitSession") : limit === "week" ? t("resetLimitWeek") : limit);
+  const kindName = (kind: ResetKind) => t(({ session: "resetKindSession", weekly: "resetKindWeekly", fable: "resetKindFable", full: "resetKindFull" } as const)[kind]);
+  const seen = held != null && now - held.observedAt >= 86_400 ? ` · ${t("resetsSeen", { age: age(held.observedAt, now) })}` : "";
+  return (
+    <div className="resets">
+      <span className="muted tiny">{t("resetsTitle")}</span>
+      {taken.map((reset) => (
+        <div key={`${reset.limit}-${reset.seenAt}`} className="tiny">
+          {t("resetTaken", { when: time(reset.seenAt, now), limit: limitName(reset.limit), from: Math.round(reset.from), to: Math.round(reset.to) })}
+        </div>
+      ))}
+      {held != null && held.grants.length === 0 && <div className="tiny strong">{t("resetHeldUnknown") + seen}</div>}
+      {held?.grants.map((grant) => (
+        <div key={grant.kind} className="tiny strong">
+          {(grant.endsAt != null ? t("resetHeld", { kind: kindName(grant.kind), n: grant.left, date: date(grant.endsAt) }) : t("resetHeldNoDate", { kind: kindName(grant.kind), n: grant.left })) + seen}
+        </div>
+      ))}
+      {held == null && account.limited && <div className="muted tiny">{t("resetsWhere")}</div>}
+    </div>
   );
 }
 

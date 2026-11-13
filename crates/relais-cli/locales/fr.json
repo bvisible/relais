@@ -168,5 +168,16 @@
   "artifacts.follows": "suit {url}",
   "artifacts.not_found": "Aucun artefact gardé ne correspond à « {query} » (voir `relais artifacts`).",
   "doctor.artifacts_on": "Artefacts : gardés par Relais",
-  "doctor.artifacts_off": "Artefacts : pas gardés (lance `relais artifacts-install`)"
+  "doctor.artifacts_off": "Artefacts : pas gardés (lance `relais artifacts-install`)",
+  "resets.taken": "↺ réinitialisation {age} : {limit} {from} → {to}",
+  "resets.limit.session": "5 h",
+  "resets.limit.week": "semaine",
+  "resets.held": "↺ à prendre : {list}",
+  "resets.held_unknown": "↺ une réinitialisation à prendre (Claude Code ne dit pas laquelle)",
+  "resets.until": "jusqu'au {date}",
+  "resets.seen": "vu {age}",
+  "resets.kind.session": "5 h",
+  "resets.kind.weekly": "semaine",
+  "resets.kind.fable": "Fable",
+  "resets.kind.full": "complète"
 }

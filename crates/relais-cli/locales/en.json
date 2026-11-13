@@ -168,5 +168,16 @@
   "artifacts.follows": "follows {url}",
   "artifacts.not_found": "No kept artifact matches “{query}” (see `relais artifacts`).",
   "doctor.artifacts_on": "Artifacts: kept by Relais",
-  "doctor.artifacts_off": "Artifacts: not kept (run `relais artifacts-install`)"
+  "doctor.artifacts_off": "Artifacts: not kept (run `relais artifacts-install`)",
+  "resets.taken": "↺ reset {age}: {limit} {from} → {to}",
+  "resets.limit.session": "5h",
+  "resets.limit.week": "week",
+  "resets.held": "↺ to use: {list}",
+  "resets.held_unknown": "↺ a reset to use (Claude Code does not say which)",
+  "resets.until": "until {date}",
+  "resets.seen": "seen {age}",
+  "resets.kind.session": "5-hour",
+  "resets.kind.weekly": "weekly",
+  "resets.kind.fable": "Fable",
+  "resets.kind.full": "full"
 }

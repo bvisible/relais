@@ -11,4 +11,5 @@ pub mod profile;
 pub mod project_usage;
 pub mod sync;
 pub mod transcripts;
+pub mod usage_cache;
 pub mod usage_probe;

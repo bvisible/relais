@@ -13,7 +13,7 @@ use relais_core::claude::desktop_carry::OwnConversations;
 use relais_core::claude::desktop_switch::{self, SignIn, Started, SwitchPlan};
 use relais_core::claude::{desktop_identity, transcripts, usage_probe};
 use relais_core::registry::{self, Account};
-use relais_core::service::{Relais, SignedIn};
+use relais_core::service::{Relais, SignedIn, MEASURED_LATELY};
 use relais_core::usage::Availability;
 use relais_core::{integration, Error, Layout};
 
@@ -545,8 +545,12 @@ fn refresh_usage(relais: &Relais) {
     let now = now();
     std::thread::scope(|scope| {
         for account in &relais.registry.accounts {
+            // Figures Claude Code fetched itself a moment ago need no asking again.
+            let fetched = relais
+                .adopt_cached_usage(&account.alias)
+                .is_some_and(|reading| now - reading.observed_at < MEASURED_LATELY);
             // The account the terminals run on is measured by the status line.
-            if relais.measured_lately(&account.alias, now) {
+            if fetched || relais.measured_lately(&account.alias, now) {
                 continue;
             }
             let binary = &binary;
@@ -588,6 +592,9 @@ fn list_accounts() -> Outcome {
             account.alias,
             account.email.as_deref().unwrap_or(""),
         );
+        for line in format::resets(&relais.resets_of(&account.alias), now) {
+            println!("    {line}");
+        }
     }
     Ok(0)
 }

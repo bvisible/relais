@@ -25,6 +25,12 @@ export function time(ts: number, now: number): string {
   return `${dd}.${mm}. ${hm}`;
 }
 
+/** `21.02.`: a day, without its time. */
+export function date(ts: number): string {
+  const at = new Date(ts * 1000);
+  return `${String(at.getDate()).padStart(2, "0")}.${String(at.getMonth() + 1).padStart(2, "0")}.`;
+}
+
 /**
  * How long until `ts`: `45 min`, `2 h 14`, `4 j 6 h`. Rounded to the nearest
  * minute, so a reading taken a second ago does not lose a minute.

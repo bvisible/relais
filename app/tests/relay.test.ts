@@ -85,6 +85,20 @@ test("a usage line names the limits the plan has, and when the only one starts o
   assert.equal(plain(usageLine(account("a", null, null, { observedAt: null }), NOW)), "pas encore mesuré");
 });
 
+test("a reset taken today is told, so a share that fell is no mystery", () => {
+  const reset = (ago: number) => ({ resetsTaken: [{ seenAt: NOW - ago }] });
+  const at = (ago: number) => new Date((NOW - ago) * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
+  assert.equal(plain(usageLine({ ...account("a", null, 5), ...reset(2 * 3600) }, NOW)), `semaine 5 % · réinitialisé ${at(2 * 3600)}`);
+  assert.equal(plain(usageLine({ ...account("a", 3, 5), ...reset(600) }, NOW)), `5 h 3 % · semaine 5 % · réinitialisé ${at(600)}`);
+  assert.equal(plain(usageLine({ ...account("a", null, 5), ...reset(2 * 86400) }, NOW)), "semaine 5 % · repart dans 1 j");
+});
+
+test("a paused account with a reset to use says so", () => {
+  const paused = account("a", null, 100, { limited: true, limitedUntil: NOW + 3 * 86400 });
+  assert.equal(plain(usageLine({ ...paused, resetsHeld: { grants: [], observedAt: NOW } }, NOW)).endsWith(" · réinitialisation à prendre"), true);
+  assert.equal(plain(usageLine({ ...paused, resetsHeld: null }, NOW)).includes("réinitialisation"), false);
+});
+
 test("a usage line only breaks between its parts, never inside a share or a duration", () => {
   const line = usageLine({ ...account("a", null, 40), sevenDay: { used: 40, resetsAt: NOW + 6 * 86400 + 5 * 3600 } }, NOW);
   assert.deepEqual(line.split(" "), ["semaine\u00a040\u00a0%", "·", "repart\u00a0dans\u00a06\u00a0j\u00a05\u00a0h"]);

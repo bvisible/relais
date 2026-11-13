@@ -463,6 +463,82 @@ fn list_says_how_long_until_a_limited_account_is_back() {
 }
 
 #[test]
+fn list_says_when_a_reset_was_taken_and_which_are_left() {
+    let env = Env::new();
+    env.sign_in_default("main@example.com");
+    assert_ok(&env.run(&["init"]));
+    let usage = env.home().join(".relais/usage");
+    fs::create_dir_all(&usage).unwrap();
+    let now = chrono_now();
+    fs::write(
+        usage.join("main.json"),
+        json!({"sevenDay": {"usedPercentage": 6.0, "resetsAt": now + 3 * 86_400},
+               "observedAt": now - 60, "source": "usageCommand"})
+        .to_string(),
+    )
+    .unwrap();
+    // 21 February, noon, of a year to come: the date reads the same in every time zone.
+    let ends = chrono::NaiveDate::from_ymd_opt(2099, 2, 21)
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap()
+        .and_utc()
+        .timestamp();
+    fs::write(
+        usage.join("main.resets.json"),
+        json!({
+            "taken": [{"seenAt": now - 2 * 3600 - 60, "after": now - 3 * 3600, "limit": "week",
+                       "from": 100.0, "to": 5.0}],
+            "held": {"grants": [{"kind": "fable", "left": 2, "total": 3, "endsAt": ends}],
+                     "holdsAny": true, "observedAt": now - 60}
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let output = env.run(&["list"]);
+
+    assert_ok(&output);
+    let listing = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        listing.contains("↺ reset 2 h ago: week 100% → 5%"),
+        "{listing}"
+    );
+    assert!(
+        listing.contains("↺ to use: 2 Fable (until 21.02.)"),
+        "{listing}"
+    );
+}
+
+#[test]
+fn list_takes_the_figures_claude_code_fetched_itself() {
+    let env = Env::new();
+    env.sign_in_default("main@example.com");
+    assert_ok(&env.run(&["init"]));
+    let now = chrono_now();
+    let mut config: Value =
+        serde_json::from_str(&fs::read_to_string(env.home().join(".claude.json")).unwrap())
+            .unwrap();
+    config["cachedUsageUtilization"] = json!({
+        "fetchedAtMs": (now - 30) * 1000,
+        "accountUuid": "acc-main",
+        "utilization": {"five_hour": null, "seven_day": {"utilization": 33, "resets_at": null}}
+    });
+    fs::write(env.home().join(".claude.json"), config.to_string()).unwrap();
+
+    let output = env.run(&["list", "--refresh"]);
+
+    assert_ok(&output);
+    let listing = String::from_utf8_lossy(&output.stdout);
+    assert!(listing.contains("33%"), "{listing}");
+    assert!(
+        !env.log().contains("--safe-mode"),
+        "Claude Code was asked again: {}",
+        env.log()
+    );
+}
+
+#[test]
 fn conversations_name_the_account_that_ran_each_one() {
     let env = Env::new();
     env.sign_in_default("main@example.com");
