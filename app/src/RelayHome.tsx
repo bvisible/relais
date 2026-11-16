@@ -280,6 +280,7 @@ export function RelayHome(props: {
             {busy && (
               <>
                 <p>{t("relayWorking", { alias: target.alias })}</p>
+                <p className="muted small">{t("relayClosingHint")}</p>
                 <div className="relay-progress" aria-hidden="true" />
               </>
             )}

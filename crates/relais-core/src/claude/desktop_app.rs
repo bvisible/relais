@@ -16,7 +16,10 @@ use crate::error::{Error, Result};
 /// The Claude desktop app's bundle identifier.
 pub const DESKTOP_BUNDLE_ID: &str = "com.anthropic.claudefordesktop";
 /// How long the app gets to close before the change of account is given up.
-pub const DESKTOP_QUIT_WAIT: Duration = Duration::from_secs(20);
+/// Claude Desktop 5 asks before it quits while sessions work or run commands
+/// in the background (« Quitter quand même », « Attendre Claude »): the user
+/// needs the time to answer it.
+pub const DESKTOP_QUIT_WAIT: Duration = Duration::from_secs(120);
 pub const DESKTOP_CONTROL_ENV: &str = "RELAIS_DESKTOP_CONTROL";
 /// How long a fresh start gets to log the account it loaded.
 pub const DESKTOP_SIGN_IN_WAIT: Duration = Duration::from_secs(60);

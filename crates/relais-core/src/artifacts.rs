@@ -240,10 +240,11 @@ impl Library {
             .or_else(|| previous.as_ref().map(|p| p.title.clone()))
             .unwrap_or_else(|| key.clone());
         let account = registry_account(registry, publisher);
+        let title_text = title;
         let entry = Entry {
             key: key.clone(),
             url: url.to_string(),
-            title,
+            title: title_text.clone(),
             icon: text(&input, "icon").or_else(|| previous.as_ref().and_then(|p| p.icon.clone())),
             description: text(&input, "description")
                 .or_else(|| previous.as_ref().and_then(|p| p.description.clone())),
@@ -274,7 +275,17 @@ impl Library {
             }),
             type_url: text(&input, "type_url")
                 .or_else(|| previous.as_ref().and_then(|p| p.type_url.clone())),
-            continues: continues.or_else(|| previous.as_ref().and_then(|p| p.continues.clone())),
+            continues: continues
+                .or_else(|| previous.as_ref().and_then(|p| p.continues.clone()))
+                .or_else(|| {
+                    // Made again from its own folder after a switch: the
+                    // same title, newly published by another account.
+                    let alias = account.as_ref().map(|a| a.alias.as_str())?;
+                    previous
+                        .is_none()
+                        .then(|| same_title_elsewhere(&entries, &key, &title_text, alias))
+                        .flatten()
+                }),
             version: version.or_else(|| previous.as_ref().and_then(|p| p.version.clone())),
             created: previous.as_ref().map(|p| p.created).unwrap_or(now),
             updated: now,
@@ -525,6 +536,18 @@ impl Library {
         entry.files = after;
         Ok(true)
     }
+}
+
+/// The latest artifact another account published under `title`: the one a
+/// new artifact of that title was made again from, after a switch.
+fn same_title_elsewhere(entries: &[Entry], key: &str, title: &str, alias: &str) -> Option<String> {
+    let title = title.trim();
+    entries
+        .iter()
+        .filter(|e| e.key != key && e.title.trim() == title)
+        .filter(|e| e.account.as_deref().is_some_and(|other| other != alias))
+        .max_by_key(|e| e.updated)
+        .map(|e| e.key.clone())
 }
 
 /// An artifact made from a type (a design, slides): its files are data, all
@@ -1316,6 +1339,61 @@ mod tests {
         );
         assert_eq!(entry.files, files_in(&copy));
         assert_eq!(s.library.repair().unwrap(), 0, "once is enough");
+    }
+
+    #[test]
+    fn an_artifact_made_again_under_its_title_on_another_account_follows_the_old_one() {
+        let s = setup();
+        let old = publish_design_files(&s, &[("project/Main.dc.html", "main")], 100);
+        let again = |title: &str, url: &str, uuid: &str, at: i64| {
+            s.library
+                .record(
+                    &s.registry,
+                    &publish(
+                        json!({"type_url": TYPE_URL, "title": title}),
+                        url,
+                        title,
+                        &s.work,
+                    ),
+                    &by_uuid(uuid),
+                    at,
+                )
+                .unwrap()
+                .unwrap()
+        };
+        const MAIN: &str = "00000000-0000-4000-8000-000000000002";
+
+        let moved = again(
+            "Design",
+            "https://claude.ai/artifact/DTXxA52ansqaBNe7qD2StQ",
+            MAIN,
+            200,
+        );
+        let other = again(
+            "Another",
+            "https://claude.ai/artifact/QKDhu6iJXdLDxLnUKFdXDY",
+            MAIN,
+            300,
+        );
+        again(
+            "Notes",
+            "https://claude.ai/artifact/W2HqgEQyDEuLm1n2b3v4c5",
+            WORK,
+            400,
+        );
+        let twin = again(
+            "Notes",
+            "https://claude.ai/artifact/MpqTCc8rPzKijyvAtCjL2f",
+            WORK,
+            500,
+        );
+
+        assert_eq!(moved.continues.as_deref(), Some(old.key.as_str()));
+        assert_eq!(other.continues, None);
+        assert_eq!(
+            twin.continues, None,
+            "the same account makes its own artifacts"
+        );
     }
 
     #[test]
