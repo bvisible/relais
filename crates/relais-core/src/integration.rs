@@ -245,6 +245,38 @@ pub fn artifacts_installed(layout: &Layout) -> bool {
     hooked && artifact_skill_dir(layout).join("SKILL.md").is_file()
 }
 
+/// Rewrites the artifacts skill when this version of Relais words it
+/// differently, for the `relais` command the hook runs. Returns whether it
+/// was rewritten; nothing is done when artifacts are not kept.
+pub fn refresh_artifacts_skill(layout: &Layout) -> Result<bool> {
+    let command = fsutil::read_json(&settings_path(layout))?
+        .and_then(|settings| settings.pointer("/hooks/PostToolUse").cloned())
+        .and_then(|entries| entries.as_array().cloned())
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|entry| entry.get("hooks").and_then(Value::as_array).cloned())
+        .flatten()
+        .find(is_artifact_hook)
+        .and_then(|hook| {
+            hook.get("command")
+                .and_then(Value::as_str)
+                .map(String::from)
+        });
+    let Some(relais) = command
+        .as_deref()
+        .and_then(|command| command.strip_suffix(ARTIFACT_RECORD))
+    else {
+        return Ok(false);
+    };
+    let skill_path = artifact_skill_dir(layout).join("SKILL.md");
+    let skill = crate::artifacts::skill(relais);
+    if fs::read_to_string(&skill_path).is_ok_and(|text| text == skill) {
+        return Ok(false);
+    }
+    fsutil::write_atomic(&skill_path, skill.as_bytes())?;
+    Ok(true)
+}
+
 /// Adds the hook that records artifacts, in the background, and the skill
 /// that uses them. Settings are backed up first. A hook already there is
 /// pointed at `relais` when the command moved.
@@ -559,6 +591,29 @@ mod tests {
         assert_eq!(
             post[0]["hooks"][0]["command"],
             json!("/new/relais artifact-record")
+        );
+    }
+
+    #[test]
+    fn an_outdated_skill_is_rewritten_for_the_command_the_hook_runs() {
+        let (_root, layout) = layout();
+        assert!(
+            !refresh_artifacts_skill(&layout).unwrap(),
+            "nothing installed"
+        );
+        install_artifacts(&layout, Path::new("/opt/relais"), 1).unwrap();
+        let skill = artifact_skill_dir(&layout).join("SKILL.md");
+        fs::write(&skill, "an older text").unwrap();
+
+        assert!(refresh_artifacts_skill(&layout).unwrap());
+
+        assert_eq!(
+            fs::read_to_string(&skill).unwrap(),
+            crate::artifacts::skill("/opt/relais")
+        );
+        assert!(
+            !refresh_artifacts_skill(&layout).unwrap(),
+            "already current"
         );
     }
 

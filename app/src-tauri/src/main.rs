@@ -95,6 +95,15 @@ fn main() {
             tray::keep_title_fresh(app.handle().clone());
             measure::keep_measuring();
             widget::keep_fresh();
+            // Best effort, off the main thread: copies an earlier version
+            // scattered are put back, and the artifacts skill takes this
+            // version's wording.
+            std::thread::spawn(|| {
+                if let Ok(layout) = relais_core::Layout::from_env() {
+                    let _ = relais_core::artifacts::Library::new(&layout).repair();
+                    let _ = relais_core::integration::refresh_artifacts_skill(&layout);
+                }
+            });
             let shortcut = relais_core::Layout::from_env()
                 .and_then(relais_core::service::Relais::load)
                 .map(|relais| relais.shortcut_on())

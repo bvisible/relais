@@ -829,15 +829,9 @@ pub fn reveal_artifact(key: String) -> Result<(), String> {
         .into_iter()
         .find(|e| e.key == key)
         .ok_or("unknown artifact")?;
-    let folder = library.current_dir(&entry);
-    let target = entry
-        .page
-        .as_ref()
-        .map(|page| folder.join(page))
-        .unwrap_or(folder);
     Command::new("open")
         .arg("-R")
-        .arg(&target)
+        .arg(library.path_of(&entry))
         .spawn()
         .map(|_| ())
         .map_err(|e| e.to_string())

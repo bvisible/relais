@@ -55,3 +55,17 @@ it, so any account can find it again and publish it once more instead of rebuild
 - Assets uploaded with `asset: true` and files copied from another artifact server side are not kept in
   this first version: the skill says to upload them again.
 - The index is written atomically under Claude Code's own lock convention (`index.json.lock`).
+
+## Revision, 2026-11-16: a publish adds files, it does not replace the copy
+
+Seen after the first real switch: an artifact made from a type (a design) is published one data file at
+a time (`canvas.json`, then each `*.dc.html`, with `root`). Each publish replaced the whole copy with the
+one file it carried, so a design's copy held a single file and the rest went to `versions/`, five kept.
+
+- A publish now adds or replaces the files it carries and keeps the others, as the published artifact
+  does; a file published as `null` in `files` leaves the copy; a page published under a new name
+  replaces the old page. Unchanged files are hard links to the previous copy.
+- Index version 2. A one-time repair gathers the newest of each file from `versions/` into `current/`
+  for artifacts made from a type. It runs when the app starts, on `relais artifacts`, and on a publish.
+- `relais artifacts path` prints the folder of an artifact made from a type, the page of a page.
+- The installed skill is rewritten when Relais words it differently, for the command the hook runs.

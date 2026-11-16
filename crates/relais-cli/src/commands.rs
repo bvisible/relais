@@ -1143,13 +1143,20 @@ pub fn artifact_record() -> Outcome {
     if let Err(error) = recorded {
         log_line(&layout, "artifacts", &error);
     }
+    // The skill a newer Relais words differently reaches the next session.
+    if let Err(error) = integration::refresh_artifacts_skill(&layout) {
+        log_line(&layout, "artifacts", &error.to_string());
+    }
     Ok(0)
 }
 
 /// The artifacts kept on this Mac, the latest first.
 pub fn artifacts(json: bool) -> Outcome {
     let layout = Layout::from_env()?;
-    let entries = Library::new(&layout).list()?;
+    let library = Library::new(&layout);
+    // Best effort: a copy left scattered by an earlier version is put back first.
+    let _ = library.repair();
+    let entries = library.list()?;
     if json {
         let text =
             serde_json::to_string_pretty(&entries).map_err(|e| Failure::Message(e.to_string()))?;
@@ -1191,19 +1198,14 @@ pub fn artifacts(json: bool) -> Outcome {
 pub fn artifacts_path(query: &str) -> Outcome {
     let layout = Layout::from_env()?;
     let library = Library::new(&layout);
+    let _ = library.repair();
     let Some(entry) = library.find(query)? else {
         return Err(Failure::Message(t(
             "artifacts.not_found",
             &[("query", query)],
         )));
     };
-    let folder = library.current_dir(&entry);
-    let path = entry
-        .page
-        .as_ref()
-        .map(|page| folder.join(page))
-        .unwrap_or(folder);
-    println!("{}", path.display());
+    println!("{}", library.path_of(&entry).display());
     Ok(0)
 }
 

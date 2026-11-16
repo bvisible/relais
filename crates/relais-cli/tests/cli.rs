@@ -1325,6 +1325,59 @@ fn an_artifact_published_from_claude_code_is_kept_and_found_again() {
 }
 
 #[test]
+fn a_design_published_file_by_file_is_found_again_whole() {
+    let env = Env::new();
+    env.sign_in_default("main@example.com");
+    assert_ok(&env.run(&["init"]));
+    assert_ok(&env.run(&["artifacts-install"]));
+    let skill = env.home().join(".claude/skills/relais-artifacts/SKILL.md");
+    fs::write(&skill, "the words of an older Relais").unwrap();
+    let url = "https://claude.ai/artifact/XgxxZqZoJba5X1o8X8146P";
+    let canvas = env.root.path().join("scratch/canvas");
+    fs::create_dir_all(canvas.join("project")).unwrap();
+    let event = |input: Value| {
+        json!({
+            "hook_event_name": "PostToolUse", "tool_name": "Artifact", "cwd": "/work/app",
+            "tool_input": input,
+            "tool_response": {"url": url, "title": "Entry page", "owned": true},
+        })
+    };
+    assert_ok(&record_artifact(
+        &env,
+        &event(
+            json!({"type_url": "https://claude.ai/artifact/QKN21svewxgyPb6SYRqWnd", "title": "Entry page"}),
+        ),
+        Some("acc-main"),
+    ));
+    for (file, content) in [
+        ("project/canvas.json", "{}"),
+        ("project/Main.dc.html", "main"),
+    ] {
+        fs::write(canvas.join(file), content).unwrap();
+        assert_ok(&record_artifact(
+            &env,
+            &event(json!({"url": url, "file_path": canvas.join(file), "root": canvas})),
+            Some("acc-main"),
+        ));
+    }
+
+    let path = env.run(&["artifacts", "path", "entry page"]);
+
+    assert_ok(&path);
+    let folder = PathBuf::from(String::from_utf8_lossy(&path.stdout).trim());
+    assert_eq!(
+        fs::read_to_string(folder.join("project/canvas.json")).unwrap(),
+        "{}"
+    );
+    assert_eq!(
+        fs::read_to_string(folder.join("project/Main.dc.html")).unwrap(),
+        "main"
+    );
+    let words = fs::read_to_string(&skill).unwrap();
+    assert!(words.contains("An artifact made from a type"), "{words}");
+}
+
+#[test]
 fn the_artifact_hook_never_fails_and_never_speaks() {
     let env = Env::new();
     let mut command = env.relais();

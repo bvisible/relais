@@ -8,6 +8,7 @@
 //! Relais never publishes, reads or shares an artifact itself, and reads no
 //! credential: only the tool's input and result, and the session's account id.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
@@ -24,6 +25,9 @@ use crate::registry::Registry;
 pub const VERSIONS_KEPT: usize = 5;
 /// A file larger than this is not copied.
 pub const LARGEST_FILE: u64 = 64 * 1024 * 1024;
+/// The index format. Version 2 keeps every file of an artifact; version 1
+/// kept only those of its last publish.
+const INDEX_VERSION: u64 = 2;
 
 /// What the library knows about one artifact.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -161,6 +165,15 @@ impl Library {
                 copies.push((served, source.clone()));
             }
         }
+        // `null` in the `files` map removes that file from the artifact.
+        let mut dropped: Vec<String> = match input.get("files") {
+            Some(Value::Object(map)) => map
+                .iter()
+                .filter(|(_, source)| source.is_null())
+                .filter_map(|(served, _)| safe_relative(served))
+                .collect(),
+            _ => Vec::new(),
+        };
         for (served, from) in supporting_files(&input) {
             let Some(served) = safe_relative(&served) else {
                 continue;
@@ -180,6 +193,8 @@ impl Library {
         fs::create_dir_all(&self.dir).map_err(|e| Error::io(&self.dir, e))?;
         let index_path = self.index_path();
         let _lock = fsutil::ConfigLock::acquire(&index_path, Duration::from_secs(10))?;
+        // Best effort: a copy left scattered stays as it was.
+        let _ = self.repair_locked();
         let mut entries = self.load_index()?;
         let continues = page_source
             .as_deref()
@@ -188,23 +203,37 @@ impl Library {
             .get("version")
             .and_then(Value::as_str)
             .map(String::from);
-        let written = if copies.is_empty() {
-            None
-        } else {
-            Some(self.store(&key, &copies, version.as_deref(), now)?)
-        };
-
         let text =
             |value: &Value, name: &str| value.get(name).and_then(Value::as_str).map(String::from);
         let previous = entries
             .iter()
             .position(|e| e.key == key)
             .map(|i| entries.remove(i));
-        let page_name = written
-            .as_ref()
-            .and(copies.first())
+        let new_page = copies
+            .first()
             .filter(|_| page_source.is_some())
-            .map(|(s, _)| s.clone());
+            .map(|(served, _)| served.clone());
+        let typed = text(&input, "type_url").is_some()
+            || previous.as_ref().is_some_and(is_typed)
+            || new_page.as_deref().is_some_and(|page| page.contains('/'));
+        // A page published under a new name replaces the old page; the data
+        // files of an artifact made from a type all stay.
+        if !typed {
+            if let (Some(old), Some(new)) = (
+                previous.as_ref().and_then(|p| p.page.clone()),
+                new_page.as_ref(),
+            ) {
+                if old != *new {
+                    dropped.push(old);
+                }
+            }
+        }
+        let written = if copies.is_empty() && dropped.is_empty() {
+            None
+        } else {
+            Some(self.store(&key, &copies, &dropped, version.as_deref(), now)?)
+        };
+        let page_name = written.as_ref().and(new_page);
         let title = text(&result, "title")
             .or_else(|| text(&input, "title"))
             .or_else(|| page_source.as_deref().and_then(html_title))
@@ -297,8 +326,16 @@ impl Library {
     fn save_index(&self, entries: &[Entry]) -> Result<()> {
         fsutil::write_json_atomic(
             &self.index_path(),
-            &json!({ "version": 1, "artifacts": entries }),
+            &json!({ "version": INDEX_VERSION, "artifacts": entries }),
         )
+    }
+
+    fn index_version(&self) -> u64 {
+        fsutil::read_json(&self.index_path())
+            .ok()
+            .flatten()
+            .and_then(|value| value.get("version")?.as_u64())
+            .unwrap_or(1)
     }
 
     /// The artifact a page published to `key` came from: the page sits in
@@ -329,12 +366,15 @@ impl Library {
             .map(|e| e.key.clone())
     }
 
-    /// Copies `copies` into the artifact's `current` folder, after moving the
-    /// previous one to `versions`. Returns the files written.
+    /// Makes the artifact's new `current` folder: what it held, with the files
+    /// of `copies` added or replaced and those of `dropped` removed, as the
+    /// published artifact keeps the files a publish leaves out. The previous
+    /// folder moves to `versions`. Returns every file of the copy.
     fn store(
         &self,
         key: &str,
         copies: &[(String, PathBuf)],
+        dropped: &[String],
         version: Option<&str>,
         now: i64,
     ) -> Result<Vec<String>> {
@@ -343,7 +383,19 @@ impl Library {
         if incoming.exists() {
             fs::remove_dir_all(&incoming).map_err(|e| Error::io(&incoming, e))?;
         }
-        let mut written = Vec::new();
+        fs::create_dir_all(&incoming).map_err(|e| Error::io(&incoming, e))?;
+        let current = home.join("current");
+        if current.is_dir() {
+            for file in files_under(&current) {
+                link_or_copy(&current.join(&file), &incoming.join(&file))?;
+            }
+        }
+        for file in dropped {
+            let target = incoming.join(file);
+            if target.is_file() {
+                fs::remove_file(&target).map_err(|e| Error::io(&target, e))?;
+            }
+        }
         for (served, source) in copies {
             let too_large = fs::metadata(source)
                 .map(|m| m.len() > LARGEST_FILE)
@@ -355,10 +407,12 @@ impl Library {
             if let Some(parent) = target.parent() {
                 fs::create_dir_all(parent).map_err(|e| Error::io(parent, e))?;
             }
+            // The file may be a link to an earlier copy's: never write through it.
+            if target.exists() {
+                fs::remove_file(&target).map_err(|e| Error::io(&target, e))?;
+            }
             fs::copy(source, &target).map_err(|e| Error::io(&target, e))?;
-            written.push(served.clone());
         }
-        let current = home.join("current");
         if current.exists() {
             let versions = home.join("versions");
             fs::create_dir_all(&versions).map_err(|e| Error::io(&versions, e))?;
@@ -385,13 +439,135 @@ impl Library {
             }
         }
         fs::rename(&incoming, &current).map_err(|e| Error::io(&current, e))?;
-        Ok(written)
+        Ok(files_under(&current))
     }
 
     /// The folder holding an artifact's latest copy.
     pub fn current_dir(&self, entry: &Entry) -> PathBuf {
         self.dir.join(&entry.key).join("current")
     }
+
+    /// What to publish again: the page of a page, the folder of an artifact
+    /// made from a type.
+    pub fn path_of(&self, entry: &Entry) -> PathBuf {
+        let folder = self.current_dir(entry);
+        match &entry.page {
+            Some(page) if !is_typed(entry) => folder.join(page),
+            _ => folder,
+        }
+    }
+
+    /// Puts back together the copies Relais 0.3.0 and 0.3.1 scattered: each
+    /// publish of an artifact made from a type replaced its copy with the one
+    /// file published, the others going to `versions`. Runs once. Returns how
+    /// many copies were put back together.
+    pub fn repair(&self) -> Result<usize> {
+        let index_path = self.index_path();
+        if !index_path.is_file() {
+            return Ok(0);
+        }
+        let _lock = fsutil::ConfigLock::acquire(&index_path, Duration::from_secs(10))?;
+        self.repair_locked()
+    }
+
+    fn repair_locked(&self) -> Result<usize> {
+        if !self.index_path().is_file() || self.index_version() >= INDEX_VERSION {
+            return Ok(0);
+        }
+        let mut entries = self.load_index()?;
+        let mut repaired = 0;
+        for entry in entries.iter_mut().filter(|entry| is_typed(entry)) {
+            if self.reassemble(entry)? {
+                repaired += 1;
+            }
+        }
+        self.save_index(&entries)?;
+        Ok(repaired)
+    }
+
+    /// Gathers in `current` every file the earlier copies hold, the newest of
+    /// each. Returns whether files came back.
+    fn reassemble(&self, entry: &mut Entry) -> Result<bool> {
+        let home = self.dir.join(&entry.key);
+        let current = home.join("current");
+        let mut snapshots: Vec<PathBuf> = fs::read_dir(home.join("versions"))
+            .map(|dir| dir.flatten().map(|d| d.path()).collect())
+            .unwrap_or_default();
+        snapshots.sort();
+        snapshots.push(current.clone());
+        let mut newest: BTreeMap<String, PathBuf> = BTreeMap::new();
+        for snapshot in snapshots.iter().filter(|s| s.is_dir()) {
+            for file in files_under(snapshot) {
+                newest.insert(file.clone(), snapshot.join(&file));
+            }
+        }
+        let before = if current.is_dir() {
+            files_under(&current)
+        } else {
+            Vec::new()
+        };
+        let after: Vec<String> = newest.keys().cloned().collect();
+        if after == before {
+            entry.files = after;
+            return Ok(false);
+        }
+        let incoming = home.join(format!(".incoming-{}", std::process::id()));
+        if incoming.exists() {
+            fs::remove_dir_all(&incoming).map_err(|e| Error::io(&incoming, e))?;
+        }
+        for (file, source) in &newest {
+            link_or_copy(source, &incoming.join(file))?;
+        }
+        if current.exists() {
+            fs::remove_dir_all(&current).map_err(|e| Error::io(&current, e))?;
+        }
+        fs::rename(&incoming, &current).map_err(|e| Error::io(&current, e))?;
+        entry.files = after;
+        Ok(true)
+    }
+}
+
+/// An artifact made from a type (a design, slides): its files are data, all
+/// kept, published one or a few at a time under a folder (`project/…`).
+fn is_typed(entry: &Entry) -> bool {
+    entry.type_url.is_some() || entry.page.as_deref().is_some_and(|page| page.contains('/'))
+}
+
+/// Every file under `dir`, relative to it, sorted.
+fn files_under(dir: &Path) -> Vec<String> {
+    let mut found = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(at) = stack.pop() {
+        let Ok(items) = fs::read_dir(&at) else {
+            continue;
+        };
+        for item in items.flatten() {
+            let path = item.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if let Ok(relative) = path.strip_prefix(dir) {
+                let parts: Vec<String> = relative
+                    .components()
+                    .map(|c| c.as_os_str().to_string_lossy().into_owned())
+                    .collect();
+                found.push(parts.join("/"));
+            }
+        }
+    }
+    found.sort();
+    found
+}
+
+/// Puts `source` at `target` as a hard link, so an unchanged file costs no
+/// space, or as a copy where a link cannot be made.
+fn link_or_copy(source: &Path, target: &Path) -> Result<()> {
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent).map_err(|e| Error::io(parent, e))?;
+    }
+    if fs::hard_link(source, target).is_err() {
+        fs::copy(source, target).map_err(|e| Error::io(target, e))?;
+    }
+    Ok(())
 }
 
 /// The skill Relais installs for Claude, with the `relais` command it names.
@@ -421,11 +597,14 @@ Update the existing one rather than making a second.
 
 Publish with its link (`url`) as usual. The active account can do it when it owns the artifact or was given "Can edit" access.
 
-If the publish is refused because this account can neither own nor edit it, publish the library copy as a new artifact:
+If the publish is refused, or the link cannot be opened, because the artifact belongs to another account, publish the library copy as a new artifact. Find it:
 
-    {relais} artifacts path "<title or link>"   # prints the page of the latest copy
+    {relais} artifacts path "<title or link>"
 
-Read that file, make the changes asked for, and publish it without `url` (with `root` set to its `current` folder when the copy has other files). Relais records the new link as following the old one. Tell the user the link changed, and why.
+- **A page.** The command prints the page of the latest copy. Read it, make the changes asked for, and publish it without `url`, with `root` set to its `current` folder when the copy has other files.
+- **An artifact made from a type** (a design, slides: it has a `typeUrl` in `{relais} artifacts --json`). The command prints the copy's folder, which holds every data file at its published path (`project/…`). Create a new artifact from the same `type_url`, then publish those files to the new link with `root` set to that folder, the way the type's instructions say.
+
+Relais records the new link as following the old one. Tell the user the link changed, and why. An artifact published before Relais kept them is not in the library: look for its source in the folder its session wrote it in.
 
 ## Keep the same link
 
@@ -889,6 +1068,254 @@ mod tests {
         );
         assert!(entry.files.is_empty());
         assert_eq!(entry.page, None);
+    }
+
+    const TYPE_URL: &str = "https://claude.ai/artifact/QKN21svewxgyPb6SYRqWnd";
+
+    /// A design made from a type, as Claude publishes it: created first, then
+    /// one data file at a time, each with the folder that holds them as `root`.
+    fn publish_design_files(s: &Setup, files: &[(&str, &str)], start: i64) -> Entry {
+        let root = s.work.join("canvas");
+        s.library
+            .record(
+                &s.registry,
+                &publish(
+                    json!({"type_url": TYPE_URL, "title": "Design"}),
+                    PAGE_URL,
+                    "Design",
+                    &s.work,
+                ),
+                &by_uuid(WORK),
+                start,
+            )
+            .unwrap();
+        let mut last = None;
+        for (n, (path, content)) in files.iter().enumerate() {
+            let file = root.join(path);
+            fs::create_dir_all(file.parent().unwrap()).unwrap();
+            fs::write(&file, content).unwrap();
+            let input = json!({"url": PAGE_URL, "file_path": file, "root": root});
+            last = s
+                .library
+                .record(
+                    &s.registry,
+                    &publish(input, PAGE_URL, "Design", &s.work),
+                    &by_uuid(WORK),
+                    start + 1 + n as i64,
+                )
+                .unwrap();
+        }
+        last.unwrap()
+    }
+
+    fn files_in(dir: &Path) -> Vec<String> {
+        let mut found = Vec::new();
+        let mut stack = vec![dir.to_path_buf()];
+        while let Some(at) = stack.pop() {
+            for item in fs::read_dir(&at).unwrap().flatten() {
+                let path = item.path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else {
+                    found.push(
+                        path.strip_prefix(dir)
+                            .unwrap()
+                            .to_string_lossy()
+                            .into_owned(),
+                    );
+                }
+            }
+        }
+        found.sort();
+        found
+    }
+
+    #[test]
+    fn a_design_published_file_by_file_keeps_every_file() {
+        let s = setup();
+
+        let entry = publish_design_files(
+            &s,
+            &[
+                ("project/canvas.json", "{}"),
+                ("project/Main.dc.html", "main"),
+                ("project/Phone.dc.html", "phone"),
+                ("project/canvas.json", "{\"screens\":2}"),
+            ],
+            100,
+        );
+
+        let copy = s.library.current_dir(&entry);
+        assert_eq!(
+            files_in(&copy),
+            vec![
+                "project/Main.dc.html",
+                "project/Phone.dc.html",
+                "project/canvas.json"
+            ]
+        );
+        assert_eq!(
+            fs::read_to_string(copy.join("project/canvas.json")).unwrap(),
+            "{\"screens\":2}"
+        );
+        assert_eq!(entry.files, files_in(&copy));
+        assert_eq!(s.library.path_of(&entry), copy, "a design is its folder");
+    }
+
+    #[test]
+    fn an_earlier_copy_never_changes_when_a_file_is_published_again() {
+        let s = setup();
+        let entry = publish_design_files(
+            &s,
+            &[
+                ("project/Main.dc.html", "first"),
+                ("project/Main.dc.html", "second"),
+            ],
+            100,
+        );
+
+        let versions = s.library.dir().join(&entry.key).join("versions");
+        let earlier: Vec<String> = fs::read_dir(&versions)
+            .unwrap()
+            .flatten()
+            .filter_map(|v| fs::read_to_string(v.path().join("project/Main.dc.html")).ok())
+            .collect();
+        assert_eq!(earlier, vec!["first".to_string()]);
+    }
+
+    #[test]
+    fn a_file_published_as_removed_leaves_the_copy() {
+        let s = setup();
+        publish_design_files(
+            &s,
+            &[
+                ("project/Old.dc.html", "old"),
+                ("project/New.dc.html", "new"),
+            ],
+            100,
+        );
+        let root = s.work.join("canvas");
+        let input = json!({"url": PAGE_URL, "file_path": root.join("project/New.dc.html"),
+                           "root": root, "files": {"project/Old.dc.html": null}});
+
+        let entry = s
+            .library
+            .record(
+                &s.registry,
+                &publish(input, PAGE_URL, "Design", &s.work),
+                &by_uuid(WORK),
+                200,
+            )
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(
+            files_in(&s.library.current_dir(&entry)),
+            vec!["project/New.dc.html"]
+        );
+    }
+
+    #[test]
+    fn a_page_keeps_its_files_and_drops_the_page_it_replaced() {
+        let s = setup();
+        let first = s.work.join("e2.html");
+        fs::write(&first, "<p>one</p>").unwrap();
+        fs::create_dir_all(s.work.join("img")).unwrap();
+        fs::write(s.work.join("img/chart.png"), [1]).unwrap();
+        s.library
+            .record(
+                &s.registry,
+                &publish(
+                    json!({"file_path": first, "files": {"img/chart.png": "img/chart.png"}}),
+                    PAGE_URL,
+                    "Report",
+                    &s.work,
+                ),
+                &by_uuid(WORK),
+                100,
+            )
+            .unwrap();
+        let second = s.work.join("e2v3.html");
+        fs::write(&second, "<p>two</p>").unwrap();
+
+        let entry = s
+            .library
+            .record(
+                &s.registry,
+                &publish(
+                    json!({"file_path": second, "url": PAGE_URL}),
+                    PAGE_URL,
+                    "Report",
+                    &s.work,
+                ),
+                &by_uuid(WORK),
+                200,
+            )
+            .unwrap()
+            .unwrap();
+
+        let copy = s.library.current_dir(&entry);
+        assert_eq!(files_in(&copy), vec!["e2v3.html", "img/chart.png"]);
+        assert_eq!(entry.page.as_deref(), Some("e2v3.html"));
+        assert_eq!(s.library.path_of(&entry), copy.join("e2v3.html"));
+    }
+
+    #[test]
+    fn a_design_scattered_by_an_earlier_version_is_put_back_together() {
+        let s = setup();
+        // What Relais 0.3.0 left: each publish replaced the copy with its one file.
+        let home = s.library.dir().join("XgxxZqZoJba5X1o8X8146P");
+        for (dir, path, content) in [
+            ("versions/000000000101-v1", "project/canvas.json", "old"),
+            ("versions/000000000102-v2", "project/Main.dc.html", "main"),
+            (
+                "versions/000000000103-v3",
+                "project/Formes.dc.html",
+                "formes",
+            ),
+            ("current", "project/canvas.json", "new"),
+        ] {
+            let file = home.join(dir).join(path);
+            fs::create_dir_all(file.parent().unwrap()).unwrap();
+            fs::write(file, content).unwrap();
+        }
+        let scattered = json!({"version": 1, "artifacts": [{
+            "key": "XgxxZqZoJba5X1o8X8146P",
+            "url": "https://claude.ai/artifact/XgxxZqZoJba5X1o8X8146P",
+            "title": "Design", "typeUrl": TYPE_URL, "page": "project/canvas.json",
+            "files": ["project/canvas.json"], "created": 100, "updated": 104, "publishes": 4
+        }, {
+            "key": "BAKyKCdvQkXZD6ya9PpSar", "url": PAGE_URL, "title": "Page",
+            "page": "p.html", "files": ["p.html"], "created": 100, "updated": 100, "publishes": 1
+        }]});
+        fs::create_dir_all(s.library.dir().join("BAKyKCdvQkXZD6ya9PpSar/current")).unwrap();
+        fs::write(
+            s.library
+                .dir()
+                .join("BAKyKCdvQkXZD6ya9PpSar/current/p.html"),
+            "p",
+        )
+        .unwrap();
+        fs::write(s.library.dir().join("index.json"), scattered.to_string()).unwrap();
+
+        assert_eq!(s.library.repair().unwrap(), 1);
+
+        let entry = s.library.find("XgxxZqZoJba5X1o8X8146P").unwrap().unwrap();
+        let copy = s.library.current_dir(&entry);
+        assert_eq!(
+            files_in(&copy),
+            vec![
+                "project/Formes.dc.html",
+                "project/Main.dc.html",
+                "project/canvas.json"
+            ]
+        );
+        assert_eq!(
+            fs::read_to_string(copy.join("project/canvas.json")).unwrap(),
+            "new"
+        );
+        assert_eq!(entry.files, files_in(&copy));
+        assert_eq!(s.library.repair().unwrap(), 0, "once is enough");
     }
 
     #[test]
